@@ -1,0 +1,21 @@
+[package]
+name = "dmx-controller-mac-v1"
+version = "0.2.0"
+description = "Mac-first DMX controller with Anyma uDMX test output"
+authors = ["EC Creative Studios"]
+edition = "2021"
+
+[lib]
+name = "dmx_controller_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = [] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+# Vendored libusb keeps the app independent from a Homebrew runtime dependency.
+rusb = { version = "0.9", features = ["vendored"] }
+midir = "0.10"
