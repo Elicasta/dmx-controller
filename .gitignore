@@ -1,0 +1,23 @@
+# Frontend dependencies and build output
+node_modules/
+dist/
+
+# Tauri / Rust build output
+src-tauri/target/
+target/
+
+# Local environment and secrets
+.env
+.env.*
+!.env.example
+*.key
+*.p12
+certificate-base64.txt
+
+# macOS
+.DS_Store
+
+# Packaged application artifacts
+*.dmg
+*.app.tar.gz
+*.app.tar.gz.sig

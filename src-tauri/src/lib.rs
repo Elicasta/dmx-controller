@@ -1,6 +1,7 @@
 mod dmx;
 mod midi;
 mod output;
+mod updates;
 
 use dmx::{DmxEngine, DmxStatus};
 use midi::{MidiEngine, MidiEvent, MidiInputInfo, MidiStatus};
@@ -70,8 +71,10 @@ fn drain_midi_events(engine: State<'_, MidiEngine>) -> Vec<MidiEvent> {
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
+        .plugin(tauri_plugin_updater::Builder::new().build())
         .manage(DmxEngine::new())
         .manage(MidiEngine::new())
+        .manage(updates::UpdateState::default())
         .invoke_handler(tauri::generate_handler![
             list_udmx_devices,
             connect_dmx,
@@ -84,7 +87,10 @@ pub fn run() {
             connect_midi,
             disconnect_midi,
             midi_status,
-            drain_midi_events
+            drain_midi_events,
+            updates::app_version,
+            updates::check_for_update,
+            updates::install_update
         ])
         .run(tauri::generate_context!())
         .expect("error while running DMX Controller");

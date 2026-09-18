@@ -159,3 +159,10 @@ After physical output works:
 5. fades
 6. cues + GO
 7. local iPad/iPhone remote
+
+
+## Desktop releases and self-updates
+
+Release builds use Tauri's signed updater. The source repository stays private while signed installers and `latest.json` are published to the public `Elicasta/dmx-controller-releases` repository so installed Macs can check for updates without GitHub credentials.
+
+See [docs/RELEASING.md](docs/RELEASING.md) for the one-time GitHub secret setup, the first updater-enabled install, and the no-Terminal release flow.
