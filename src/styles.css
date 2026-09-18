@@ -994,8 +994,13 @@ body { min-width: 900px; overflow: hidden; background: #070a0d; }
 
 .settings-console { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; align-content: start; }
 .settings-console .console-panel { margin: 0; }
-.midi-mapping-console, .raw-dmx-console { grid-column: 1 / -1; }
+.midi-mapping-console, .raw-dmx-console, .software-update-console { grid-column: 1 / -1; }
 .settings-actions, .track-actions { display: flex; gap: 6px; margin-top: 10px; }
+.software-update-console .update-summary strong, .software-update-console .update-summary small { display: block; }
+.software-update-console .update-summary strong { color: #c8d2d8; font-size: 10px; }
+.software-update-console .update-summary small { margin-top: 5px; max-width: 720px; color: #73818b; font-size: 8px; line-height: 1.5; }
+.software-update-console .update-notes { margin-top: 10px; padding: 9px 10px; border: 1px solid #202d35; border-radius: 5px; background: #091015; color: #94a2ab; font-size: 8px; line-height: 1.5; white-space: pre-wrap; }
+.software-update-console .update-error { margin-top: 9px; color: #ff8f8f; font-size: 8px; line-height: 1.45; }
 .settings-actions button, .track-actions button { height: 33px; border: 1px solid #283640; background: #121a20; color: #b8c2c9; font-size: 8px; }
 .midi-event-monitor { display: flex; align-items: center; gap: 8px; margin-top: 10px; padding: 8px; border-radius: 5px; background: #080d10; }.midi-event-monitor i { width: 8px; height: 8px; border-radius: 50%; background: #56636c; }.midi-event-monitor i.active { background: var(--console-green); }.midi-event-monitor strong, .midi-event-monitor small { display: block; }.midi-event-monitor strong { font-size: 8px; }.midi-event-monitor small { margin-top: 3px; color: #5b6973; font-size: 7px; }
 .midi-mapping-console .midi-add-row { display: grid; grid-template-columns: 1fr 130px; gap: 6px; }.midi-mapping-console .midi-add-row select { height: 35px; border-radius: 5px; }.midi-map-list { max-height: 180px; overflow: auto; }.midi-map-row { display: grid; grid-template-columns: 1fr 1fr auto auto; align-items: center; gap: 6px; min-height: 37px; border-bottom: 1px solid #1b242b; }.midi-map-row strong, .midi-map-row span { font-size: 8px; }.midi-map-row span { color: #71808a; }.midi-map-row button { height: 25px; padding: 0 7px; background: #172128; color: #aab5bd; font-size: 7px; }
