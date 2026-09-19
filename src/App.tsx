@@ -575,6 +575,7 @@ export default function App() {
   const [stageMode, setStageMode] = useState<StageDesignerMode>('select');
   const [stageSnapEnabled, setStageSnapEnabled] = useState(true);
   const [stageSnapMeters, setStageSnapMeters] = useState(.5);
+  const [visualizerHaze, setVisualizerHaze] = useState(.32);
   const stageDragRef = useRef<{
     pointerId: number;
     kind: 'fixture' | 'element';
@@ -2193,7 +2194,7 @@ export default function App() {
     setMessage(removed ? `${removed.label} removed from the stage.` : 'Stage element removed.');
   }
 
-  function stagePointFromPointer(event: ReactPointerEvent<HTMLElement>): StagePoint2D | null {
+  function stagePointFromPointer(event: ReactPointerEvent<Element>): StagePoint2D | null {
     const stage = event.currentTarget.closest<HTMLElement>('.multi-stage');
     if (!stage) return null;
     const bounds = stage.getBoundingClientRect();
@@ -2205,7 +2206,7 @@ export default function App() {
   }
 
   function beginStageDrag(
-    event: ReactPointerEvent<HTMLElement>,
+    event: ReactPointerEvent<Element>,
     kind: 'fixture' | 'element',
     id: string,
     preserved: Vec3
@@ -2241,7 +2242,7 @@ export default function App() {
     }
   }
 
-  function moveStageDrag(event: ReactPointerEvent<HTMLElement>) {
+  function moveStageDrag(event: ReactPointerEvent<Element>) {
     const drag = stageDragRef.current;
     if (!drag || drag.pointerId !== event.pointerId) return;
     const point = stagePointFromPointer(event);
@@ -2293,7 +2294,7 @@ export default function App() {
     }
   }
 
-  function endStageDrag(event: ReactPointerEvent<HTMLElement>) {
+  function endStageDrag(event: ReactPointerEvent<Element>) {
     const drag = stageDragRef.current;
     if (!drag || drag.pointerId !== event.pointerId) return;
     if (event.currentTarget.hasPointerCapture(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId);
@@ -2413,31 +2414,67 @@ export default function App() {
           </>}
           {patch.map((fixture, index) => {
             const values = fixtureValues(outputUniverse, fixture);
-            const rgb: [number, number, number] = values.red + values.green + values.blue > 0 ? [values.red, values.green, values.blue] : values.uv > 0 ? [120, 62, 255] : [75, 83, 94];
+            const profile = findProfile(fixture.profileId);
+            const rgb: [number, number, number] = values.red + values.green + values.blue > 0 ? [values.red, values.green, values.blue] : values.uv > 0 ? [120, 62, 255] : [235, 241, 247];
             const color = `rgb(${rgb.join(' ')})`;
             const level = dmxStatus.blackout ? 0 : values.dimmer / 255;
             const geometry = fixtureGeometryState(outputUniverse, fixture, index, patch.length, stageSettings.dimensions);
             const origin = projectStagePoint(geometry.beam.origin, stageSettings.dimensions, stageView);
             const intersection = intersectBeamWithStage(geometry.beam, stageSettings.dimensions, stageElements);
-            const endpoint = projectStagePoint(intersection?.point ?? pointAlongRay(geometry.beam, beamLength), stageSettings.dimensions, stageView);
-            const strokeWidth = Math.max(4, geometry.beam.angleDegrees * .65);
+            const endpointWorld = intersection?.point ?? pointAlongRay(geometry.beam, beamLength);
+            const endpoint = projectStagePoint(endpointWorld, stageSettings.dimensions, stageView);
+            const throwDistance = intersection?.distance ?? beamLength;
+            const beamRadiusMeters = throwDistance * Math.tan(geometry.beam.angleDegrees * Math.PI / 360);
+            const fieldAngle = geometry.beam.fieldAngleDegrees ?? geometry.beam.angleDegrees * 1.35;
+            const fieldRadiusMeters = throwDistance * Math.tan(fieldAngle * Math.PI / 360);
+            const screenScale = stageView === 'side'
+              ? 840 / Math.max(.01, stageSettings.dimensions.depth)
+              : 840 / Math.max(.01, stageSettings.dimensions.width);
+            const beamRadius = Math.max(3, Math.min(150, beamRadiusMeters * screenScale));
+            const fieldRadius = Math.max(beamRadius, Math.min(190, fieldRadiusMeters * screenScale));
             const dx = endpoint.x - origin.x;
             const dy = endpoint.y - origin.y;
             const screenLength = Math.max(1, Math.hypot(dx, dy));
             const normalX = -dy / screenLength;
             const normalY = dx / screenLength;
-            const beamRadius = Math.max(9, Math.min(92, screenLength * Math.tan(geometry.beam.angleDegrees * Math.PI / 360) * .44 + strokeWidth));
-            const left = { x: endpoint.x + normalX * beamRadius, y: endpoint.y + normalY * beamRadius };
-            const right = { x: endpoint.x - normalX * beamRadius, y: endpoint.y - normalY * beamRadius };
+            const beamLeft = { x: endpoint.x + normalX * beamRadius, y: endpoint.y + normalY * beamRadius };
+            const beamRight = { x: endpoint.x - normalX * beamRadius, y: endpoint.y - normalY * beamRadius };
+            const fieldLeft = { x: endpoint.x + normalX * fieldRadius, y: endpoint.y + normalY * fieldRadius };
+            const fieldRight = { x: endpoint.x - normalX * fieldRadius, y: endpoint.y - normalY * fieldRadius };
             const gradientId = `stage-beam-${index}`;
-            const hitLabel = intersection?.surface === 'stage-object'
-              ? intersection.elementName ?? 'stage object'
-              : intersection?.surface;
-            return <g key={fixture.id} className={`stage-beam ${stageFixture?.id === fixture.id && interactive ? 'editing' : ''}`}>
-              <defs><linearGradient id={gradientId} gradientUnits="userSpaceOnUse" x1={origin.x} y1={origin.y} x2={endpoint.x} y2={endpoint.y}><stop offset="0%" stopColor={color} stopOpacity={level * .92} /><stop offset="55%" stopColor={color} stopOpacity={level * .42} /><stop offset="100%" stopColor={color} stopOpacity={level * .08} /></linearGradient></defs>
-              <polygon points={`${origin.x},${origin.y} ${left.x},${left.y} ${right.x},${right.y}`} fill={`url(#${gradientId})`} opacity={level * .82} filter="url(#beam-glow)" />
-              <line x1={origin.x} y1={origin.y} x2={endpoint.x} y2={endpoint.y} stroke={color} strokeWidth={Math.max(2, strokeWidth * .32)} opacity={level * .72} strokeLinecap="round" />
-              <ellipse cx={endpoint.x} cy={endpoint.y} rx={beamRadius * .72} ry={Math.max(4, beamRadius * .22)} fill={color} opacity={level * .7} filter="url(#beam-glow)"><title>{intersection ? `${fixture.name} hits ${hitLabel} at ${intersection.distance.toFixed(1)} m` : `${fixture.name} beam`}</title></ellipse>
+            const fieldGradientId = `stage-field-${index}`;
+            const hitLabel = intersection?.surface === 'stage-object' ? intersection.elementName ?? 'stage object' : intersection?.surface;
+            const fixtureSelected = stageFixture?.id === fixture.id && interactive;
+            const fixtureStroke = fixture.labelColor ?? '#66727d';
+            const isMover = Boolean(profile?.movement);
+            return <g key={fixture.id} className={`stage-beam ${fixtureSelected ? 'editing' : ''}`}>
+              <defs>
+                <linearGradient id={gradientId} gradientUnits="userSpaceOnUse" x1={origin.x} y1={origin.y} x2={endpoint.x} y2={endpoint.y}><stop offset="0%" stopColor={color} stopOpacity={level * visualizerHaze * .95} /><stop offset="70%" stopColor={color} stopOpacity={level * visualizerHaze * .35} /><stop offset="100%" stopColor={color} stopOpacity="0" /></linearGradient>
+                <linearGradient id={fieldGradientId} gradientUnits="userSpaceOnUse" x1={origin.x} y1={origin.y} x2={endpoint.x} y2={endpoint.y}><stop offset="0%" stopColor={color} stopOpacity={level * visualizerHaze * .34} /><stop offset="100%" stopColor={color} stopOpacity="0" /></linearGradient>
+              </defs>
+              {level > 0 && visualizerHaze > .01 && <>
+                <polygon points={`${origin.x},${origin.y} ${fieldLeft.x},${fieldLeft.y} ${fieldRight.x},${fieldRight.y}`} fill={`url(#${fieldGradientId})`} />
+                <polygon points={`${origin.x},${origin.y} ${beamLeft.x},${beamLeft.y} ${beamRight.x},${beamRight.y}`} fill={`url(#${gradientId})`} filter="url(#beam-glow)" />
+              </>}
+              {level > 0 && <ellipse cx={endpoint.x} cy={endpoint.y} rx={Math.max(4, fieldRadius * .78)} ry={Math.max(2.5, fieldRadius * .22)} fill={color} opacity={Math.min(.88, level * .72 / Math.max(1, throwDistance * .08))} filter="url(#beam-glow)"><title>{intersection ? `${fixture.name} hits ${hitLabel} at ${intersection.distance.toFixed(1)} m` : `${fixture.name} beam`}</title></ellipse>}
+              <g
+                className={`visualizer-fixture ${isMover ? 'moving' : 'static'} ${fixtureSelected ? 'selected' : ''}`}
+                transform={`translate(${origin.x} ${origin.y})`}
+                role={interactive ? 'button' : undefined}
+                tabIndex={interactive ? 0 : undefined}
+                onPointerDown={(event) => { if (interactive) beginStageDrag(event, 'fixture', fixture.id, fixtureTransform(fixture, index, patch.length, stageSettings.dimensions).position); }}
+                onPointerMove={(event) => { if (interactive) moveStageDrag(event); }}
+                onPointerUp={(event) => { if (interactive) endStageDrag(event); }}
+                onPointerCancel={(event) => { if (interactive) endStageDrag(event); }}
+                onClick={(event) => { if (interactive) selectFixtureFromConsole(fixture.id, event.metaKey || event.ctrlKey || event.shiftKey); }}
+              >
+                {isMover ? <>
+                  <path d="M -11 7 V 14 H 11 V 7" fill="none" stroke={fixtureStroke} strokeWidth="3" />
+                  <rect x="-9" y="-8" width="18" height="17" rx="6" fill="#11171c" stroke={fixtureStroke} strokeWidth={fixtureSelected ? 3 : 2} />
+                </> : <circle r="11" fill="#11171c" stroke={fixtureStroke} strokeWidth={fixtureSelected ? 3 : 2} />}
+                <circle r="4.5" fill={color} opacity={Math.max(.35, level)} />
+                <text className="visualizer-fixture-name" x="0" y="-18" textAnchor="middle">{fixture.name}</text>
+              </g>
             </g>;
           })}
           {interactive && ['aim', 'measure', 'target'].includes(stageMode) && stageTargets.map((target) => {
@@ -2518,22 +2555,7 @@ export default function App() {
             }}
           ><span className="stage-object-shape" style={{ borderColor: element.color, height: `${projectedHeight}px`, backgroundColor: element.type === 'led-screen' ? element.color : undefined }} /><b>{element.label}</b></button>;
         })}
-        {patch.map((fixture, index) => {
-          const geometry = fixtureGeometryState(outputUniverse, fixture, index, patch.length, stageSettings.dimensions);
-          const projected = projectStagePoint(geometry.beam.origin, stageSettings.dimensions, stageView);
-          const values = fixtureValues(outputUniverse, fixture);
-          const profile = findProfile(fixture.profileId);
-          const liveColor = values.red + values.green + values.blue > 0
-            ? `rgb(${values.red} ${values.green} ${values.blue})`
-            : values.uv > 0 ? 'rgb(120 62 255)' : '#6d7782';
-          const fixtureClass = profile?.movement ? 'fixture-moving-head' : 'fixture-static';
-          return <div className={`stage-light physical-fixture ${fixtureClass} ${stageFixture?.id === fixture.id && interactive ? 'editing' : ''} ${fixture.selected ? 'selected' : ''}`} key={fixture.id} style={{ left: `${projected.x / 10}%`, top: `${projected.y / 5.6}%`, zIndex: 70 }}>
-            <button className="stage-unit stage-unit-button" style={{ borderColor: fixture.labelColor ?? '#505b68' }} aria-label={`${stageMode === 'move' ? 'Drag' : 'Select'} ${fixture.name} on stage`} onPointerDown={(event) => { if (interactive) beginStageDrag(event, 'fixture', fixture.id, fixtureTransform(fixture, index, patch.length, stageSettings.dimensions).position); }} onPointerMove={(event) => { if (interactive) moveStageDrag(event); }} onPointerUp={(event) => { if (interactive) endStageDrag(event); }} onPointerCancel={(event) => { if (interactive) endStageDrag(event); }} onClick={(event) => { if (interactive) selectFixtureFromConsole(fixture.id, event.metaKey || event.ctrlKey || event.shiftKey); }}>
-              <span className="fixture-yoke" /><span className="fixture-head"><i className="fixture-lens" style={{ background: liveColor, boxShadow: `0 0 12px ${liveColor}` }} /></span>
-            </button>
-            <span className="stage-light-label" style={{ borderColor: fixture.labelColor ?? '#3a444f', color: fixture.labelColor ?? '#c9d0d8' }}><strong>{fixture.name}</strong><small>{profile?.model ?? 'Fixture'}{geometry.movementCapable ? ` · ${Math.round(geometry.movement.pan)}°/${Math.round(geometry.movement.tilt)}°` : ''}</small></span>
-          </div>;
-        })}
+        <div className="visualizer-haze-control"><span>HAZE</span><input aria-label="Visualizer haze" type="range" min="0" max="1" step=".05" value={visualizerHaze} onChange={(event) => setVisualizerHaze(Number(event.target.value))} /><b>{Math.round(visualizerHaze * 100)}%</b></div>
         {interactive && stageMode === 'measure' && selectedTargetMetrics && <div className="stage-measure-card"><span>MEASURE TO {selectedTarget?.name?.toUpperCase()}</span><strong>{metersToDisplay(selectedTargetMetrics.distance, stageSettings.unit).toFixed(1)} {stageUnitLabel}</strong><small>H {selectedTargetMetrics.horizontal.toFixed(1)}° · V {selectedTargetMetrics.vertical.toFixed(1)}°</small></div>}
         <div className="stage-coordinate-key">{stageView === 'top' ? 'PLAN · X left/right · Z downstage/upstage' : stageView === 'front' ? 'FRONT · X left/right · Y floor/ceiling' : stageView === 'side' ? 'SIDE · Z downstage/upstage · Y floor/ceiling' : 'SHOW · live output visualizer'} · {stageSettings.unit === 'feet' ? 'feet shown in inspector' : 'meters shown in inspector'}</div>
       </div>
