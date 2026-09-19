@@ -574,7 +574,16 @@ export default function App() {
   const [stageMode, setStageMode] = useState<StageDesignerMode>('select');
   const [stageSnapEnabled, setStageSnapEnabled] = useState(true);
   const [stageSnapMeters, setStageSnapMeters] = useState(.5);
-  const stageDragRef = useRef<{ pointerId: number; kind: 'fixture' | 'element'; id: string; preserved: Vec3; moved: boolean } | null>(null);
+  const stageDragRef = useRef<{
+    pointerId: number;
+    kind: 'fixture' | 'element';
+    id: string;
+    mode: 'move' | 'rotate';
+    preserved: Vec3;
+    startPoint?: StagePoint2D;
+    startRotation?: { yaw: number; pitch: number; roll: number };
+    moved: boolean;
+  } | null>(null);
   const [selectedTargetId, setSelectedTargetId] = useState('target-center-stage');
   const [aimArrangement, setAimArrangement] = useState<TargetArrangement>('converge');
   const [aimSpreadMeters, setAimSpreadMeters] = useState(4);
@@ -2200,11 +2209,28 @@ export default function App() {
     id: string,
     preserved: Vec3
   ) {
-    if (stageMode !== 'move' || (event.pointerType === 'mouse' && event.button !== 0)) return;
+    if (!['move', 'rotate'].includes(stageMode) || (event.pointerType === 'mouse' && event.button !== 0)) return;
     event.preventDefault();
     event.stopPropagation();
     event.currentTarget.setPointerCapture(event.pointerId);
-    stageDragRef.current = { pointerId: event.pointerId, kind, id, preserved, moved: false };
+    const startPoint = stagePointFromPointer(event) ?? undefined;
+    const startRotation = kind === 'fixture'
+      ? (() => {
+          const fixture = patch.find((item) => item.id === id);
+          if (!fixture) return undefined;
+          return fixtureTransform(fixture, patch.indexOf(fixture), patch.length, stageSettings.dimensions).rotation;
+        })()
+      : migrateStageElement(stageElements.find((element) => element.id === id)!, stageSettings.dimensions).transform?.rotation;
+    stageDragRef.current = {
+      pointerId: event.pointerId,
+      kind,
+      id,
+      mode: stageMode === 'rotate' ? 'rotate' : 'move',
+      preserved,
+      startPoint,
+      startRotation,
+      moved: false
+    };
     if (kind === 'fixture') {
       setStageFixtureId(id);
       setSelectedStageElementId(null);
@@ -2220,6 +2246,29 @@ export default function App() {
     const point = stagePointFromPointer(event);
     if (!point) return;
     event.preventDefault();
+
+    if (drag.mode === 'rotate') {
+      if (!drag.startPoint || !drag.startRotation) return;
+      const delta = (point.x - drag.startPoint.x) * .35;
+      const axis = stageView === 'front' ? 'roll' : stageView === 'side' ? 'pitch' : 'yaw';
+      const rotation = { ...drag.startRotation, [axis]: drag.startRotation[axis] + delta };
+      drag.moved = true;
+      if (drag.kind === 'fixture') {
+        setPatch((current) => current.map((fixture, index) => {
+          if (fixture.id !== drag.id) return fixture;
+          const transform = fixtureTransform(fixture, index, current.length, stageSettings.dimensions);
+          return { ...fixture, transform: { ...transform, rotation } };
+        }));
+      } else {
+        setStageElements((current) => current.map((element) => {
+          if (element.id !== drag.id) return element;
+          const migrated = migrateStageElement(element, stageSettings.dimensions);
+          return { ...migrated, transform: { ...migrated.transform!, rotation } };
+        }));
+      }
+      return;
+    }
+
     const rawPosition = unprojectStagePoint(point, stageSettings.dimensions, stageView, drag.preserved);
     const snap = (value: number) => stageSnapEnabled ? Math.round(value / stageSnapMeters) * stageSnapMeters : value;
     const position = {
@@ -2252,7 +2301,9 @@ export default function App() {
       const itemName = drag.kind === 'fixture'
         ? patchRef.current.find((fixture) => fixture.id === drag.id)?.name ?? 'Fixture'
         : stageElements.find((element) => element.id === drag.id)?.label ?? 'Stage object';
-      setMessage(`${itemName} moved in ${stageView} view. Its physical coordinates are saved with the show.`);
+      setMessage(drag.mode === 'rotate'
+        ? `${itemName} rotated in ${stageView} view.`
+        : `${itemName} moved in ${stageView} view. Its physical coordinates are saved with the show.`);
     }
   }
 
