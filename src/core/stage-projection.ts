@@ -22,12 +22,16 @@ export function projectStagePoint(
   const y = percent(point.y, dimensions.height);
   const z = percent(point.z, dimensions.depth);
 
-  if (view === 'top') return { x: marginX + x * drawableWidth, y: marginY + z * drawableHeight };
+  // Top reads like a lighting plot: upstage is visually up, audience/downstage is down.
+  if (view === 'top') return { x: marginX + x * drawableWidth, y: height - marginY - z * drawableHeight };
   if (view === 'front') return { x: marginX + x * drawableWidth, y: height - marginY - y * drawableHeight };
+  // Side reads from downstage (left) toward upstage (right).
   if (view === 'side') return { x: marginX + z * drawableWidth, y: height - marginY - y * drawableHeight };
 
-  const perspectiveX = (x - 0.5) * (0.72 + z * 0.28) + 0.5;
-  const perspectiveY = 0.08 + (1 - y) * 0.58 + z * 0.3;
+  // Perspective uses a stage-floor trapezoid: the upstage edge is narrower and higher.
+  const perspectiveScale = 1 - z * 0.32;
+  const perspectiveX = (x - 0.5) * perspectiveScale + 0.5;
+  const perspectiveY = 0.82 - z * 0.48 - y * 0.48;
   return {
     x: marginX + perspectiveX * drawableWidth,
     y: marginY + perspectiveY * drawableHeight
@@ -67,7 +71,7 @@ export function unprojectStagePoint(
 
   if (view === 'top') {
     x = screenX;
-    z = screenY;
+    z = 1 - screenY;
   } else if (view === 'front') {
     x = screenX;
     y = 1 - screenY;
@@ -75,8 +79,8 @@ export function unprojectStagePoint(
     z = screenX;
     y = 1 - screenY;
   } else {
-    z = clamp((screenY - 0.08 - (1 - normalizedY) * 0.58) / 0.3, 0, 1);
-    const perspectiveScale = 0.72 + z * 0.28;
+    z = clamp((0.82 - normalizedY * 0.48 - screenY) / 0.48, 0, 1);
+    const perspectiveScale = 1 - z * 0.32;
     x = clamp((screenX - 0.5) / perspectiveScale + 0.5, 0, 1);
   }
 
