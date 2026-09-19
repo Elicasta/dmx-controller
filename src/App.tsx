@@ -2129,10 +2129,56 @@ export default function App() {
     }));
   }
 
+  function updateStageElementRotation(id: string, axis: 'yaw' | 'pitch' | 'roll', value: number) {
+    setStageElements((current) => current.map((element) => {
+      if (element.id !== id) return element;
+      const migrated = migrateStageElement(element, stageSettings.dimensions);
+      return { ...migrated, transform: { ...migrated.transform!, rotation: { ...migrated.transform!.rotation, [axis]: value } } };
+    }));
+  }
+
+  function updateStageElementDimensions(id: string, axis: 'x' | 'y' | 'z', value: number) {
+    setStageElements((current) => current.map((element) => {
+      if (element.id !== id) return element;
+      const migrated = migrateStageElement(element, stageSettings.dimensions);
+      return {
+        ...migrated,
+        dimensions: {
+          ...migrated.dimensions!,
+          [axis]: Math.max(.05, value)
+        }
+      };
+    }));
+  }
+
+  function duplicateStageElement(id: string) {
+    const source = stageElements.find((element) => element.id === id);
+    if (!source) return;
+    const migrated = migrateStageElement(source, stageSettings.dimensions);
+    const copy: StageElement = {
+      ...migrated,
+      id: `stage-${migrated.type}-${Date.now().toString(36)}-copy`,
+      label: `${migrated.label} Copy`,
+      transform: {
+        position: {
+          x: migrated.transform!.position.x + .45,
+          y: migrated.transform!.position.y,
+          z: Math.min(stageSettings.dimensions.depth, migrated.transform!.position.z + .35)
+        },
+        rotation: { ...migrated.transform!.rotation }
+      },
+      dimensions: { ...migrated.dimensions! }
+    };
+    setStageElements((current) => [...current, copy]);
+    setSelectedStageElementId(copy.id);
+    setMessage(`${source.label} duplicated.`);
+  }
+
   function removeStageElement(id: string) {
+    const removed = stageElements.find((element) => element.id === id);
     setStageElements((current) => current.filter((element) => element.id !== id));
     setSelectedStageElementId(null);
-    setMessage('Stage element removed.');
+    setMessage(removed ? `${removed.label} removed from the stage.` : 'Stage element removed.');
   }
 
   function stagePointFromPointer(event: ReactPointerEvent<HTMLElement>): StagePoint2D | null {
