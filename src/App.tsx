@@ -645,9 +645,10 @@ export default function App() {
   } : null;
   const activeStageIntersection = activeStageGeometry ? intersectBeamWithStage(activeStageGeometry.beam, stageSettings.dimensions) : null;
   const selectedStageElement = stageElements.find((element) => element.id === selectedStageElementId) ?? null;
-  const selectedStagePosition = selectedStageElement
-    ? stageElementPosition(selectedStageElement, stageSettings.dimensions)
-    : { x: 0, y: 0, z: 0 };
+  const selectedStageElementResolved = selectedStageElement ? migrateStageElement(selectedStageElement, stageSettings.dimensions) : null;
+  const selectedStagePosition = selectedStageElementResolved?.transform?.position ?? { x: 0, y: 0, z: 0 };
+  const selectedStageRotation = selectedStageElementResolved?.transform?.rotation ?? { yaw: 0, pitch: 0, roll: 0 };
+  const selectedStageDimensions = selectedStageElementResolved?.dimensions ?? { x: 1, y: 1, z: 1 };
   const midiControls = useMemo(() => buildControlRegistry(patch), [patch]);
   const midiControlGroups = useMemo(() => {
     const groups = new Map<string, MidiAssignableControl[]>();
