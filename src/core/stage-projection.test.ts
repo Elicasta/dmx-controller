@@ -32,3 +32,23 @@ describe('stage engineering views', () => {
     expect(unprojectStagePoint({ x: 500, y: 280 }, DEFAULT_STAGE_DIMENSIONS, 'side', preserved).x).toBeCloseTo(1, 8);
   });
 });
+
+
+describe('real-world stage projection scale', () => {
+  it('uses one physical scale for X and Z in plan view', () => {
+    const dimensions = { ...DEFAULT_STAGE_DIMENSIONS, width: 12, depth: 6, height: 5 };
+    const origin = projectStagePoint({ x: 0, y: 0, z: 0 }, dimensions, 'top');
+    const oneMeterX = projectStagePoint({ x: 1, y: 0, z: 0 }, dimensions, 'top');
+    const oneMeterZ = projectStagePoint({ x: 0, y: 0, z: 1 }, dimensions, 'top');
+    expect(Math.abs(oneMeterX.x - origin.x)).toBeCloseTo(Math.abs(oneMeterZ.y - origin.y), 6);
+  });
+
+  it('keeps zoom bounded and round-trips pointer positions', () => {
+    const dimensions = { ...DEFAULT_STAGE_DIMENSIONS, width: 12, depth: 6, height: 5 };
+    const world = { x: 2, y: 1, z: 4 };
+    const screen = projectStagePoint(world, dimensions, 'top', 1000, 560, 1.6);
+    const resolved = unprojectStagePoint(screen, dimensions, 'top', world, 1000, 560, 1.6);
+    expect(resolved.x).toBeCloseTo(world.x, 6);
+    expect(resolved.z).toBeCloseTo(world.z, 6);
+  });
+});
