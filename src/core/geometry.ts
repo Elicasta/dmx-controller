@@ -64,7 +64,7 @@ export type BeamRay = {
   origin: Vec3;
   direction: Vec3;
   angleDegrees: number;
-  fieldAngleDegrees: number;
+  fieldAngleDegrees?: number;
 };
 
 export type MovementDegrees = {
