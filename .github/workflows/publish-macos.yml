@@ -15,7 +15,7 @@ on:
       notes:
         description: "Release notes shown in GitHub and the in-app updater"
         required: false
-        default: "DMX Controller update"
+        default: "LumaRig update"
         type: string
 
 permissions:
@@ -138,8 +138,8 @@ jobs:
           repo: dmx-controller-releases
           releaseCommitish: main
           tagName: app-v__VERSION__
-          releaseName: "DMX Controller v__VERSION__"
-          releaseBody: ${{ inputs.notes || 'First updater-enabled DMX Controller release.' }}
+          releaseName: "LumaRig v__VERSION__"
+          releaseBody: ${{ inputs.notes || 'LumaRig update.' }}
           releaseDraft: false
           prerelease: false
           generateReleaseNotes: false
