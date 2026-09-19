@@ -1593,3 +1593,41 @@ input[type="text"], input[type="number"], .add-fixture-grid input, .patch-card-b
   position: absolute;
   inset: -8px;
 }
+
+.visualizer-fixture { cursor: pointer; pointer-events: all; }
+.stage-mode-move .visualizer-fixture { cursor: grab; }
+.stage-mode-move .visualizer-fixture:active { cursor: grabbing; }
+.stage-mode-rotate .visualizer-fixture { cursor: ew-resize; }
+.visualizer-fixture-name {
+  fill: #d8e0e6;
+  font-size: 8px;
+  font-weight: 780;
+  paint-order: stroke;
+  stroke: rgba(4,7,10,.95);
+  stroke-width: 4px;
+  stroke-linejoin: round;
+}
+.visualizer-fixture.selected .visualizer-fixture-name { fill: #8ef2ae; }
+.visualizer-haze-control {
+  position: absolute;
+  z-index: 84;
+  right: 12px;
+  bottom: 12px;
+  display: grid;
+  grid-template-columns: auto 90px 30px;
+  align-items: center;
+  gap: 7px;
+  padding: 6px 8px;
+  border: 1px solid #293640;
+  border-radius: 6px;
+  background: rgba(7,11,15,.88);
+  backdrop-filter: blur(10px);
+}
+.visualizer-haze-control span,
+.visualizer-haze-control b {
+  color: #7c8b96;
+  font-size: 7px;
+  font-weight: 800;
+}
+.visualizer-haze-control b { text-align: right; }
+.visualizer-haze-control input { width: 90px; accent-color: #7ce8a3; }
