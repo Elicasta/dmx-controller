@@ -3,8 +3,52 @@ import type { StageDimensions, Vec3 } from './geometry';
 export type StageView = 'perspective' | 'top' | 'front' | 'side';
 export type StagePoint2D = { x: number; y: number };
 
-function percent(value: number, span: number) {
-  return span <= 0 ? 0.5 : value / span;
+function clamp(value: number, minimum: number, maximum: number) {
+  return Math.max(minimum, Math.min(maximum, value));
+}
+
+type Plane = { horizontal: number; vertical: number; x: number; y: number };
+
+function planeFor(point: Vec3, dimensions: StageDimensions, view: Exclude<StageView, 'perspective'>): Plane {
+  if (view === 'top') return {
+    horizontal: dimensions.width,
+    vertical: dimensions.depth,
+    x: point.x + dimensions.width / 2,
+    y: dimensions.depth - point.z
+  };
+  if (view === 'front') return {
+    horizontal: dimensions.width,
+    vertical: dimensions.height,
+    x: point.x + dimensions.width / 2,
+    y: dimensions.height - point.y
+  };
+  return {
+    horizontal: dimensions.depth,
+    vertical: dimensions.height,
+    x: point.z,
+    y: dimensions.height - point.y
+  };
+}
+
+function orthographicLayout(
+  dimensions: StageDimensions,
+  view: Exclude<StageView, 'perspective'>,
+  width: number,
+  height: number,
+  zoom: number
+) {
+  const marginX = width * .08;
+  const marginY = height * .1;
+  const horizontal = view === 'side' ? dimensions.depth : dimensions.width;
+  const vertical = view === 'top' ? dimensions.depth : dimensions.height;
+  // One metre always occupies the same number of pixels on both axes.
+  const baseScale = Math.min((width - marginX * 2) / horizontal, (height - marginY * 2) / vertical);
+  const scale = baseScale * clamp(zoom, .7, 1.8);
+  return {
+    scale,
+    left: width / 2 - horizontal * scale / 2,
+    top: height / 2 - vertical * scale / 2
+  };
 }
 
 export function projectStagePoint(
@@ -12,40 +56,31 @@ export function projectStagePoint(
   dimensions: StageDimensions,
   view: StageView,
   width = 1000,
-  height = 560
+  height = 560,
+  zoom = 1
 ): StagePoint2D {
-  const marginX = width * 0.08;
-  const marginY = height * 0.1;
-  const drawableWidth = width - marginX * 2;
-  const drawableHeight = height - marginY * 2;
-  const x = percent(point.x + dimensions.width / 2, dimensions.width);
-  const y = percent(point.y, dimensions.height);
-  const z = percent(point.z, dimensions.depth);
+  if (view !== 'perspective') {
+    const plane = planeFor(point, dimensions, view);
+    const layout = orthographicLayout(dimensions, view, width, height, zoom);
+    return { x: layout.left + plane.x * layout.scale, y: layout.top + plane.y * layout.scale };
+  }
 
-  // Top reads like a lighting plot: upstage is visually up, audience/downstage is down.
-  if (view === 'top') return { x: marginX + x * drawableWidth, y: height - marginY - z * drawableHeight };
-  if (view === 'front') return { x: marginX + x * drawableWidth, y: height - marginY - y * drawableHeight };
-  // Side reads from downstage (left) toward upstage (right).
-  if (view === 'side') return { x: marginX + z * drawableWidth, y: height - marginY - y * drawableHeight };
-
-  // Perspective uses a stage-floor trapezoid: the upstage edge is narrower and higher.
-  const perspectiveScale = 1 - z * 0.32;
-  const perspectiveX = (x - 0.5) * perspectiveScale + 0.5;
-  const perspectiveY = 0.82 - z * 0.48 - y * 0.48;
+  const x = clamp((point.x + dimensions.width / 2) / dimensions.width, 0, 1);
+  const y = clamp(point.y / dimensions.height, 0, 1);
+  const z = clamp(point.z / dimensions.depth, 0, 1);
+  const perspectiveScale = 1 - z * .32;
+  const perspectiveX = (x - .5) * perspectiveScale + .5;
+  const perspectiveY = .82 - z * .48 - y * .48;
+  const viewZoom = clamp(zoom, .7, 1.8);
   return {
-    x: marginX + perspectiveX * drawableWidth,
-    y: marginY + perspectiveY * drawableHeight
+    x: 500 + (80 + perspectiveX * 840 - 500) * viewZoom,
+    y: 280 + (56 + perspectiveY * 448 - 280) * viewZoom
   };
 }
 
-function clamp(value: number, minimum: number, maximum: number) {
-  return Math.max(minimum, Math.min(maximum, value));
-}
-
 /**
- * Maps a pointer in the stage view back onto the view's editable plane.
- * Orthographic views edit their two visible axes. Perspective edits X/Z while
- * preserving height, which keeps a fixture's trim height stable while dragging.
+ * Maps a pointer back to the stage plane using the exact inverse scale used by
+ * projectStagePoint. Orthographic views preserve real-world proportions.
  */
 export function unprojectStagePoint(
   point: StagePoint2D,
@@ -53,40 +88,40 @@ export function unprojectStagePoint(
   view: StageView,
   preserved: Vec3,
   width = 1000,
-  height = 560
+  height = 560,
+  zoom = 1
 ): Vec3 {
-  const marginX = width * 0.08;
-  const marginY = height * 0.1;
-  const drawableWidth = width - marginX * 2;
-  const drawableHeight = height - marginY * 2;
-  const screenX = clamp((point.x - marginX) / drawableWidth, 0, 1);
-  const screenY = clamp((point.y - marginY) / drawableHeight, 0, 1);
-  const normalizedX = clamp((preserved.x + dimensions.width / 2) / dimensions.width, 0, 1);
-  const normalizedY = clamp(preserved.y / dimensions.height, 0, 1);
-  const normalizedZ = clamp(preserved.z / dimensions.depth, 0, 1);
-
-  let x = normalizedX;
-  let y = normalizedY;
-  let z = normalizedZ;
-
-  if (view === 'top') {
-    x = screenX;
-    z = 1 - screenY;
-  } else if (view === 'front') {
-    x = screenX;
-    y = 1 - screenY;
-  } else if (view === 'side') {
-    z = screenX;
-    y = 1 - screenY;
-  } else {
-    z = clamp((0.82 - normalizedY * 0.48 - screenY) / 0.48, 0, 1);
-    const perspectiveScale = 1 - z * 0.32;
-    x = clamp((screenX - 0.5) / perspectiveScale + 0.5, 0, 1);
+  if (view !== 'perspective') {
+    const layout = orthographicLayout(dimensions, view, width, height, zoom);
+    const planeX = (point.x - layout.left) / layout.scale;
+    const planeY = (point.y - layout.top) / layout.scale;
+    if (view === 'top') return {
+      x: clamp(planeX - dimensions.width / 2, -dimensions.width / 2, dimensions.width / 2),
+      y: preserved.y,
+      z: clamp(dimensions.depth - planeY, 0, dimensions.depth)
+    };
+    if (view === 'front') return {
+      x: clamp(planeX - dimensions.width / 2, -dimensions.width / 2, dimensions.width / 2),
+      y: clamp(dimensions.height - planeY, 0, dimensions.height),
+      z: preserved.z
+    };
+    return {
+      x: preserved.x,
+      y: clamp(dimensions.height - planeY, 0, dimensions.height),
+      z: clamp(planeX, 0, dimensions.depth)
+    };
   }
 
+  const viewZoom = clamp(zoom, .7, 1.8);
+  const screenX = ((point.x - 500) / viewZoom + 500 - 80) / 840;
+  const screenY = ((point.y - 280) / viewZoom + 280 - 56) / 448;
+  const normalizedY = clamp(preserved.y / dimensions.height, 0, 1);
+  const z = clamp((.82 - normalizedY * .48 - screenY) / .48, 0, 1);
+  const perspectiveScale = 1 - z * .32;
+  const x = clamp((screenX - .5) / perspectiveScale + .5, 0, 1);
   return {
-    x: (x - 0.5) * dimensions.width,
-    y: y * dimensions.height,
+    x: (x - .5) * dimensions.width,
+    y: preserved.y,
     z: z * dimensions.depth
   };
 }
