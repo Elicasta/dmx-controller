@@ -89,6 +89,7 @@ export function fixtureGeometryState(
     panDegrees: movement.pan,
     tiltDegrees: movement.tilt,
     angleDegrees: beamAngle,
+    fieldAngleDegrees: profile?.optics?.fieldAngleDegrees,
     lensOffset: profile?.optics?.lensOffsetMeters
   });
   return { movement, beam, movementCapable };
