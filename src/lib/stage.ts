@@ -1,6 +1,6 @@
 import { DEFAULT_STAGE_DIMENSIONS, type EulerDegrees, type StageDimensions, type Vec3 } from '../core/geometry';
 
-export type StageElementType = 'back-wall' | 'drums' | 'person' | 'led-screen' | 'riser';
+export type StageElementType = 'back-wall' | 'drape' | 'truss' | 'drums' | 'person' | 'led-screen' | 'riser' | 'lectern';
 
 export type StageElement = {
   id: string;
@@ -23,24 +23,31 @@ export type StageDocument = {
 export const STAGE_ELEMENT_LIBRARY: ReadonlyArray<{
   type: StageElementType;
   name: string;
+  description: string;
   defaultColor: string;
   defaultSize: number;
 }> = [
-  { type: 'back-wall', name: 'Back wall', defaultColor: '#313844', defaultSize: 90 },
-  { type: 'drums', name: 'Drum kit', defaultColor: '#9aa4b2', defaultSize: 36 },
-  { type: 'person', name: 'Performer', defaultColor: '#d6dde5', defaultSize: 22 },
-  { type: 'led-screen', name: 'LED screen', defaultColor: '#8158ff', defaultSize: 54 },
-  { type: 'riser', name: 'Riser', defaultColor: '#56606d', defaultSize: 48 }
+  { type: 'back-wall', name: 'Wall', description: 'Scenic or room wall with real width, height, and depth.', defaultColor: '#4f5863', defaultSize: 88 },
+  { type: 'drape', name: 'Drape', description: 'Pipe-and-drape or masking curtain with visible folds.', defaultColor: '#16191f', defaultSize: 72 },
+  { type: 'truss', name: 'Truss', description: 'Horizontal lighting truss / goal-post segment.', defaultColor: '#8b949e', defaultSize: 58 },
+  { type: 'led-screen', name: 'LED screen', description: 'Video wall or projection/LED surface.', defaultColor: '#8158ff', defaultSize: 54 },
+  { type: 'riser', name: 'Riser', description: 'Low platform or stage deck.', defaultColor: '#56606d', defaultSize: 48 },
+  { type: 'lectern', name: 'Lectern', description: 'Pulpit / lectern position reference.', defaultColor: '#4b3b31', defaultSize: 24 },
+  { type: 'drums', name: 'Drum kit', description: 'Drum-kit footprint and aiming target.', defaultColor: '#9aa4b2', defaultSize: 36 },
+  { type: 'person', name: 'Performer', description: 'Human position / performer target.', defaultColor: '#d6dde5', defaultSize: 22 }
 ];
 
 export function makeStageElement(type: StageElementType, index: number, stageDimensions: StageDimensions = DEFAULT_STAGE_DIMENSIONS): StageElement {
   const definition = STAGE_ELEMENT_LIBRARY.find((item) => item.type === type) ?? STAGE_ELEMENT_LIBRARY[0];
   const defaultPosition: Record<StageElementType, { x: number; y: number; depth: number }> = {
-    'back-wall': { x: 50, y: 42, depth: 5 },
-    drums: { x: 50, y: 72, depth: 58 },
-    person: { x: 34, y: 70, depth: 64 },
-    'led-screen': { x: 72, y: 35, depth: 18 },
-    riser: { x: 52, y: 82, depth: 48 }
+    'back-wall': { x: 50, y: 42, depth: 96 },
+    drape: { x: 50, y: 44, depth: 92 },
+    truss: { x: 50, y: 12, depth: 62 },
+    drums: { x: 50, y: 72, depth: 70 },
+    person: { x: 34, y: 70, depth: 48 },
+    'led-screen': { x: 72, y: 35, depth: 88 },
+    riser: { x: 52, y: 82, depth: 68 },
+    lectern: { x: 50, y: 72, depth: 42 }
   };
   const position = defaultPosition[type];
   return migrateStageElement({
@@ -71,7 +78,7 @@ export function isStageElement(value: unknown): value is StageElement {
   if (!value || typeof value !== 'object') return false;
   const item = value as Partial<StageElement>;
   return typeof item.id === 'string'
-    && ['back-wall', 'drums', 'person', 'led-screen', 'riser'].includes(item.type ?? '')
+    && ['back-wall', 'drape', 'truss', 'drums', 'person', 'led-screen', 'riser', 'lectern'].includes(item.type ?? '')
     && typeof item.label === 'string'
     && typeof item.x === 'number'
     && typeof item.y === 'number'
@@ -96,10 +103,13 @@ function isElementTransform(value: unknown): value is NonNullable<StageElement['
 }
 
 function defaultPhysicalSize(type: StageElementType, stage: StageDimensions): Vec3 {
-  if (type === 'back-wall') return { x: stage.width * .9, y: stage.height * .55, z: .15 };
+  if (type === 'back-wall') return { x: stage.width * .9, y: stage.height * .62, z: .18 };
+  if (type === 'drape') return { x: Math.min(stage.width * .7, 6), y: Math.min(stage.height * .72, 4), z: .12 };
+  if (type === 'truss') return { x: Math.min(stage.width * .65, 6), y: .3, z: .3 };
   if (type === 'drums') return { x: 2, y: 1.4, z: 1.7 };
   if (type === 'person') return { x: .6, y: 1.8, z: .6 };
   if (type === 'led-screen') return { x: 3.6, y: 2, z: .15 };
+  if (type === 'lectern') return { x: .75, y: 1.2, z: .55 };
   return { x: 2.4, y: .45, z: 1.8 };
 }
 
