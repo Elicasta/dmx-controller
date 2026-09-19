@@ -64,6 +64,7 @@ export type BeamRay = {
   origin: Vec3;
   direction: Vec3;
   angleDegrees: number;
+  fieldAngleDegrees: number;
 };
 
 export type MovementDegrees = {
@@ -289,6 +290,7 @@ export function calculateBeamRay(input: {
   panDegrees: number;
   tiltDegrees: number;
   angleDegrees?: number;
+  fieldAngleDegrees?: number;
   lensOffset?: Vec3;
 }): BeamRay {
   const mount = mountingRotation(input.mounting);
@@ -305,7 +307,8 @@ export function calculateBeamRay(input: {
   return {
     origin: add(input.transform.position, lensOffset),
     direction: normalize(direction),
-    angleDegrees: Math.max(0.1, input.angleDegrees ?? 12)
+    angleDegrees: Math.max(0.1, input.angleDegrees ?? 12),
+    fieldAngleDegrees: Math.max(input.angleDegrees ?? 12, input.fieldAngleDegrees ?? (input.angleDegrees ?? 12) * 1.35)
   };
 }
 
