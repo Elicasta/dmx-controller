@@ -1579,3 +1579,17 @@ input[type="text"], input[type="number"], .add-fixture-grid input, .patch-card-b
 .stage-measure-card span { color: #77a7c5; font-size: 7px; font-weight: 850; letter-spacing: .8px; }
 .stage-measure-card strong { color: #edf7ff; font-size: 18px; line-height: 1.1; }
 .stage-measure-card small { color: #7790a0; font-size: 7px; }
+
+.stage-mode-rotate .stage-unit-button,
+.stage-mode-rotate .stage-object {
+  cursor: ew-resize;
+  touch-action: none;
+  user-select: none;
+}
+
+.stage-mode-rotate .stage-unit-button::after,
+.stage-mode-rotate .stage-object::after {
+  content: '';
+  position: absolute;
+  inset: -8px;
+}
