@@ -2620,6 +2620,16 @@ export default function App() {
   function remoteStateSnapshot() {
     const bpm = tempoSource === 'midi' && midiBpm ? midiBpm : effectBpm;
     return {
+      protocolVersion: 2,
+      appName: appVersion.includes('stage-preview') ? 'LumaRig Stage Preview' : 'LumaRig',
+      appVersion,
+      buildChannel: appVersion.includes('stage-preview') ? 'stage-preview' : 'production',
+      stage: {
+        view: stageView,
+        mode: stageMode,
+        objectCount: stageElements.length,
+        selectedObjectId: selectedStageElementId
+      },
       revision: runtimeRef.current?.snapshot.revision ?? 0,
       showName: showFile.name,
       currentCue: activeCue ? { id: activeCue.id, number: activeCue.number, name: activeCue.name } : null,
