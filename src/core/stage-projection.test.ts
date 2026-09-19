@@ -19,6 +19,12 @@ describe('stage engineering views', () => {
     expect(restored.z).toBeCloseTo(original.z, 6);
   });
 
+  it('keeps upstage above downstage in plan view', () => {
+    const downstage = projectStagePoint({ x: 0, y: 0, z: 0 }, DEFAULT_STAGE_DIMENSIONS, 'top');
+    const upstage = projectStagePoint({ x: 0, y: 0, z: DEFAULT_STAGE_DIMENSIONS.depth }, DEFAULT_STAGE_DIMENSIONS, 'top');
+    expect(upstage.y).toBeLessThan(downstage.y);
+  });
+
   it('preserves the hidden axis while editing orthographic views', () => {
     const preserved = { x: 1, y: 3, z: 4 };
     expect(unprojectStagePoint({ x: 500, y: 280 }, DEFAULT_STAGE_DIMENSIONS, 'top', preserved).y).toBeCloseTo(3, 8);
