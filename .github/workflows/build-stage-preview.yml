@@ -1,0 +1,77 @@
+name: Build Stage Preview
+
+on:
+  push:
+    branches:
+      - stage-editor-v2
+    paths-ignore:
+      - "docs/**"
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: macos-latest
+
+    steps:
+      - name: Check out stage branch
+        uses: actions/checkout@v7
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: lts/*
+          cache: npm
+
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-darwin
+
+      - name: Cache Rust build
+        uses: swatinem/rust-cache@v2
+        with:
+          workspaces: "./src-tauri -> target"
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Mark this build as a separate preview app
+        run: |
+          node <<'NODE'
+          const fs = require('fs');
+
+          const pkgPath = 'package.json';
+          const pkg = JSON.parse(fs.readFileSync(pkgPath, 'utf8'));
+          pkg.version = '99.0.0-stage-preview';
+          fs.writeFileSync(pkgPath, JSON.stringify(pkg, null, 2) + '\n');
+
+          const configPath = 'src-tauri/tauri.conf.json';
+          const config = JSON.parse(fs.readFileSync(configPath, 'utf8'));
+          config.productName = 'LumaRig Stage Preview';
+          config.identifier = 'com.eccreative.lumarig.stagepreview';
+          config.bundle.createUpdaterArtifacts = false;
+          if (config.app?.windows?.[0]) config.app.windows[0].title = 'LumaRig Stage Preview';
+          fs.writeFileSync(configPath, JSON.stringify(config, null, 2) + '\n');
+          NODE
+
+      - name: Frontend tests
+        run: npm test
+
+      - name: Build Apple Silicon preview DMG
+        run: npm run tauri build -- --target aarch64-apple-darwin --bundles dmg
+
+      - name: Collect DMG
+        run: |
+          mkdir -p artifact
+          DMG="$(find src-tauri/target/aarch64-apple-darwin/release/bundle/dmg -name '*.dmg' -type f -print -quit)"
+          test -n "$DMG"
+          cp "$DMG" "artifact/LumaRig-Stage-Preview.dmg"
+
+      - name: Upload preview DMG
+        uses: actions/upload-artifact@v4
+        with:
+          name: LumaRig-Stage-Preview
+          path: artifact/LumaRig-Stage-Preview.dmg
+          retention-days: 14
