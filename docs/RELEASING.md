@@ -1,4 +1,4 @@
-# Releasing DMX Controller
+# Releasing LumaRig
 
 The source repository can stay private. Installed apps must be able to download the updater manifest and signed bundles without a GitHub login, so release artifacts are published to a separate public repository:
 
@@ -36,7 +36,7 @@ Keep a secure backup of the private updater key and its password. Losing either 
 
 The currently installed 0.2.0 build does not contain the updater. Publish version `0.3.0`, download the Apple Silicon DMG on the M1 Mac, and install it once manually.
 
-After 0.3.0 is installed, later releases can be installed from inside DMX Controller.
+After 0.3.0 is installed, later releases can be installed from inside LumaRig.
 
 ## Publish a release without Terminal
 
@@ -58,7 +58,7 @@ The workflow:
 
 ## In-app behavior
 
-DMX Controller checks for an update shortly after launch and also exposes **Setup → Settings → Software Update → Check for Updates**.
+LumaRig checks for an update shortly after launch and also exposes **Setup → Settings → Software Update → Check for Updates**.
 
 When an operator installs an update while physical DMX is connected, the app stops active effects, disarms audio-reactive output, zeros/disconnects uDMX, installs the signed update, and restarts. This avoids leaving the USB interface intentionally live during the app replacement/restart.
 
