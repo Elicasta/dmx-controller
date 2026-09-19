@@ -1,11 +1,6 @@
 name: Publish macOS Release
 
 on:
-  push:
-    branches:
-      - main
-    paths:
-      - ".github/workflows/publish-macos.yml"
   workflow_dispatch:
     inputs:
       version:
@@ -15,14 +10,14 @@ on:
       notes:
         description: "Release notes shown in GitHub and the in-app updater"
         required: false
-        default: "DMX Controller update"
+        default: "LumaRig update"
         type: string
 
 permissions:
   contents: read
 
 concurrency:
-  group: dmx-controller-release-${{ inputs.version || '0.3.0' }}
+  group: lumarig-release-${{ inputs.version }}
   cancel-in-progress: false
 
 jobs:
@@ -111,7 +106,7 @@ jobs:
           test -n "$UPDATER_PRIVATE_KEY_PASSWORD" || (echo "Missing TAURI_SIGNING_PRIVATE_KEY_PASSWORD" && exit 1)
 
       - name: Set release version
-        run: npm version "${{ inputs.version || '0.3.0' }}" --no-git-tag-version --allow-same-version
+        run: npm version "${{ inputs.version }}" --no-git-tag-version --allow-same-version
 
       - name: Inject updater public key
         env:
@@ -138,8 +133,8 @@ jobs:
           repo: dmx-controller-releases
           releaseCommitish: main
           tagName: app-v__VERSION__
-          releaseName: "DMX Controller v__VERSION__"
-          releaseBody: ${{ inputs.notes || 'First updater-enabled DMX Controller release.' }}
+          releaseName: "LumaRig v__VERSION__"
+          releaseBody: ${{ inputs.notes }}
           releaseDraft: false
           prerelease: false
           generateReleaseNotes: false
