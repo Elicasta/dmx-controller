@@ -33,14 +33,19 @@ Implemented on the branch:
 - duplicate and delete controls directly in the stage view;
 - Delete / Backspace shortcut and Escape-to-deselect;
 - improved object library cards and scenery styling;
-- stage-object selection now has a usable editing path rather than falling through to the fixture inspector.
+- stage-object selection now has a usable editing path rather than falling through to the fixture inspector;
+- live-output ambient wash in the Show view;
+- beam cones and endpoint pools instead of thin diagnostic lines;
+- moving-head / static-fixture visual symbols with live lens color;
+- scenery collision so beams terminate on stage objects before the room shell;
+- 0.25 m / 0.5 m / 1 m snapping while dragging;
+- Measure mode now surfaces throw distance plus horizontal/vertical angles.
 
 ## Remaining high-value work
 
 ### Stage / visualizer
 
-- Stage-object collision meshes so beams terminate on scenery, screens, walls, and drape instead of only the room shell.
-- Better wall-segment editing, snapping, alignment, multi-select, duplication offsets, and object layering.
+- Better wall-segment editing, alignment, multi-select, and object layering.
 - Rotation handles / direct manipulation instead of inspector-only rotation.
 - Measurement overlays, rulers, guides, snapping, and configurable stage origin.
 - Richer physical fixture symbols and hanging/truss attachment relationships.
