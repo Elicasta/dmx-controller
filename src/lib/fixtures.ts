@@ -64,6 +64,7 @@ export type FixtureProfile = {
     beamAngleMinDegrees: number;
     beamAngleMaxDegrees: number;
     defaultBeamAngleDegrees: number;
+    fieldAngleDegrees?: number;
   };
   modes: FixtureMode[];
 };
@@ -109,6 +110,7 @@ export const FIXTURE_LIBRARY: readonly FixtureProfile[] = [
     category: 'Par',
     verified: true,
     note: 'Ch05 mode verified against the ADJ manual and the connected fixture.',
+    optics: { beamAngleMinDegrees: 30, beamAngleMaxDegrees: 30, defaultBeamAngleDegrees: 30, fieldAngleDegrees: 42 },
     modes: [{
       id: 'ch05',
       name: 'Ch05 · RGB UV Dimmer',
