@@ -2299,19 +2299,39 @@ export default function App() {
 
   function renderStagePreview(interactive = false) {
     const beamLength = Math.max(stageSettings.dimensions.width, stageSettings.dimensions.depth, stageSettings.dimensions.height) * 1.2;
+    const stageViews: Array<{ id: StageView; label: string }> = [
+      { id: 'perspective', label: '3D' },
+      { id: 'top', label: 'Plan' },
+      { id: 'front', label: 'Front' },
+      { id: 'side', label: 'Side' }
+    ];
     return (
       <div className={`multi-stage physical-stage stage-view-${stageView} stage-mode-${stageMode}`}>
         <div className="stage-view-toolbar" role="group" aria-label="Stage view">
-          {(['perspective', 'top', 'front', 'side'] as StageView[]).map((view) => <button key={view} className={stageView === view ? 'active' : ''} onClick={() => setStageView(view)}>{view}</button>)}
+          {stageViews.map((view) => <button key={view.id} className={stageView === view.id ? 'active' : ''} onClick={() => setStageView(view.id)}>{view.label}</button>)}
         </div>
+        {interactive && selectedStageElement && <div className="stage-selection-actions"><span>{selectedStageElement.label}</span><button onClick={() => duplicateStageElement(selectedStageElement.id)}>Duplicate</button><button className="danger-button" onClick={() => removeStageElement(selectedStageElement.id)}>Delete</button></div>}
         <svg className="stage-geometry-svg" viewBox="0 0 1000 560" aria-label={`${stageView} physical stage view`}>
           <defs>
             <filter id="beam-glow"><feGaussianBlur stdDeviation="7" /></filter>
             <pattern id="stage-grid" width="50" height="50" patternUnits="userSpaceOnUse"><path d="M 50 0 L 0 0 0 50" fill="none" stroke="rgba(125,145,166,.12)" strokeWidth="1" /></pattern>
           </defs>
-          <rect x="80" y="56" width="840" height="448" rx="10" fill="url(#stage-grid)" stroke="rgba(125,145,166,.28)" />
-          <line x1="500" y1="56" x2="500" y2="504" stroke="rgba(125,145,166,.2)" strokeDasharray="8 8" />
-          <line x1="80" y1="280" x2="920" y2="280" stroke="rgba(125,145,166,.2)" strokeDasharray="8 8" />
+          {stageView === 'perspective' ? <>
+            <path d="M 145 492 L 855 492 L 705 74 L 295 74 Z" fill="url(#stage-grid)" stroke="rgba(125,145,166,.34)" />
+            <line x1="500" y1="492" x2="500" y2="74" stroke="rgba(125,145,166,.18)" strokeDasharray="8 8" />
+            <line x1="182" y1="390" x2="818" y2="390" stroke="rgba(125,145,166,.14)" />
+            <line x1="222" y1="280" x2="778" y2="280" stroke="rgba(125,145,166,.14)" />
+            <line x1="260" y1="174" x2="740" y2="174" stroke="rgba(125,145,166,.14)" />
+            <text className="stage-axis-label" x="500" y="526" textAnchor="middle">DOWNSTAGE · AUDIENCE</text>
+            <text className="stage-axis-label" x="500" y="62" textAnchor="middle">UPSTAGE</text>
+          </> : <>
+            <rect x="80" y="56" width="840" height="448" rx="6" fill="url(#stage-grid)" stroke="rgba(125,145,166,.28)" />
+            <line x1="500" y1="56" x2="500" y2="504" stroke="rgba(125,145,166,.2)" strokeDasharray="8 8" />
+            <line x1="80" y1="280" x2="920" y2="280" stroke="rgba(125,145,166,.2)" strokeDasharray="8 8" />
+            {stageView === 'top' && <><text className="stage-axis-label" x="500" y="46" textAnchor="middle">UPSTAGE</text><text className="stage-axis-label" x="500" y="526" textAnchor="middle">DOWNSTAGE · AUDIENCE</text><text className="stage-axis-label" x="88" y="276">STAGE LEFT</text><text className="stage-axis-label" x="912" y="276" textAnchor="end">STAGE RIGHT</text></>}
+            {stageView === 'front' && <><text className="stage-axis-label" x="88" y="526">STAGE LEFT</text><text className="stage-axis-label" x="912" y="526" textAnchor="end">STAGE RIGHT</text><text className="stage-axis-label" x="500" y="46" textAnchor="middle">CEILING</text><text className="stage-axis-label" x="500" y="526" textAnchor="middle">FLOOR</text></>}
+            {stageView === 'side' && <><text className="stage-axis-label" x="88" y="526">DOWNSTAGE</text><text className="stage-axis-label" x="912" y="526" textAnchor="end">UPSTAGE</text><text className="stage-axis-label" x="500" y="46" textAnchor="middle">CEILING</text></>}
+          </>}
           {patch.map((fixture, index) => {
             const values = fixtureValues(outputUniverse, fixture);
             const rgb: [number, number, number] = values.red + values.green + values.blue > 0 ? [values.red, values.green, values.blue] : values.uv > 0 ? [120, 62, 255] : [75, 83, 94];
@@ -2357,29 +2377,62 @@ export default function App() {
           })}
         </svg>
         {stageElements.map((element) => {
-          const worldPosition = stageElementPosition(element, stageSettings.dimensions);
+          const resolved = migrateStageElement(element, stageSettings.dimensions);
+          const worldPosition = stageElementPosition(resolved, stageSettings.dimensions);
           const projected = projectStagePoint(worldPosition, stageSettings.dimensions, stageView);
-          const scale = .58 + element.depth * .006;
-          const widthFactor = element.type === 'back-wall' ? 5 : element.type === 'riser' ? 3.2 : element.type === 'person' ? 1.8 : 2.2;
+          const dimensions = resolved.dimensions!;
+          const normalizedDepth = Math.max(0, Math.min(1, worldPosition.z / Math.max(.01, stageSettings.dimensions.depth)));
+          const perspectiveScale = stageView === 'perspective' ? 1 - normalizedDepth * .32 : 1;
+          const widthSpan = stageView === 'side' ? stageSettings.dimensions.depth : stageSettings.dimensions.width;
+          const heightSpan = stageView === 'top' ? stageSettings.dimensions.depth : stageSettings.dimensions.height;
+          const widthMeters = stageView === 'side' ? dimensions.z : dimensions.x;
+          const heightMeters = stageView === 'top' ? dimensions.z : dimensions.y;
+          const projectedWidth = Math.max(24, Math.min(520, widthMeters / Math.max(.01, widthSpan) * 840 * perspectiveScale));
+          const projectedHeight = Math.max(8, Math.min(260, heightMeters / Math.max(.01, heightSpan) * 448 * (stageView === 'perspective' ? perspectiveScale : 1)));
+          const rotation = stageView === 'top'
+            ? resolved.transform!.rotation.yaw
+            : stageView === 'front'
+              ? resolved.transform!.rotation.roll
+              : stageView === 'side'
+                ? resolved.transform!.rotation.pitch
+                : resolved.transform!.rotation.yaw * .35;
           const selected = interactive && selectedStageElementId === element.id;
           const target = stageTargets.find((item) => item.id === `target-element-${element.id}`);
           const targetable = interactive && ['aim', 'measure', 'target'].includes(stageMode);
-          return <button className={`stage-object stage-object-${element.type} ${selected ? 'selected' : ''} ${targetable ? 'targetable' : ''}`} aria-label={`${stageMode === 'aim' ? 'Aim at' : stageMode === 'move' ? 'Drag' : 'Select'} ${element.label} stage element`} key={element.id} style={{ left: `${projected.x / 10}%`, top: `${projected.y / 5.6}%`, zIndex: Math.round(20 + element.depth / 12), color: element.color, transform: `translate(-50%, -50%) scale(${scale})`, width: `${element.size * widthFactor}px` }} onPointerDown={(event) => { if (interactive) beginStageDrag(event, 'element', element.id, worldPosition); }} onPointerMove={(event) => { if (interactive) moveStageDrag(event); }} onPointerUp={(event) => { if (interactive) endStageDrag(event); }} onPointerCancel={(event) => { if (interactive) endStageDrag(event); }} onClick={() => {
-            if (!interactive) return;
-            if (targetable && target) {
-              setSelectedTargetId(target.id);
-              if (stageMode === 'aim') void aimAtTarget(target);
-              return;
-            }
-            setSelectedStageElementId(element.id);
-          }}><span className="stage-object-shape" style={{ borderColor: element.color, backgroundColor: element.type === 'led-screen' ? element.color : undefined }} /><b>{element.label}</b></button>;
+          return <button
+            className={`stage-object stage-object-${element.type} ${selected ? 'selected' : ''} ${targetable ? 'targetable' : ''}`}
+            aria-label={`${stageMode === 'aim' ? 'Aim at' : stageMode === 'move' ? 'Drag' : 'Select'} ${element.label} stage element`}
+            key={element.id}
+            title={`${element.label} · ${dimensions.x.toFixed(1)} × ${dimensions.y.toFixed(1)} × ${dimensions.z.toFixed(1)} m`}
+            style={{
+              left: `${projected.x / 10}%`,
+              top: `${projected.y / 5.6}%`,
+              zIndex: Math.round(60 - normalizedDepth * 20),
+              color: element.color,
+              transform: `translate(-50%, -50%) rotate(${rotation}deg)`,
+              width: `${projectedWidth}px`
+            }}
+            onPointerDown={(event) => { if (interactive) beginStageDrag(event, 'element', element.id, worldPosition); }}
+            onPointerMove={(event) => { if (interactive) moveStageDrag(event); }}
+            onPointerUp={(event) => { if (interactive) endStageDrag(event); }}
+            onPointerCancel={(event) => { if (interactive) endStageDrag(event); }}
+            onClick={() => {
+              if (!interactive) return;
+              if (targetable && target) {
+                setSelectedTargetId(target.id);
+                if (stageMode === 'aim') void aimAtTarget(target);
+                return;
+              }
+              setSelectedStageElementId(element.id);
+            }}
+          ><span className="stage-object-shape" style={{ borderColor: element.color, height: `${projectedHeight}px`, backgroundColor: element.type === 'led-screen' ? element.color : undefined }} /><b>{element.label}</b></button>;
         })}
         {patch.map((fixture, index) => {
           const geometry = fixtureGeometryState(outputUniverse, fixture, index, patch.length, stageSettings.dimensions);
           const projected = projectStagePoint(geometry.beam.origin, stageSettings.dimensions, stageView);
           return <div className={`stage-light physical-fixture ${stageFixture?.id === fixture.id && interactive ? 'editing' : ''} ${fixture.selected ? 'selected' : ''}`} key={fixture.id} style={{ left: `${projected.x / 10}%`, top: `${projected.y / 5.6}%`, zIndex: 40 }}><button className="stage-unit stage-unit-button" style={{ borderColor: fixture.labelColor ?? '#505b68' }} aria-label={`${stageMode === 'move' ? 'Drag' : 'Select'} ${fixture.name} on stage`} onPointerDown={(event) => { if (interactive) beginStageDrag(event, 'fixture', fixture.id, fixtureTransform(fixture, index, patch.length, stageSettings.dimensions).position); }} onPointerMove={(event) => { if (interactive) moveStageDrag(event); }} onPointerUp={(event) => { if (interactive) endStageDrag(event); }} onPointerCancel={(event) => { if (interactive) endStageDrag(event); }} onClick={(event) => { if (interactive) selectFixtureFromConsole(fixture.id, event.metaKey || event.ctrlKey || event.shiftKey); }} /><span className="stage-light-label" style={{ borderColor: fixture.labelColor ?? '#3a444f', color: fixture.labelColor ?? '#c9d0d8' }}>{fixture.name}{geometry.movementCapable ? ` · ${Math.round(geometry.movement.pan)}°/${Math.round(geometry.movement.tilt)}°` : ''}</span></div>;
         })}
-        <div className="stage-coordinate-key">X stage left/right · Y floor/ceiling · Z downstage/upstage · meters internally</div>
+        <div className="stage-coordinate-key">{stageView === 'top' ? 'PLAN · X left/right · Z downstage/upstage' : stageView === 'front' ? 'FRONT · X left/right · Y floor/ceiling' : stageView === 'side' ? 'SIDE · Z downstage/upstage · Y floor/ceiling' : '3D · physical stage coordinates'} · {stageSettings.unit === 'feet' ? 'feet shown in inspector' : 'meters shown in inspector'}</div>
       </div>
     );
   }
