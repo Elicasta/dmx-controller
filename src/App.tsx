@@ -572,6 +572,8 @@ export default function App() {
   const [stageSettings, setStageSettings] = useState<StageSettings>(loadStageSettings);
   const [stageView, setStageView] = useState<StageView>('perspective');
   const [stageMode, setStageMode] = useState<StageDesignerMode>('select');
+  const [stageSnapEnabled, setStageSnapEnabled] = useState(true);
+  const [stageSnapMeters, setStageSnapMeters] = useState(.5);
   const stageDragRef = useRef<{ pointerId: number; kind: 'fixture' | 'element'; id: string; preserved: Vec3; moved: boolean } | null>(null);
   const [selectedTargetId, setSelectedTargetId] = useState('target-center-stage');
   const [aimArrangement, setAimArrangement] = useState<TargetArrangement>('converge');
@@ -2218,7 +2220,13 @@ export default function App() {
     const point = stagePointFromPointer(event);
     if (!point) return;
     event.preventDefault();
-    const position = unprojectStagePoint(point, stageSettings.dimensions, stageView, drag.preserved);
+    const rawPosition = unprojectStagePoint(point, stageSettings.dimensions, stageView, drag.preserved);
+    const snap = (value: number) => stageSnapEnabled ? Math.round(value / stageSnapMeters) * stageSnapMeters : value;
+    const position = {
+      x: snap(rawPosition.x),
+      y: snap(rawPosition.y),
+      z: snap(rawPosition.z)
+    };
     drag.moved = true;
     if (drag.kind === 'fixture') {
       setPatch((current) => current.map((fixture, index) => {
