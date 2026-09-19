@@ -45,12 +45,12 @@ jobs:
           mkdir -p artifact
           DMG="$(find src-tauri/target/aarch64-apple-darwin/release/bundle/dmg -name '*.dmg' -type f -print -quit)"
           test -n "$DMG"
-          cp "$DMG" "artifact/DMX-Controller-Apple-Silicon.dmg"
+          cp "$DMG" "artifact/LumaRig-Apple-Silicon.dmg"
 
       - name: Upload DMG
         uses: actions/upload-artifact@v4
         with:
-          name: DMX-Controller-Apple-Silicon
-          path: artifact/DMX-Controller-Apple-Silicon.dmg
+          name: LumaRig-Apple-Silicon
+          path: artifact/LumaRig-Apple-Silicon.dmg
           if-no-files-found: error
           retention-days: 30
