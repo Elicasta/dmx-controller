@@ -2195,7 +2195,7 @@ export default function App() {
   }
 
   function stagePointFromPointer(event: ReactPointerEvent<Element>): StagePoint2D | null {
-    const stage = event.currentTarget.closest<HTMLElement>('.multi-stage');
+    const stage = event.currentTarget.closest('.multi-stage') as HTMLElement | null;
     if (!stage) return null;
     const bounds = stage.getBoundingClientRect();
     if (!bounds.width || !bounds.height) return null;
