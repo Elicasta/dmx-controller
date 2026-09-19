@@ -146,8 +146,14 @@ jobs:
 
           const latestResponse = await fetch(latestAsset.browser_download_url);
           if (!latestResponse.ok) throw new Error(`Could not download preview latest.json: ${latestResponse.status}`);
-          const latestText = await latestResponse.text();
-          JSON.parse(latestText);
+          const latest = JSON.parse(await latestResponse.text());
+
+          const updaterBundle = release.assets.find((asset) => asset.name.endsWith('.app.tar.gz'));
+          if (!updaterBundle) throw new Error('Preview release did not contain a macOS updater bundle.');
+          for (const platform of Object.values(latest.platforms || {})) {
+            platform.url = updaterBundle.browser_download_url;
+          }
+          const latestText = JSON.stringify(latest, null, 2) + '\n';
 
           let currentSha;
           const current = await fetch(`https://api.github.com/repos/${owner}/${repo}/contents/latest-preview.json?ref=main`, { headers });
