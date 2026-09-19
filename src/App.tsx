@@ -576,6 +576,7 @@ export default function App() {
   const [stageSnapEnabled, setStageSnapEnabled] = useState(true);
   const [stageSnapMeters, setStageSnapMeters] = useState(.5);
   const [visualizerHaze, setVisualizerHaze] = useState(.32);
+  const [stageZoom, setStageZoom] = useState(1);
   const stageDragRef = useRef<{
     pointerId: number;
     kind: 'fixture' | 'element';
@@ -1694,6 +1695,15 @@ export default function App() {
     setMessage(`${stageFixture.name} sent to profile home.`);
   }
 
+  function setMoverAxis(fixture: PatchedFixture, axis: 'pan' | 'tilt', normalized: number) {
+    const index = patch.findIndex((item) => item.id === fixture.id);
+    if (index < 0) return;
+    const geometry = fixtureGeometryState(universeRef.current, fixture, index, patch.length, stageSettings.dimensions);
+    const pan = axis === 'pan' ? normalized : geometry.movement.panNormalized;
+    const tilt = axis === 'tilt' ? normalized : geometry.movement.tiltNormalized;
+    void setChannels(fixtureMovementUpdates(fixture, pan, tilt), true, 'ui');
+  }
+
   function removeFixture(fixture: PatchedFixture) {
     if (patch.length === 1) return setMessage('Keep at least one fixture in the patch.');
     if (!window.confirm(`Remove ${fixture.name} from the patch? Its current DMX channels will be zeroed.`)) return;
@@ -2209,9 +2219,11 @@ export default function App() {
     event: ReactPointerEvent<Element>,
     kind: 'fixture' | 'element',
     id: string,
-    preserved: Vec3
+    preserved: Vec3,
+    forcedMode?: 'move' | 'rotate'
   ) {
-    if (!['move', 'rotate'].includes(stageMode) || (event.pointerType === 'mouse' && event.button !== 0)) return;
+    const requestedMode = forcedMode ?? (stageMode === 'rotate' ? 'rotate' : stageMode === 'move' ? 'move' : null);
+    if (!requestedMode || (event.pointerType === 'mouse' && event.button !== 0)) return;
     event.preventDefault();
     event.stopPropagation();
     event.currentTarget.setPointerCapture(event.pointerId);
@@ -2227,7 +2239,7 @@ export default function App() {
       pointerId: event.pointerId,
       kind,
       id,
-      mode: stageMode === 'rotate' ? 'rotate' : 'move',
+      mode: requestedMode,
       preserved,
       startPoint,
       startRotation,
@@ -2271,7 +2283,7 @@ export default function App() {
       return;
     }
 
-    const rawPosition = unprojectStagePoint(point, stageSettings.dimensions, stageView, drag.preserved);
+    const rawPosition = unprojectStagePoint(point, stageSettings.dimensions, stageView, drag.preserved, 1000, 560, stageZoom);
     const snap = (value: number) => stageSnapEnabled ? Math.round(value / stageSnapMeters) * stageSnapMeters : value;
     const position = {
       x: snap(rawPosition.x),
@@ -2389,6 +2401,11 @@ export default function App() {
       >
         <div className="stage-view-toolbar" role="group" aria-label="Stage view">
           {stageViews.map((view) => <button key={view.id} className={stageView === view.id ? 'active' : ''} onClick={() => setStageView(view.id)}>{view.label}</button>)}
+          <span className="stage-zoom-divider" />
+          <button aria-label="Zoom out" disabled={stageZoom <= .7} onClick={() => setStageZoom((value) => Math.max(.7, Number((value - .1).toFixed(1))))}>−</button>
+          <b className="stage-zoom-readout">{Math.round(stageZoom * 100)}%</b>
+          <button aria-label="Zoom in" disabled={stageZoom >= 1.8} onClick={() => setStageZoom((value) => Math.min(1.8, Number((value + .1).toFixed(1))))}>＋</button>
+          <button aria-label="Reset zoom" onClick={() => setStageZoom(1)}>Fit</button>
         </div>
         {interactive && selectedStageElement && <div className="stage-selection-actions"><span>{selectedStageElement.label}</span><button onClick={() => duplicateStageElement(selectedStageElement.id)}>Duplicate</button><button className="danger-button" onClick={() => removeStageElement(selectedStageElement.id)}>Delete</button></div>}
         <svg className="stage-geometry-svg" viewBox="0 0 1000 560" aria-label={`${stageView} physical stage view`}>
@@ -2396,22 +2413,28 @@ export default function App() {
             <filter id="beam-glow"><feGaussianBlur stdDeviation="7" /></filter>
             <pattern id="stage-grid" width="50" height="50" patternUnits="userSpaceOnUse"><path d="M 50 0 L 0 0 0 50" fill="none" stroke="rgba(125,145,166,.12)" strokeWidth="1" /></pattern>
           </defs>
-          {stageView === 'perspective' ? <>
-            <path d="M 145 492 L 855 492 L 705 74 L 295 74 Z" fill="url(#stage-grid)" stroke="rgba(125,145,166,.34)" />
-            <line x1="500" y1="492" x2="500" y2="74" stroke="rgba(125,145,166,.18)" strokeDasharray="8 8" />
-            <line x1="182" y1="390" x2="818" y2="390" stroke="rgba(125,145,166,.14)" />
-            <line x1="222" y1="280" x2="778" y2="280" stroke="rgba(125,145,166,.14)" />
-            <line x1="260" y1="174" x2="740" y2="174" stroke="rgba(125,145,166,.14)" />
-            <text className="stage-axis-label" x="500" y="526" textAnchor="middle">DOWNSTAGE · AUDIENCE</text>
-            <text className="stage-axis-label" x="500" y="62" textAnchor="middle">UPSTAGE</text>
-          </> : <>
-            <rect x="80" y="56" width="840" height="448" rx="6" fill="url(#stage-grid)" stroke="rgba(125,145,166,.28)" />
-            <line x1="500" y1="56" x2="500" y2="504" stroke="rgba(125,145,166,.2)" strokeDasharray="8 8" />
-            <line x1="80" y1="280" x2="920" y2="280" stroke="rgba(125,145,166,.2)" strokeDasharray="8 8" />
-            {stageView === 'top' && <><text className="stage-axis-label" x="500" y="46" textAnchor="middle">UPSTAGE</text><text className="stage-axis-label" x="500" y="526" textAnchor="middle">DOWNSTAGE · AUDIENCE</text><text className="stage-axis-label" x="88" y="276">STAGE LEFT</text><text className="stage-axis-label" x="912" y="276" textAnchor="end">STAGE RIGHT</text></>}
-            {stageView === 'front' && <><text className="stage-axis-label" x="88" y="526">STAGE LEFT</text><text className="stage-axis-label" x="912" y="526" textAnchor="end">STAGE RIGHT</text><text className="stage-axis-label" x="500" y="46" textAnchor="middle">CEILING</text><text className="stage-axis-label" x="500" y="526" textAnchor="middle">FLOOR</text></>}
-            {stageView === 'side' && <><text className="stage-axis-label" x="88" y="526">DOWNSTAGE</text><text className="stage-axis-label" x="912" y="526" textAnchor="end">UPSTAGE</text><text className="stage-axis-label" x="500" y="46" textAnchor="middle">CEILING</text></>}
-          </>}
+          {(() => {
+            const floorCorners = [
+              { x: -stageSettings.dimensions.width / 2, y: 0, z: 0 },
+              { x: stageSettings.dimensions.width / 2, y: 0, z: 0 },
+              { x: stageSettings.dimensions.width / 2, y: 0, z: stageSettings.dimensions.depth },
+              { x: -stageSettings.dimensions.width / 2, y: 0, z: stageSettings.dimensions.depth }
+            ].map((point) => projectStagePoint(point, stageSettings.dimensions, stageView, 1000, 560, stageZoom));
+            const outline = floorCorners.map((point) => `${point.x},${point.y}`).join(' ');
+            if (stageView === 'front' || stageView === 'side') {
+              const horizontal = stageView === 'front' ? stageSettings.dimensions.width : stageSettings.dimensions.depth;
+              const corners = [
+                stageView === 'front' ? { x: -horizontal / 2, y: 0, z: 0 } : { x: 0, y: 0, z: 0 },
+                stageView === 'front' ? { x: horizontal / 2, y: 0, z: 0 } : { x: 0, y: 0, z: horizontal },
+                stageView === 'front' ? { x: horizontal / 2, y: stageSettings.dimensions.height, z: 0 } : { x: 0, y: stageSettings.dimensions.height, z: horizontal },
+                stageView === 'front' ? { x: -horizontal / 2, y: stageSettings.dimensions.height, z: 0 } : { x: 0, y: stageSettings.dimensions.height, z: 0 }
+              ].map((point) => projectStagePoint(point, stageSettings.dimensions, stageView, 1000, 560, stageZoom));
+              return <polygon points={corners.map((point) => `${point.x},${point.y}`).join(' ')} fill="url(#stage-grid)" stroke="rgba(125,145,166,.34)" />;
+            }
+            return <polygon points={outline} fill="url(#stage-grid)" stroke="rgba(125,145,166,.34)" />;
+          })()}
+          <text className="stage-axis-label" x="500" y="24" textAnchor="middle">{stageView === 'top' ? 'UPSTAGE' : stageView === 'front' || stageView === 'side' ? 'CEILING' : 'UPSTAGE'}</text>
+          <text className="stage-axis-label" x="500" y="548" textAnchor="middle">{stageView === 'top' || stageView === 'perspective' ? 'DOWNSTAGE · AUDIENCE' : 'FLOOR'}</text>
           {patch.map((fixture, index) => {
             const values = fixtureValues(outputUniverse, fixture);
             const profile = findProfile(fixture.profileId);
@@ -2419,10 +2442,10 @@ export default function App() {
             const color = `rgb(${rgb.join(' ')})`;
             const level = dmxStatus.blackout ? 0 : values.dimmer / 255;
             const geometry = fixtureGeometryState(outputUniverse, fixture, index, patch.length, stageSettings.dimensions);
-            const origin = projectStagePoint(geometry.beam.origin, stageSettings.dimensions, stageView);
+            const origin = projectStagePoint(geometry.beam.origin, stageSettings.dimensions, stageView, 1000, 560, stageZoom);
             const intersection = intersectBeamWithStage(geometry.beam, stageSettings.dimensions, stageElements);
             const endpointWorld = intersection?.point ?? pointAlongRay(geometry.beam, beamLength);
-            const endpoint = projectStagePoint(endpointWorld, stageSettings.dimensions, stageView);
+            const endpoint = projectStagePoint(endpointWorld, stageSettings.dimensions, stageView, 1000, 560, stageZoom);
             const throwDistance = intersection?.distance ?? beamLength;
             const beamRadiusMeters = throwDistance * Math.tan(geometry.beam.angleDegrees * Math.PI / 360);
             const fieldAngle = geometry.beam.fieldAngleDegrees ?? geometry.beam.angleDegrees * 1.35;
@@ -2474,11 +2497,15 @@ export default function App() {
                 </> : <circle r="11" fill="#11171c" stroke={fixtureStroke} strokeWidth={fixtureSelected ? 3 : 2} />}
                 <circle r="4.5" fill={color} opacity={Math.max(.35, level)} />
                 <text className="visualizer-fixture-name" x="0" y="-18" textAnchor="middle">{fixture.name}</text>
+                {interactive && fixtureSelected && <g className="stage-rotate-handle" transform="translate(22 -22)" onPointerDown={(event) => beginStageDrag(event, 'fixture', fixture.id, fixtureTransform(fixture, index, patch.length, stageSettings.dimensions).position, 'rotate')}>
+                  <circle r="10" />
+                  <text x="0" y="4" textAnchor="middle">↻</text>
+                </g>}
               </g>
             </g>;
           })}
           {interactive && ['aim', 'measure', 'target'].includes(stageMode) && stageTargets.map((target) => {
-            const projected = projectStagePoint(target.position, stageSettings.dimensions, stageView);
+            const projected = projectStagePoint(target.position, stageSettings.dimensions, stageView, 1000, 560, stageZoom);
             const selected = target.id === selectedTarget?.id;
             const activate = () => {
               setSelectedTargetId(target.id);
@@ -2507,7 +2534,7 @@ export default function App() {
         {stageElements.map((element) => {
           const resolved = migrateStageElement(element, stageSettings.dimensions);
           const worldPosition = stageElementPosition(resolved, stageSettings.dimensions);
-          const projected = projectStagePoint(worldPosition, stageSettings.dimensions, stageView);
+          const projected = projectStagePoint(worldPosition, stageSettings.dimensions, stageView, 1000, 560, stageZoom);
           const dimensions = resolved.dimensions!;
           const normalizedDepth = Math.max(0, Math.min(1, worldPosition.z / Math.max(.01, stageSettings.dimensions.depth)));
           const perspectiveScale = stageView === 'perspective' ? 1 - normalizedDepth * .32 : 1;
@@ -2553,7 +2580,7 @@ export default function App() {
               }
               setSelectedStageElementId(element.id);
             }}
-          ><span className="stage-object-shape" style={{ borderColor: element.color, height: `${projectedHeight}px`, backgroundColor: element.type === 'led-screen' ? element.color : undefined }} /><b>{element.label}</b></button>;
+          ><span className="stage-object-shape" style={{ borderColor: element.color, height: `${projectedHeight}px`, backgroundColor: element.type === 'led-screen' ? element.color : undefined }} />{selected && <span className="stage-object-rotate-handle" title="Drag to rotate" onPointerDown={(event) => beginStageDrag(event, 'element', element.id, worldPosition, 'rotate')}>↻</span>}<b>{element.label}</b></button>;
         })}
         <div className="visualizer-haze-control"><span>HAZE</span><input aria-label="Visualizer haze" type="range" min="0" max="1" step=".05" value={visualizerHaze} onChange={(event) => setVisualizerHaze(Number(event.target.value))} /><b>{Math.round(visualizerHaze * 100)}%</b></div>
         {interactive && stageMode === 'measure' && selectedTargetMetrics && <div className="stage-measure-card"><span>MEASURE TO {selectedTarget?.name?.toUpperCase()}</span><strong>{metersToDisplay(selectedTargetMetrics.distance, stageSettings.unit).toFixed(1)} {stageUnitLabel}</strong><small>H {selectedTargetMetrics.horizontal.toFixed(1)}° · V {selectedTargetMetrics.vertical.toFixed(1)}°</small></div>}
@@ -2812,6 +2839,11 @@ export default function App() {
             <label><span>Group</span><select value={inspectedFixture.group} onChange={(event) => savePatchedFixture({ ...inspectedFixture, group: event.target.value })}><option value="">Unassigned</option>{fixtureGroups.map((group) => <option key={group.id} value={group.name}>{group.name}</option>)}</select></label>
             <div className="inspector-pair"><label><span>Mounting</span><select value={inspectedFixture.mounting ?? 'hanging'} onChange={(event) => savePatchedFixture({ ...inspectedFixture, mounting: event.target.value as PatchedFixture['mounting'] })}><option value="hanging">Hanging</option><option value="floor">Floor</option><option value="wall">Wall</option><option value="custom">Custom</option></select></label><label><span>Orientation</span><select value={inspectedFixture.orientation ?? 'normal'} onChange={(event) => savePatchedFixture({ ...inspectedFixture, orientation: event.target.value as PatchedFixture['orientation'] })}><option value="normal">Normal</option><option value="inverted">Inverted</option><option value="rotated90">Rotated 90°</option><option value="rotated180">Rotated 180°</option><option value="custom">Custom</option></select></label></div>
             <div className="transform-grid">{(['x', 'y', 'z'] as const).map((axis) => <label key={axis}><span>{axis.toUpperCase()}</span><input type="number" step="0.1" value={Number(activeStageTransform.position[axis].toFixed(2))} onChange={(event) => updateStageFixtureTransform('position', axis, Number(event.target.value))} /></label>)}{(['yaw', 'pitch', 'roll'] as const).map((axis) => <label key={axis}><span>{axis}</span><input type="number" step="1" value={Number(activeStageTransform.rotation[axis].toFixed(1))} onChange={(event) => updateStageFixtureTransform('rotation', axis, Number(event.target.value))} /></label>)}</div>
+            {findProfile(inspectedFixture.profileId)?.movement && (() => {
+              const fixtureIndex = patch.findIndex((item) => item.id === inspectedFixture.id);
+              const movementState = fixtureGeometryState(universe, inspectedFixture, fixtureIndex, patch.length, stageSettings.dimensions).movement;
+              return <div className="mover-controls"><div className="mover-controls-heading"><span>MOVING HEAD</span><button onClick={() => { void setChannels(fixtureMovementUpdates(inspectedFixture, .5, .5), true, 'ui'); }}>Home</button></div><label><span>Pan <b>{Math.round(movementState.pan)}°</b></span><input type="range" min="0" max="1" step=".001" value={movementState.panNormalized} onChange={(event) => setMoverAxis(inspectedFixture, 'pan', Number(event.target.value))} /></label><label><span>Tilt <b>{Math.round(movementState.tilt)}°</b></span><input type="range" min="0" max="1" step=".001" value={movementState.tiltNormalized} onChange={(event) => setMoverAxis(inspectedFixture, 'tilt', Number(event.target.value))} /></label></div>;
+            })()}
             <div className="calibration-status"><span>CALIBRATION</span><strong>{inspectedFixture.calibration?.status ?? 'uncalibrated'}</strong><small>{Math.round((inspectedFixture.calibration?.confidence ?? 0) * 100)}% confidence</small></div><button onClick={() => setCalibrationOpen((value) => !value)}>{calibrationOpen ? 'Close Calibration' : 'Calibrate Position'}</button>{calibrationOpen && <div className="calibration-mini"><button onClick={homeActiveFixture}>Send Home</button><button onClick={captureCalibrationObservation}>Capture Target</button><button onClick={solveActiveFixtureCalibration}>Solve</button><button onClick={resetActiveFixtureCalibration}>Reset</button></div>}
           </> : <div className="empty-inspector"><strong>No selection</strong><span>Select a fixture or stage object to inspect it.</span></div>}
         </aside>
