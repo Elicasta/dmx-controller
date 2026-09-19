@@ -66,6 +66,24 @@ describe('forward fixture geometry', () => {
     expect(ray.direction.z).toBeCloseTo(0, 8);
   });
 
+  it('keeps the beam attached to the transformed lens and preserves beam/field optics', () => {
+    const ray = calculateBeamRay({
+      transform: { ...transform, rotation: { yaw: 90, pitch: 0, roll: 0 } },
+      mounting: 'hanging',
+      orientation: 'normal',
+      panDegrees: 0,
+      tiltDegrees: 0,
+      lensOffset: { x: 0, y: -.2, z: .3 },
+      angleDegrees: 12,
+      fieldAngleDegrees: 18
+    });
+    expect(ray.origin.x).toBeCloseTo(2.3, 8);
+    expect(ray.origin.y).toBeCloseTo(3.8, 8);
+    expect(ray.origin.z).toBeCloseTo(1, 8);
+    expect(ray.angleDegrees).toBe(12);
+    expect(ray.fieldAngleDegrees).toBe(18);
+  });
+
   it('rotates tilt and pan in fixture-local space before world rotation', () => {
     const tilted = calculateBeamRay({ transform, mounting: 'hanging', orientation: 'normal', panDegrees: 0, tiltDegrees: 90 });
     expect(tilted.direction.z).toBeCloseTo(-1, 8);
