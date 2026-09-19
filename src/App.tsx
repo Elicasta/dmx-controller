@@ -734,6 +734,24 @@ export default function App() {
   }, []);
   useEffect(() => window.localStorage.setItem(STAGE_STORAGE_KEY, JSON.stringify(makeStageDocument(stageElements, stageSettings.dimensions))), [stageElements, stageSettings.dimensions]);
   useEffect(() => window.localStorage.setItem(STAGE_SETTINGS_STORAGE_KEY, JSON.stringify(stageSettings)), [stageSettings]);
+  useEffect(() => {
+    const stageEditorActive = (workspace === 'setup' && setupView === 'stage') || (workspace === 'program' && programMode === 'stage');
+    if (!stageEditorActive || !selectedStageElementId) return;
+    const handleStageKey = (event: KeyboardEvent) => {
+      const active = document.activeElement as HTMLElement | null;
+      if (active && ['INPUT', 'TEXTAREA', 'SELECT'].includes(active.tagName)) return;
+      if (event.key === 'Escape') {
+        setSelectedStageElementId(null);
+        return;
+      }
+      if (event.key === 'Delete' || event.key === 'Backspace') {
+        event.preventDefault();
+        removeStageElement(selectedStageElementId);
+      }
+    };
+    window.addEventListener('keydown', handleStageKey);
+    return () => window.removeEventListener('keydown', handleStageKey);
+  }, [workspace, setupView, programMode, selectedStageElementId]);
 
   const refreshDmxStatus = useCallback(async () => {
     try { setDmxStatus(await invoke<DmxStatus>('dmx_status')); } catch { /* browser preview */ }
