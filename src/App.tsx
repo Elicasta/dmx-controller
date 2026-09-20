@@ -118,7 +118,20 @@ import { RemoteRelay, type RelayCommandEnvelope, type RemoteRelayConfig, type Re
 type Workspace = 'setup' | 'program' | 'show' | 'live';
 type SetupView = 'fixtures' | 'groups' | 'patch' | 'stage' | 'settings';
 type ProgramMode = 'stage' | 'faders' | 'groups';
-type ShowMode = 'cues' | 'tracks';
+type ShowMode = 'cues' | 'tracks' | 'library';
+type LiveBank = 'fixtures' | 'groups';
+
+type ShowProjectSnapshot = {
+  id: string;
+  name: string;
+  savedAt: string;
+  status: 'draft' | 'show';
+  show: ShowFile;
+  patch: PatchedFixture[];
+  stageElements: StageElement[];
+  stageSettings: StageSettings;
+  looks: FixtureLook[];
+};
 type StageDesignerMode = 'select' | 'move' | 'rotate' | 'aim' | 'measure' | 'target' | 'patch';
 
 function initialConsoleValue<T extends string>(key: string, allowed: readonly T[], fallback: T): T {
@@ -196,6 +209,7 @@ const RECORDING_SAMPLE_MS = 50;
 const LOOKS_STORAGE_KEY = 'dmx-controller.saved-looks.v1';
 const SHOW_STORAGE_KEY = 'dmx-controller.show.v1';
 const SHOW_BACKUP_STORAGE_KEY = 'dmx-controller.show.backup.v1';
+const SHOW_LIBRARY_STORAGE_KEY = 'dmx-controller.show-library.v1';
 const PATCH_STORAGE_KEY = 'dmx-controller.patch.v1';
 const PATCH_BACKUP_STORAGE_KEY = 'dmx-controller.patch.backup.v1';
 const MIDI_STORAGE_KEY = 'dmx-controller.midi-map.v1';
@@ -306,6 +320,32 @@ function loadShowFile(): ShowFile {
     }
   } catch { /* preserve the stored value and start with a known-good show */ }
   return { ...EMPTY_SHOW, cues: [], groups: [], positionPalettes: [] };
+}
+
+function loadShowLibrary(): ShowProjectSnapshot[] {
+  if (typeof window === 'undefined') return [];
+  try {
+    const parsed: unknown = JSON.parse(window.localStorage.getItem(SHOW_LIBRARY_STORAGE_KEY) || '[]');
+    if (!Array.isArray(parsed)) return [];
+    return parsed.filter((item): item is ShowProjectSnapshot => {
+      if (!item || typeof item !== 'object') return false;
+      const candidate = item as Partial<ShowProjectSnapshot>;
+      return typeof candidate.id === 'string'
+        && typeof candidate.name === 'string'
+        && typeof candidate.savedAt === 'string'
+        && (candidate.status === 'draft' || candidate.status === 'show')
+        && Boolean(candidate.show && isShowFile(candidate.show))
+        && Array.isArray(candidate.patch)
+        && candidate.patch.every(isPatchedFixture)
+        && Array.isArray(candidate.stageElements)
+        && candidate.stageElements.every(isStageElement)
+        && Array.isArray(candidate.looks)
+        && candidate.looks.every(isFixtureLook)
+        && Boolean(candidate.stageSettings);
+    }).slice(0, 40);
+  } catch {
+    return [];
+  }
 }
 
 function loadPatch(): PatchedFixture[] {
@@ -470,6 +510,8 @@ export default function App() {
   const patchRef = useRef(patch);
   const [savedLooks, setSavedLooks] = useState<FixtureLook[]>(loadSavedLooks);
   const [showFile, setShowFile] = useState<ShowFile>(loadShowFile);
+  const [showLibrary, setShowLibrary] = useState<ShowProjectSnapshot[]>(loadShowLibrary);
+  const [liveBank, setLiveBank] = useState<LiveBank>('fixtures');
   const [settings, setSettings] = useState<AppSettings>(loadSettings);
   const settingsRef = useRef(settings);
   const [remoteRelayConfig, setRemoteRelayConfig] = useState<RemoteRelayConfig>(loadRemoteRelayConfig);
@@ -721,6 +763,10 @@ export default function App() {
     try { window.localStorage.setItem(SHOW_STORAGE_KEY, JSON.stringify(showFile)); }
     catch { setMessage('Show storage is full. Delete an older recorded take before recording another.'); }
   }, [showFile]);
+  useEffect(() => {
+    try { window.localStorage.setItem(SHOW_LIBRARY_STORAGE_KEY, JSON.stringify(showLibrary)); }
+    catch { setMessage('Show library storage is full. Delete an older saved show or large recording.'); }
+  }, [showLibrary]);
   useEffect(() => window.localStorage.setItem(MIDI_STORAGE_KEY, JSON.stringify(midiMappings)), [midiMappings]);
   useEffect(() => window.localStorage.setItem(SETTINGS_STORAGE_KEY, JSON.stringify(settings)), [settings]);
   useEffect(() => {
@@ -957,6 +1003,14 @@ export default function App() {
     setMessage(`${preset?.name ?? effect} running on selected lights.`);
   }
 
+  function toggleEffect(effect: EffectId, targetIds?: readonly string[]) {
+    if (activeEffectRef.current === effect) {
+      stopEffect();
+      return;
+    }
+    startEffect(effect, targetIds);
+  }
+
   function startMomentaryEffect(effect: EffectId, targetIds?: readonly string[]) {
     if (momentaryEffectRef.current?.effect === effect) return;
     const baseUniverse = [...universeRef.current];
@@ -1044,8 +1098,15 @@ export default function App() {
   }
 
   function updateCue(id: string) {
-    setShowFile((current) => ({ ...current, cues: current.cues.map((cue) => cue.id === id ? { ...cue, values: { ...primaryValues }, universe: [...universeRef.current], fadeMs: cueFadeMs } : cue) }));
-    setMessage('Cue updated from the complete current output.');
+    const output = [...outputUniverseRef.current];
+    const outputValues = primaryFixture ? fixtureValues(output, primaryFixture) : primaryValues;
+    setShowFile((current) => ({
+      ...current,
+      cues: current.cues.map((cue) => cue.id === id
+        ? { ...cue, values: { ...outputValues }, universe: output }
+        : cue)
+    }));
+    setMessage('Cue look updated from the actual live output.');
   }
 
   function updateCueProperties(id: string, updates: Partial<ShowCue>) {
@@ -1058,6 +1119,54 @@ export default function App() {
   function deleteCue(id: string) {
     setShowFile((current) => ({ ...current, cues: current.cues.filter((cue) => cue.id !== id).map((cue, index) => ({ ...cue, number: index + 1 })) }));
     if (activeCueId === id) setActiveCueId(null);
+  }
+
+  function saveShowProject(status: 'draft' | 'show' = 'show') {
+    const cleanName = showFile.name.trim() || 'Untitled Show';
+    const existing = showLibrary.find((item) => item.name.toLowerCase() === cleanName.toLowerCase() && item.status === status);
+    const snapshot: ShowProjectSnapshot = {
+      id: existing?.id ?? `show-${Date.now().toString(36)}`,
+      name: cleanName,
+      savedAt: new Date().toISOString(),
+      status,
+      show: sanitizeShow({ ...showFile, name: cleanName }),
+      patch: patch.map((fixture, index) => migratePatchedFixture(fixture, index, patch.length, stageSettings.dimensions)),
+      stageElements: stageElements.map((element) => migrateStageElement(element, stageSettings.dimensions)),
+      stageSettings: { ...stageSettings, dimensions: { ...stageSettings.dimensions } },
+      looks: [...savedLooks]
+    };
+    setShowLibrary((current) => [snapshot, ...current.filter((item) => item.id !== snapshot.id)].slice(0, 40));
+    setMessage(`${cleanName} saved to the show library as ${status === 'draft' ? 'a draft' : 'a show'}.`);
+  }
+
+  function loadShowProject(snapshot: ShowProjectSnapshot) {
+    if (!window.confirm(`Load "${snapshot.name}"? The current working show will be replaced. Save it first if needed.`)) return;
+    stopFade();
+    if (activeEffectRef.current) stopEffect(false);
+    setShowFile(sanitizeShow(snapshot.show));
+    setPatch(snapshot.patch.map((fixture, index) => migratePatchedFixture(fixture, index, snapshot.patch.length, snapshot.stageSettings.dimensions)));
+    setStageElements(snapshot.stageElements.map((element) => migrateStageElement(element, snapshot.stageSettings.dimensions)));
+    setStageSettings(snapshot.stageSettings);
+    setSavedLooks(snapshot.looks);
+    setActiveCueId(null);
+    setSelectedStageElementId(null);
+    setMessage(`${snapshot.name} loaded from the show library.`);
+  }
+
+  function newShowProject() {
+    if (!window.confirm('Start a new show? Save the current show to the library first if you want to keep it.')) return;
+    stopFade();
+    if (activeEffectRef.current) stopEffect(false);
+    setShowFile({ ...EMPTY_SHOW, name: 'Untitled Show', cues: [], groups: [], positionPalettes: [], recordings: [], externalTrack: { ...DEFAULT_EXTERNAL_TRACK_SYNC } });
+    setActiveCueId(null);
+    setMessage('New show started. Your fixture patch and stage remain available until you load another saved show.');
+  }
+
+  function deleteShowProject(id: string) {
+    const item = showLibrary.find((entry) => entry.id === id);
+    if (!item || !window.confirm(`Delete "${item.name}" from the show library?`)) return;
+    setShowLibrary((current) => current.filter((entry) => entry.id !== id));
+    setMessage(`${item.name} removed from the show library.`);
   }
 
   function loadShowTrack(event: ChangeEvent<HTMLInputElement>) {
@@ -2187,7 +2296,7 @@ export default function App() {
     const className = `${compact ? 'show-fx-button' : 'fx-card'} ${activeEffect === effect.id ? 'active' : ''} ${effect.momentary ? 'momentary' : ''}`;
     if (!effect.momentary) {
       return (
-        <button key={effect.id} className={className} onClick={() => startEffect(effect.id)}>
+        <button key={effect.id} className={className} onClick={() => toggleEffect(effect.id)}>
           <span className={`fx-icon fx-${effect.id}`} />
           <strong>{effect.name}</strong>
           {!compact && <small>{effect.description}</small>}
@@ -2538,7 +2647,14 @@ export default function App() {
             <label className="inspector-toggle"><span>FX Enabled</span><input type="checkbox" checked={selectedGroup.fxEnabled} onChange={(event) => updateFixtureGroup(selectedGroup.id, { fxEnabled: event.target.checked })} /></label>
             <label><span>Group Notes</span><textarea maxLength={500} value={selectedGroup.notes} onChange={(event) => updateFixtureGroup(selectedGroup.id, { notes: event.target.value })} /></label>
             <button className="console-primary" disabled={!assignmentIds.length} onClick={() => assignCheckedFixtures()}>Assign Selected ({assignmentIds.length})</button><button onClick={createFixtureGroup}>＋ Create Group</button><button className="danger-button" onClick={() => deleteFixtureGroup(selectedGroup.id)}>Delete Group</button>
-          </> : inspectedFixture ? <>
+          </> : setupView === 'stage' && selectedStageElement ? <>
+            <header><span>STAGE OBJECT</span><strong>{selectedStageElement.label}</strong><small>{selectedStageElement.type}</small></header>
+            <label><span>Name</span><input value={selectedStageElement.label} onChange={(event) => updateStageElement(selectedStageElement.id, { label: event.target.value })} /></label>
+            <div className="transform-grid">{(['x', 'y', 'z'] as const).map((axis) => <label key={axis}><span>{axis.toUpperCase()}</span><input type="number" step="0.1" value={Number(selectedStagePosition[axis].toFixed(2))} onChange={(event) => updateStageElementPosition(selectedStageElement.id, axis, Number(event.target.value))} /></label>)}</div>
+            <label><span>Size</span><input type="range" min="10" max="100" value={selectedStageElement.size} onChange={(event) => updateStageElement(selectedStageElement.id, { size: Number(event.target.value) })} /></label>
+            <label><span>Color</span><input className="inspector-color" type="color" value={selectedStageElement.color} onChange={(event) => updateStageElement(selectedStageElement.id, { color: event.target.value })} /></label>
+            <button className="danger-button stage-delete-button" onClick={() => removeStageElement(selectedStageElement.id)}>Delete Stage Object</button>
+inspectedFixture ? <>
             <header><span>FIXTURE INSPECTOR</span><strong>{inspectedFixture.name}</strong><small>{findProfile(inspectedFixture.profileId)?.manufacturer} {findProfile(inspectedFixture.profileId)?.model}</small></header>
             <label><span>Name</span><input value={inspectedFixture.name} onChange={(event) => savePatchedFixture({ ...inspectedFixture, name: event.target.value })} /></label>
             <div className="inspector-pair"><label><span>Universe</span><input type="number" min="1" value={inspectedFixture.universe ?? 1} onChange={(event) => savePatchedFixture({ ...inspectedFixture, universe: Number(event.target.value) })} /></label><label><span>Address</span><input type="number" min="1" max="512" value={inspectedFixture.address} onChange={(event) => savePatchedFixture({ ...inspectedFixture, address: Number(event.target.value) })} /></label></div>
@@ -2560,20 +2676,23 @@ export default function App() {
           {programMode === 'stage' && <><div className="stage-console-toolbar"><div role="toolbar">{STAGE_DESIGNER_MODES.map((mode) => <button key={mode.id} className={stageMode === mode.id ? 'active' : ''} onClick={() => setStageMode(mode.id)}>{mode.label}</button>)}</div><span>{selectedFixtureTargets.length} selected</span></div><div className="program-stage">{renderStagePreview(true)}</div></>}
           <LooksStrip looks={allLooks} onApply={runLook} onSave={saveCurrentLook} />
         </div>
-        <EffectsPanel title={programMode === 'groups' ? 'FX FOR SELECTED GROUP' : 'FX FOR SELECTED FIXTURE'} targetName={programEffectName} fixtures={programEffectFixtures} activeEffect={activeEffect} bpm={effectBpm} depth={effectDepth} disabled={programMode === 'groups' && !selectedGroup?.fxEnabled} onBpmChange={(value) => { setEffectBpm(value); effectBpmRef.current = value; setTempoSource('manual'); }} onDepthChange={(value) => { setEffectDepth(value); effectDepthRef.current = value; }} onStart={(effect) => startEffect(effect, programEffectFixtures.map((fixture) => fixture.id))} onPress={(effect) => startMomentaryEffect(effect, programEffectFixtures.map((fixture) => fixture.id))} onRelease={releaseMomentaryEffect} onStop={() => stopEffect()} />
+        <EffectsPanel title={programMode === 'groups' ? 'FX FOR SELECTED GROUP' : 'FX FOR SELECTED FIXTURE'} targetName={programEffectName} fixtures={programEffectFixtures} activeEffect={activeEffect} bpm={effectBpm} depth={effectDepth} disabled={programMode === 'groups' && !selectedGroup?.fxEnabled} onBpmChange={(value) => { setEffectBpm(value); effectBpmRef.current = value; setTempoSource('manual'); }} onDepthChange={(value) => { setEffectDepth(value); effectDepthRef.current = value; }} onStart={(effect) => toggleEffect(effect, programEffectFixtures.map((fixture) => fixture.id))} onPress={(effect) => startMomentaryEffect(effect, programEffectFixtures.map((fixture) => fixture.id))} onRelease={releaseMomentaryEffect} onStop={() => stopEffect()} />
       </section>}
 
       {workspace === 'show' && <section className="show-console console-workspace-wide">
-        <nav className="workspace-subtabs show-subtabs"><button className={showMode === 'cues' ? 'active' : ''} onClick={() => setShowMode('cues')}>CUES</button><button className={showMode === 'tracks' ? 'active' : ''} onClick={() => setShowMode('tracks')}>TRACKS</button></nav>
+        <nav className="workspace-subtabs show-subtabs"><button className={showMode === 'cues' ? 'active' : ''} onClick={() => setShowMode('cues')}>CUES</button><button className={showMode === 'tracks' ? 'active' : ''} onClick={() => setShowMode('tracks')}>TRACKS</button><button className={showMode === 'library' ? 'active' : ''} onClick={() => setShowMode('library')}>SHOW LIBRARY</button></nav>
         {showMode === 'cues' ? <div className="show-cue-layout">
           <aside className="cue-list-console"><header><span>CUE LIST</span><button onClick={captureCue}>＋ Capture</button></header>{showFile.cues.length ? showFile.cues.map((cue, index) => <article className={activeCueId === cue.id ? 'active' : ''} key={cue.id}><button className="cue-line" onClick={() => runCue(cue)}><b>{String(cue.number).padStart(2, '0')}</b><i style={{ background: lookSwatch(cue.values) }} /><span><strong>{cue.name}</strong><small>{cue.fadeMs ? `${cue.fadeMs / 1000}s fade` : 'Snap'}</small></span></button><div><button disabled={index === 0} onClick={() => setShowFile((current) => ({ ...current, cues: moveCue(current.cues, cue.id, -1) }))}>↑</button><button disabled={index === showFile.cues.length - 1} onClick={() => setShowFile((current) => ({ ...current, cues: moveCue(current.cues, cue.id, 1) }))}>↓</button><button onClick={() => deleteCue(cue.id)}>×</button></div></article>) : <div className="empty-cues"><strong>No cues yet</strong><span>Build a look in Program, then capture it here.</span><button onClick={() => setWorkspace('program')}>Open Program</button></div>}</aside>
           <main className="cue-preview-console"><header><span>STAGE / CUE PREVIEW</span><b>{activeCue?.name ?? 'Live output'}</b></header>{renderStagePreview()}<div className="cue-preview-meta"><span>CURRENT<strong>{activeCue ? `${activeCue.number}. ${activeCue.name}` : 'Ready'}</strong></span><span>NEXT<strong>{nextCue ? `${nextCue.number}. ${nextCue.name}` : 'End of show'}</strong></span></div></main>
           <aside className="cue-inspector-console"><header><span>CUE INSPECTOR</span><strong>{activeCue?.name ?? 'New cue'}</strong></header>{activeCue ? <><label><span>Cue Name</span><input value={activeCue.name} onChange={(event) => updateCueProperties(activeCue.id, { name: event.target.value })} /></label><label><span>Cue Color</span><input type="color" value={activeCue.color ?? '#55e98d'} onChange={(event) => updateCueProperties(activeCue.id, { color: event.target.value })} /></label><label><span>Description</span><textarea value={activeCue.description ?? ''} onChange={(event) => updateCueProperties(activeCue.id, { description: event.target.value })} /></label><div className="inspector-pair"><label><span>Fade In ms</span><input type="number" min="0" value={activeCue.fadeMs} onChange={(event) => updateCueProperties(activeCue.id, { fadeMs: Number(event.target.value) })} /></label><label><span>Fade Out ms</span><input type="number" min="0" value={activeCue.fadeOutMs ?? activeCue.fadeMs} onChange={(event) => updateCueProperties(activeCue.id, { fadeOutMs: Number(event.target.value) })} /></label></div><div className="inspector-pair"><label><span>Delay ms</span><input type="number" min="0" value={activeCue.delayMs ?? 0} onChange={(event) => updateCueProperties(activeCue.id, { delayMs: Number(event.target.value) })} /></label><label><span>Follow ms</span><input type="number" min="0" value={activeCue.followMs ?? 0} onChange={(event) => updateCueProperties(activeCue.id, { followMs: Number(event.target.value) })} /></label></div><label><span>Linked Effect</span><select value={activeCue.linkedEffectId ?? ''} onChange={(event) => updateCueProperties(activeCue.id, { linkedEffectId: event.target.value })}><option value="">None</option>{EFFECT_PRESETS.map((effect) => <option key={effect.id} value={effect.id}>{effect.name}</option>)}</select></label><label><span>Track / Audio Note</span><input value={activeCue.trackName ?? ''} onChange={(event) => updateCueProperties(activeCue.id, { trackName: event.target.value })} /></label><button className="console-primary" onClick={() => updateCue(activeCue.id)}>Update Look From Output</button></> : <><label><span>New Cue Name</span><input value={cueName} placeholder={`Cue ${showFile.cues.length + 1}`} onChange={(event) => setCueName(event.target.value)} /></label><label><span>Fade In</span><select value={cueFadeMs} onChange={(event) => setCueFadeMs(Number(event.target.value))}>{FADE_TIMES.map((time) => <option key={time} value={time}>{time === 0 ? 'Snap' : `${time / 1000}s`}</option>)}</select></label><button className="console-primary" onClick={captureCue}>Capture Current Look</button></>}<label><span>Show Notes</span><textarea value={showFile.notes ?? ''} placeholder="Set list, transitions, safety notes…" onChange={(event) => setShowFile((current) => ({ ...current, notes: event.target.value }))} /></label></aside>
           <div className="cue-transport-console"><button onClick={goPreviousCue} disabled={!showFile.cues.length}>PREVIOUS</button><span><small>CURRENT CUE</small><strong>{activeCue?.name ?? 'Ready'}</strong></span><button className="giant-go" onClick={goNextCue} disabled={!nextCue}>GO<small>{nextCue?.name ?? 'End'}</small></button><span><small>NEXT CUE</small><strong>{nextCue?.name ?? 'End of show'}</strong></span><button onClick={goNextCue} disabled={!nextCue}>NEXT</button></div>
-        </div> : <div className="tracks-console">
+        </div> : showMode === 'tracks' ? <div className="tracks-console">
           <section className="console-panel track-source"><header><div><span>AUDIO &amp; SHOW RECORDER</span><h2>{showTrackName || 'No track loaded'}</h2></div><label className="file-button"><input type="file" accept="audio/*" onChange={loadShowTrack} />{showTrackName ? 'Change Track' : 'Load Track'}</label></header><div className="track-timeline"><span>{formatShowTime(showTrackPositionMs)}</span><input type="range" min="0" max={Math.max(1, showTrackDurationMs)} value={Math.min(showTrackPositionMs, Math.max(1, showTrackDurationMs))} onChange={(event) => { const next = Number(event.target.value); if (showTrackAudioRef.current) showTrackAudioRef.current.currentTime = next / 1000; setShowTrackPositionMs(next); }} /><span>{formatShowTime(showTrackDurationMs)}</span></div><div className="track-actions"><input value={recordingTakeName} placeholder={`Take ${(showFile.recordings?.length ?? 0) + 1}`} onChange={(event) => setRecordingTakeName(event.target.value)} /><button onClick={toggleShowTrackPreview}>Play / Pause</button><button className="record-button" onClick={startShowRecording}>● Record Show</button></div></section>
           <section className="console-panel recorded-takes-console"><header><div><span>LIGHTING TAKES</span><h2>{showFile.recordings?.length ?? 0} saved</h2></div></header>{showFile.recordings?.map((recording) => <article key={recording.id}><span><strong>{recording.name}</strong><small>{formatShowTime(recording.durationMs)} · {recording.frames.length} changes</small></span><button onClick={() => playingRecordingId === recording.id ? stopRecordedShowPlayback() : playShowRecording(recording)}>{playingRecordingId === recording.id ? 'Stop' : 'Play'}</button><button onClick={() => deleteShowRecording(recording)}>Delete</button></article>)}</section>
           <section className="console-panel external-track-console"><header><div><span>EXTERNAL TRACK SYNC</span><h2>Ableton / Logic / MIDI</h2></div><b className={externalTransportRunning ? 'healthy' : ''}>{externalTransportRunning ? 'Following' : externalTrack.armed ? 'Armed' : 'Off'}</b></header><label><span>Song Name</span><input value={externalTrack.songName} onChange={(event) => updateExternalTrack({ songName: event.target.value })} /></label><label><span>Lighting Take</span><select value={externalTrack.recordingId} onChange={(event) => assignExternalRecording(event.target.value)}><option value="">Choose take</option>{showFile.recordings?.map((recording) => <option key={recording.id} value={recording.id}>{recording.name}</option>)}</select></label><div className="inspector-pair"><label><span>BPM</span><input type="number" value={externalTrack.bpm} onChange={(event) => updateExternalTrack({ bpm: Number(event.target.value) })} /></label><label><span>Advance ms</span><input type="number" value={externalTrack.lightingOffsetMs} onChange={(event) => updateExternalTrack({ lightingOffsetMs: Number(event.target.value) })} /></label></div><button className={externalTrack.armed ? 'danger-button' : 'console-primary'} onClick={toggleExternalTrackArm}>{externalTrack.armed ? 'Disarm External Sync' : 'Arm External Sync'}</button><button onClick={() => { setWorkspace('setup'); setSetupView('settings'); }}>MIDI Connection Settings</button></section>
+        </div> : <div className="show-library-console">
+          <header><div><span>SHOW LIBRARY</span><h2>{showFile.name}</h2><small>Save complete show projects including cues, patch, stage design, groups and looks.</small></div><div><button onClick={newShowProject}>＋ New Show</button><button onClick={() => saveShowProject('draft')}>Save Draft</button><button className="console-primary" onClick={() => saveShowProject('show')}>Save Current Show</button></div></header>
+          <div className="show-library-grid">{showLibrary.length ? showLibrary.map((item) => <article key={item.id}><div><span className={item.status}>{item.status.toUpperCase()}</span><strong>{item.name}</strong><small>{new Date(item.savedAt).toLocaleString()} · {item.show.cues.length} cues · {item.patch.length} fixtures</small></div><div><button onClick={() => loadShowProject(item)}>Load</button><button className="danger-button" onClick={() => deleteShowProject(item.id)}>Delete</button></div></article>) : <div className="empty-show-library"><strong>No saved shows yet</strong><span>Save the current show or a draft. Your working show continues to autosave separately.</span></div>}</div>
         </div>}
       </section>}
 
@@ -2581,6 +2700,10 @@ export default function App() {
         <div className="live-cue-hero"><span><small>CURRENT CUE</small><strong>{activeCue?.name ?? 'Ready'}</strong><em>{activeCue ? `Cue ${activeCue.number}` : 'No cue running'}</em></span><button className="live-go" onClick={goNextCue} disabled={!nextCue}>GO<small>{nextCue?.name ?? 'End of show'}</small></button><span><small>NEXT CUE</small><strong>{nextCue?.name ?? 'End of show'}</strong><em>{nextCue ? `Cue ${nextCue.number}` : '—'}</em></span></div>
         <div className="live-nav-buttons"><button onClick={goPreviousCue}>← PREVIOUS</button><button onClick={goNextCue} disabled={!nextCue}>NEXT →</button></div>
         <section className="live-section live-fx"><header><span>PERFORMANCE FX</span>{activeEffect && <button onClick={() => stopEffect()}>Stop FX</button>}</header><div>{EFFECT_PRESETS.filter((effect) => ['bump', 'blinder', 'strobe', 'pulse', 'sweep', 'lightning', 'finale'].includes(effect.id) && effectSupportedByFixtures(effect.id, selectedFixtureTargets)).map((effect) => renderEffectButton(effect, true))}</div></section>
+        <section className="live-section live-control-bank">
+          <header><span>LIVE CONTROL</span><div className="live-bank-tabs"><button className={liveBank === 'fixtures' ? 'active' : ''} onClick={() => setLiveBank('fixtures')}>FIXTURES</button><button className={liveBank === 'groups' ? 'active' : ''} onClick={() => setLiveBank('groups')}>GROUPS</button></div></header>
+          {liveBank === 'fixtures' ? <div className="live-fader-row">{patch.map((fixture) => <VerticalFader key={fixture.id} id={`live-${fixture.id}`} name={fixture.name} subtitle={fixtureBrowserSubtitle(fixture)} color={fixture.labelColor ?? '#55e98d'} value={fixtureIntensityPercent(universe, fixture)} selected={fixture.selected} onChange={(value) => void setFixtureAttribute(fixture, 'dimmer', percentToDmx(value))} onSelect={() => selectFixtureFromConsole(fixture.id, true)} onFx={() => selectFixtureFromConsole(fixture.id)} />)}</div> : <div className="live-fader-row">{fixtureGroups.map((group) => { const members = fixturesInGroup(patch, group); return <VerticalFader key={group.id} id={`live-${group.id}`} name={group.name} subtitle={`${members.length} fixtures`} color={group.labelColor} value={Math.round(groupMasters[group.id] ?? group.masterDefault)} selected={selectedGroupId === group.id} onChange={(value) => applyGroupMaster(group, value)} onSelect={() => selectFixtureGroup(group.id)} onFx={() => selectFixtureGroup(group.id)} quickAction={{ label: 'Chase', onPress: () => toggleEffect('chase', members.map((fixture) => fixture.id)) }} />; })}</div>}
+        </section>
         <section className="live-section live-looks"><header><span>LOOKS</span><small>{selectedFixtureTargets.length} fixture{selectedFixtureTargets.length === 1 ? '' : 's'} targeted</small></header><div>{allLooks.slice(0, 8).map((look) => <button key={look.id} onClick={() => runLook(look)}><i style={{ background: lookSwatch(look.values) }} /><strong>{look.name}</strong></button>)}</div></section>
         <section className="live-master"><header><span>GRAND MASTER</span><strong>{globalMaster}%</strong></header><input type="range" min="0" max={settings.masterLimit} value={globalMaster} onChange={(event) => applyGlobalMaster(Number(event.target.value))} /><div>{[0, 25, 50, 75, 100].map((value) => <button key={value} onClick={() => applyGlobalMaster(value)}>{value}%</button>)}</div></section>
         <footer className="live-health"><span className={dmxStatus.connected ? 'healthy' : ''}>● {dmxStatus.connected ? 'DMX ONLINE' : 'VIRTUAL OUTPUT'}</span><span className={midiStatus.connected ? 'healthy' : ''}>● MIDI {midiStatus.connected ? 'CONNECTED' : 'OFFLINE'}</span><span>{tempoSource === 'midi' ? 'MIDI CLOCK' : 'INTERNAL'} · {tempoSource === 'midi' && midiBpm ? midiBpm : effectBpm} BPM</span><span>{formatShowTime(externalSongPositionMs || showTrackPositionMs)}</span></footer>
