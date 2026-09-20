@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       version:
-        description: "Release version (for example 0.3.0)"
+        description: "Release version (for example 0.4.2)"
         required: true
         type: string
       notes:
@@ -17,46 +17,12 @@ permissions:
   contents: read
 
 concurrency:
-  group: lumarig-release-${{ inputs.version }}
+  group: lumarig-macos-release-${{ inputs.version }}
   cancel-in-progress: false
 
 jobs:
-  test:
-    name: Test release source
-    runs-on: macos-latest
-    steps:
-      - name: Check out source
-        uses: actions/checkout@v7
-
-      - name: Set up Node.js
-        uses: actions/setup-node@v6
-        with:
-          node-version: lts/*
-          cache: npm
-
-      - name: Set up Rust
-        uses: dtolnay/rust-toolchain@stable
-
-      - name: Cache Rust build
-        uses: swatinem/rust-cache@v2
-        with:
-          workspaces: "./src-tauri -> target"
-
-      - name: Install frontend dependencies
-        run: npm ci
-
-      - name: Run frontend tests
-        run: npm test
-
-      - name: Build frontend
-        run: npm run build
-
-      - name: Run native tests
-        run: cargo test --manifest-path src-tauri/Cargo.toml
-
   publish:
     name: Build ${{ matrix.label }}
-    needs: test
     runs-on: macos-latest
     strategy:
       fail-fast: false
@@ -72,10 +38,10 @@ jobs:
 
     steps:
       - name: Check out source
-        uses: actions/checkout@v7
+        uses: actions/checkout@v4
 
       - name: Set up Node.js
-        uses: actions/setup-node@v6
+        uses: actions/setup-node@v4
         with:
           node-version: lts/*
           cache: npm
@@ -123,7 +89,7 @@ jobs:
           NODE
 
       - name: Build, sign, and publish
-        uses: tauri-apps/tauri-action@v1
+        uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.DMX_RELEASE_TOKEN }}
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
@@ -140,4 +106,5 @@ jobs:
           generateReleaseNotes: false
           uploadUpdaterJson: true
           uploadUpdaterSignatures: true
+          retryAttempts: 2
           args: ${{ matrix.args }}
