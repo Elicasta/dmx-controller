@@ -1635,3 +1635,93 @@ input[type="text"], input[type="number"], .add-fixture-grid input, .patch-card-b
 .empty-show-library strong { color:#aeb9bf; font-size:13px; }
 .empty-show-library span { max-width:420px; margin-top:7px; font-size:8px; line-height:1.5; }
 .stage-delete-button { margin-top:10px; border-color:#65343b!important; color:#ff929c!important; background:#251116!important; }
+
+
+/* Live layout containment and fixture management */
+.live-console{
+  grid-template-rows:150px 38px minmax(180px,.95fr) minmax(150px,.72fr) 37px;
+}
+.live-control-bank{
+  grid-column:1/3;
+  min-height:0;
+  overflow:hidden;
+}
+.live-fader-row{
+  height:calc(100% - 34px);
+  min-height:0;
+  overflow-x:auto;
+  overflow-y:hidden;
+}
+.live-looks{
+  min-height:0;
+  overflow:hidden;
+  position:relative;
+  z-index:1;
+}
+.live-looks>div{
+  height:calc(100% - 27px);
+  min-height:0;
+}
+.live-looks button{
+  height:100%;
+  min-height:64px;
+}
+.live-health{
+  position:relative;
+  z-index:2;
+}
+.live-control-actions{
+  display:flex;
+  align-items:center;
+  gap:5px;
+}
+.live-control-actions>small{
+  margin-right:3px;
+}
+.live-control-actions>button{
+  min-width:44px;
+  height:27px;
+  padding:0 8px;
+  border:1px solid #314049;
+  border-radius:3px;
+  background:#121a20;
+  color:#aeb9bf;
+  font-size:7px;
+  font-weight:850;
+}
+.fixture-selection-toolbar{
+  display:flex;
+  align-items:center;
+  justify-content:space-between;
+  gap:16px;
+  min-height:52px;
+  padding:8px 12px;
+  border:1px solid #29343a;
+  border-radius:5px;
+  background:#0d1317;
+}
+.fixture-selection-toolbar>div:first-child{
+  display:flex;
+  flex-direction:column;
+  gap:4px;
+}
+.fixture-selection-toolbar strong{
+  color:#aab5bd;
+  font-size:8px;
+  letter-spacing:1px;
+}
+.fixture-selection-toolbar span{
+  color:#65737b;
+  font-size:8px;
+}
+.fixture-selection-toolbar>div:last-child{
+  display:flex;
+  gap:5px;
+}
+.fixture-selection-toolbar button{
+  height:31px;
+  padding:0 12px;
+  border-radius:3px;
+  font-size:7px;
+  font-weight:850;
+}
