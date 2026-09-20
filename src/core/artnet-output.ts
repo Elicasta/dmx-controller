@@ -25,8 +25,8 @@ async function defaultSender(
 }
 
 export class ArtNetOutputDriver implements OutputDriver {
-  readonly id = 'artnet-lumaviz';
-  readonly name = 'LumaViz / Art-Net';
+  readonly id = 'artnet';
+  readonly name = 'Art-Net output';
 
   private framesSent = 0;
   private lastError: string | undefined;
