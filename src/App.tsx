@@ -1450,7 +1450,6 @@ export default function App() {
 
   async function installAvailableUpdate() {
     if (!updateInfo || updateStatus === 'installing') return;
-    if (!window.confirm(`Install LumaRig ${updateInfo.version} now? The app will restart.`)) return;
     setUpdateStatus('installing');
     setUpdateError('');
     setMessage(`Preparing LumaRig ${updateInfo.version}. Lighting output will be safely disconnected before restart.`);
@@ -1778,6 +1777,22 @@ export default function App() {
     const updates = Array.from({ length: mode?.channelCount ?? 0 }, (_, index) => [fixture.address + index, 0] as const);
     void setChannels(updates);
     setPatch((current) => current.filter((item) => item.id !== fixture.id));
+  }
+
+  function deleteSelectedFixtures() {
+    const selected = patch.filter((fixture) => fixture.selected);
+    if (!selected.length) return setMessage('Select one or more fixtures first.');
+    if (selected.length >= patch.length) return setMessage('Keep at least one fixture in the patch.');
+    if (!window.confirm(`Delete ${selected.length} selected fixture${selected.length === 1 ? '' : 's'}? Their DMX channels will be zeroed.`)) return;
+    const updates = selected.flatMap((fixture) => {
+      const mode = findMode(fixture);
+      return Array.from({ length: mode?.channelCount ?? 0 }, (_, index) => [fixture.address + index, 0] as const);
+    });
+    void setChannels(updates);
+    const selectedIds = new Set(selected.map((fixture) => fixture.id));
+    setPatch((current) => current.filter((fixture) => !selectedIds.has(fixture.id)));
+    if (stageFixtureId && selectedIds.has(stageFixtureId)) setStageFixtureId(null);
+    setMessage(`${selected.length} fixture${selected.length === 1 ? '' : 's'} deleted from the patch.`);
   }
 
   async function connectMidi() {
@@ -2618,6 +2633,7 @@ export default function App() {
           </>}
 
           {setupView === 'fixtures' && <div className="setup-scroll-area">
+            <section className="fixture-selection-toolbar"><div><strong>FIXTURE SELECTION</strong><span>{patch.filter((fixture) => fixture.selected).length} of {patch.length} selected</span></div><div><button onClick={selectAllFixtures}>Select All</button><button onClick={clearFixtureSelection}>Clear</button><button className="danger-button" disabled={!patch.some((fixture) => fixture.selected) || patch.filter((fixture) => fixture.selected).length >= patch.length} onClick={deleteSelectedFixtures}>Delete Selected</button></div></section>
             <section className="console-panel batch-fixture-panel"><header><div><span>ADD FIXTURES</span><h2>Patch a batch</h2></div><b>{FIXTURE_LIBRARY.length} profiles</b></header><div className="batch-fixture-grid"><label><span>Fixture Profile</span><select value={newProfileId} onChange={(event) => { const profile = findProfile(event.target.value) ?? FIXTURE_LIBRARY[0]; setNewProfileId(profile.id); setNewModeId(profile.modes[0].id); setProfileAcknowledged(false); }}>{FIXTURE_LIBRARY.map((profile) => <option key={profile.id} value={profile.id}>{profile.verified ? '✓' : '△'} {profile.manufacturer} {profile.model}</option>)}</select></label><label><span>Mode</span><select value={newModeId} onChange={(event) => setNewModeId(event.target.value)}>{newProfile.modes.map((mode) => <option key={mode.id} value={mode.id}>{mode.name} · {mode.channelCount}ch</option>)}</select></label><label><span>Base Name</span><input value={newFixtureName} placeholder={newProfile.model} onChange={(event) => setNewFixtureName(event.target.value)} /></label><label><span>Quantity</span><input type="number" min="1" max="64" value={newFixtureQuantity} onChange={(event) => setNewFixtureQuantity(Number(event.target.value))} /></label><label><span>Starting Address</span><input type="number" min="1" max="512" value={newFixtureAddress} onChange={(event) => setNewFixtureAddress(Number(event.target.value))} /></label><label><span>Group</span><select value={newFixtureGroup} onChange={(event) => setNewFixtureGroup(event.target.value)}><option value="">Unassigned</option>{fixtureGroups.map((group) => <option key={group.id} value={group.name}>{group.name}</option>)}</select></label><button className="console-primary add-batch" onClick={addFixture}>Add {Math.max(1, newFixtureQuantity)} Fixture{newFixtureQuantity === 1 ? '' : 's'}</button></div>{!newProfile.verified && <label className="profile-confirm"><input type="checkbox" checked={profileAcknowledged} onChange={(event) => setProfileAcknowledged(event.target.checked)} /> I checked the fixture manual and exact mode.</label>}</section>
             <section className="compact-patch-list">{patch.map((fixture) => <FixturePatchEditor key={fixture.id} fixture={fixture} onSave={savePatchedFixture} onRemove={() => removeFixture(fixture)} onToggleSelected={() => selectFixtureFromConsole(fixture.id, true)} onToggleCollapsed={() => setPatch((current) => current.map((item) => item.id === fixture.id ? { ...item, collapsed: !item.collapsed } : item))} />)}</section>
           </div>}
@@ -2701,7 +2717,7 @@ export default function App() {
         <div className="live-nav-buttons"><button onClick={goPreviousCue}>← PREVIOUS</button><button onClick={goNextCue} disabled={!nextCue}>NEXT →</button></div>
         <section className="live-section live-fx"><header><span>PERFORMANCE FX</span>{activeEffect && <button onClick={() => stopEffect()}>Stop FX</button>}</header><div>{EFFECT_PRESETS.filter((effect) => ['bump', 'blinder', 'strobe', 'pulse', 'sweep', 'lightning', 'finale'].includes(effect.id) && effectSupportedByFixtures(effect.id, selectedFixtureTargets)).map((effect) => renderEffectButton(effect, true))}</div></section>
         <section className="live-section live-control-bank">
-          <header><span>LIVE CONTROL</span><div className="live-bank-tabs"><button className={liveBank === 'fixtures' ? 'active' : ''} onClick={() => setLiveBank('fixtures')}>FIXTURES</button><button className={liveBank === 'groups' ? 'active' : ''} onClick={() => setLiveBank('groups')}>GROUPS</button></div></header>
+          <header><span>LIVE CONTROL</span><div className="live-control-actions">{liveBank === 'fixtures' && <><small>{patch.filter((fixture) => fixture.selected).length} selected</small><button onClick={selectAllFixtures}>All</button><button onClick={clearFixtureSelection}>Clear</button></>}<div className="live-bank-tabs"><button className={liveBank === 'fixtures' ? 'active' : ''} onClick={() => setLiveBank('fixtures')}>FIXTURES</button><button className={liveBank === 'groups' ? 'active' : ''} onClick={() => setLiveBank('groups')}>GROUPS</button></div></div></header>
           {liveBank === 'fixtures' ? <div className="live-fader-row">{patch.map((fixture) => <VerticalFader key={fixture.id} id={`live-${fixture.id}`} name={fixture.name} subtitle={fixtureBrowserSubtitle(fixture)} color={fixture.labelColor ?? '#55e98d'} value={fixtureIntensityPercent(universe, fixture)} selected={fixture.selected} onChange={(value) => void setFixtureAttribute(fixture, 'dimmer', percentToDmx(value))} onSelect={() => selectFixtureFromConsole(fixture.id, true)} onFx={() => selectFixtureFromConsole(fixture.id)} />)}</div> : <div className="live-fader-row">{fixtureGroups.map((group) => { const members = fixturesInGroup(patch, group); return <VerticalFader key={group.id} id={`live-${group.id}`} name={group.name} subtitle={`${members.length} fixtures`} color={group.labelColor} value={Math.round(groupMasters[group.id] ?? group.masterDefault)} selected={selectedGroupId === group.id} onChange={(value) => applyGroupMaster(group, value)} onSelect={() => selectFixtureGroup(group.id)} onFx={() => selectFixtureGroup(group.id)} quickAction={{ label: 'Chase', onPress: () => toggleEffect('chase', members.map((fixture) => fixture.id)) }} />; })}</div>}
         </section>
         <section className="live-section live-looks"><header><span>LOOKS</span><small>{selectedFixtureTargets.length} fixture{selectedFixtureTargets.length === 1 ? '' : 's'} targeted</small></header><div>{allLooks.slice(0, 8).map((look) => <button key={look.id} onClick={() => runLook(look)}><i style={{ background: lookSwatch(look.values) }} /><strong>{look.name}</strong></button>)}</div></section>
