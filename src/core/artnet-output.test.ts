@@ -30,13 +30,14 @@ describe('ArtNetOutputDriver', () => {
     expect(driver.status().framesSent).toBe(0);
   });
 
-  it('surfaces sender failures through output status', async () => {
+  it('keeps visualizer failures non-fatal while exposing status', async () => {
     const driver = new ArtNetOutputDriver(
       () => ({ enabled: true, target: 'bad-target' }),
       async () => { throw new Error('send failed'); }
     );
 
-    await expect(driver.sendFrame(1, [0])).rejects.toThrow('send failed');
+    await expect(driver.sendFrame(1, [0])).resolves.toBeUndefined();
     expect(driver.status().lastError).toContain('send failed');
+    expect(driver.status().framesSent).toBe(0);
   });
 });
