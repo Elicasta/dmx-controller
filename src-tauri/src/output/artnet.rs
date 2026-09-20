@@ -136,4 +136,36 @@ mod tests {
         assert!(build_artdmx_packet(0, 1, &[]).is_err());
         assert!(build_artdmx_packet(MAX_ARTNET_UNIVERSE + 1, 1, &[]).is_err());
     }
+
+    #[test]
+    fn sends_real_artdmx_over_udp_loopback() {
+        use std::time::Duration;
+
+        let receiver = UdpSocket::bind(("127.0.0.1", ARTNET_PORT))
+            .expect("bind Art-Net loopback receiver");
+        receiver
+            .set_read_timeout(Some(Duration::from_secs(2)))
+            .expect("set Art-Net loopback timeout");
+
+        let engine = ArtNetEngine::default();
+        let mut frame = vec![0u8; DMX_CHANNELS];
+        frame[0..5].copy_from_slice(&[128, 255, 64, 0, 16]);
+
+        engine
+            .send_frame("127.0.0.1", 1, &frame)
+            .expect("send Art-Net loopback frame");
+
+        let mut buffer = [0u8; 530];
+        let (count, source) = receiver
+            .recv_from(&mut buffer)
+            .expect("receive Art-Net loopback frame");
+
+        assert_eq!(source.ip(), Ipv4Addr::LOCALHOST);
+        assert_eq!(count, 530);
+        assert_eq!(&buffer[0..8], ARTNET_HEADER);
+        assert_eq!(u16::from_le_bytes([buffer[8], buffer[9]]), OP_DMX);
+        assert_eq!(u16::from_le_bytes([buffer[14], buffer[15]]), 0);
+        assert_eq!(u16::from_be_bytes([buffer[16], buffer[17]]), 512);
+        assert_eq!(&buffer[18..23], &[128, 255, 64, 0, 16]);
+    }
 }
