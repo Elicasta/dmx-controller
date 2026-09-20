@@ -77,7 +77,7 @@ fn studio_bridge_status(bridge: State<'_, StudioBridge>) -> StudioBridgeStatus {
 
 #[tauri::command]
 fn drain_studio_bridge(bridge: State<'_, StudioBridge>) -> Vec<StudioBridgeEnvelope> {
-    bridge.drain().into_iter().map(|(envelope, _)| envelope).collect()
+    bridge.drain()
 }
 
 #[tauri::command]
@@ -88,12 +88,7 @@ fn reply_studio_bridge(
     error: Option<String>,
     payload: Option<serde_json::Value>,
 ) -> Result<(), String> {
-    for (envelope, reply) in bridge.drain() {
-        if envelope.id == id {
-            return reply.send(StudioBridgeResponse { id, ok, error, payload }).map_err(|err| err.to_string());
-        }
-    }
-    Err("Studio bridge request is no longer pending.".into())
+    bridge.reply(StudioBridgeResponse { id, ok, error, payload })
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
