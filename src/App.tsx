@@ -1140,7 +1140,6 @@ export default function App() {
   }
 
   function loadShowProject(snapshot: ShowProjectSnapshot) {
-    if (!window.confirm(`Load "${snapshot.name}"? The current working show will be replaced. Save it first if needed.`)) return;
     stopFade();
     if (activeEffectRef.current) stopEffect(false);
     setShowFile(sanitizeShow(snapshot.show));
@@ -1154,17 +1153,23 @@ export default function App() {
   }
 
   function newShowProject() {
-    if (!window.confirm('Start a new show? Save the current show to the library first if you want to keep it.')) return;
     stopFade();
     if (activeEffectRef.current) stopEffect(false);
-    setShowFile({ ...EMPTY_SHOW, name: 'Untitled Show', cues: [], groups: [], positionPalettes: [], recordings: [], externalTrack: { ...DEFAULT_EXTERNAL_TRACK_SYNC } });
+    const usedNames = new Set(showLibrary.map((item) => item.name.toLowerCase()));
+    let showNumber = 1;
+    let nextName = 'Untitled Show';
+    while (usedNames.has(nextName.toLowerCase())) {
+      showNumber += 1;
+      nextName = `Untitled Show ${showNumber}`;
+    }
+    setShowFile({ ...EMPTY_SHOW, name: nextName, cues: [], groups: [], positionPalettes: [], recordings: [], externalTrack: { ...DEFAULT_EXTERNAL_TRACK_SYNC } });
     setActiveCueId(null);
     setMessage('New show started. Your fixture patch and stage remain available until you load another saved show.');
   }
 
   function deleteShowProject(id: string) {
     const item = showLibrary.find((entry) => entry.id === id);
-    if (!item || !window.confirm(`Delete "${item.name}" from the show library?`)) return;
+    if (!item) return;
     setShowLibrary((current) => current.filter((entry) => entry.id !== id));
     setMessage(`${item.name} removed from the show library.`);
   }
@@ -1772,7 +1777,6 @@ export default function App() {
 
   function removeFixture(fixture: PatchedFixture) {
     if (patch.length === 1) return setMessage('Keep at least one fixture in the patch.');
-    if (!window.confirm(`Remove ${fixture.name} from the patch? Its current DMX channels will be zeroed.`)) return;
     const mode = findMode(fixture);
     const updates = Array.from({ length: mode?.channelCount ?? 0 }, (_, index) => [fixture.address + index, 0] as const);
     void setChannels(updates);
@@ -1783,7 +1787,6 @@ export default function App() {
     const selected = patch.filter((fixture) => fixture.selected);
     if (!selected.length) return setMessage('Select one or more fixtures first.');
     if (selected.length >= patch.length) return setMessage('Keep at least one fixture in the patch.');
-    if (!window.confirm(`Delete ${selected.length} selected fixture${selected.length === 1 ? '' : 's'}? Their DMX channels will be zeroed.`)) return;
     const updates = selected.flatMap((fixture) => {
       const mode = findMode(fixture);
       return Array.from({ length: mode?.channelCount ?? 0 }, (_, index) => [fixture.address + index, 0] as const);

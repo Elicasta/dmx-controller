@@ -1725,3 +1725,19 @@ input[type="text"], input[type="number"], .add-fixture-grid input, .patch-card-b
   font-size:7px;
   font-weight:850;
 }
+
+
+/* Live layout: explicit tracks prevent faders from being clipped behind Looks. */
+.live-console{
+  grid-template-rows:150px 38px 180px 270px 120px 37px;
+  overflow-y:auto;
+  align-content:start;
+}
+.live-fx{grid-row:3;}
+.live-control-bank{grid-row:4;min-height:270px;overflow:hidden;}
+.live-fader-row{height:236px;min-height:236px;}
+.live-looks{grid-row:5;min-height:120px;overflow:hidden;}
+.live-looks>div{height:83px;}
+.live-looks button{height:83px;min-height:83px;}
+.live-health{grid-row:6;min-height:37px;}
+.live-master{grid-row:1/5;}
