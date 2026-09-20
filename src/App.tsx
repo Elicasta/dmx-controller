@@ -1491,9 +1491,16 @@ export default function App() {
   ) {
     if (!stageFixture) return;
     const currentTransform = fixtureTransform(stageFixture, patch.indexOf(stageFixture), patch.length, stageSettings.dimensions);
+    if (!Number.isFinite(value)) return;
+    const clampedPosition = axis === 'x'
+      ? Math.max(-stageSettings.dimensions.width / 2, Math.min(stageSettings.dimensions.width / 2, value))
+      : axis === 'y'
+        ? Math.max(0, Math.min(stageSettings.dimensions.height, value))
+        : Math.max(0, Math.min(stageSettings.dimensions.depth, value));
+    const wrappedRotation = ((value + 180) % 360 + 360) % 360 - 180;
     const nextTransform = kind === 'position'
-      ? { ...currentTransform, position: { ...currentTransform.position, [axis]: value } }
-      : { ...currentTransform, rotation: { ...currentTransform.rotation, [axis]: value } };
+      ? { ...currentTransform, position: { ...currentTransform.position, [axis]: clampedPosition } }
+      : { ...currentTransform, rotation: { ...currentTransform.rotation, [axis]: wrappedRotation } };
     const nextFixture = { ...stageFixture, transform: nextTransform };
     setOrganizerDraft(nextFixture);
     setPatch((current) => current.map((fixture) => fixture.id === stageFixture.id ? nextFixture : fixture));
@@ -2442,6 +2449,8 @@ export default function App() {
             const color = `rgb(${rgb.join(' ')})`;
             const level = dmxStatus.blackout ? 0 : values.dimmer / 255;
             const geometry = fixtureGeometryState(outputUniverse, fixture, index, patch.length, stageSettings.dimensions);
+            const physicalTransform = fixtureTransform(fixture, index, patch.length, stageSettings.dimensions);
+            const fixtureBase = projectStagePoint(physicalTransform.position, stageSettings.dimensions, stageView, 1000, 560, stageZoom);
             const origin = projectStagePoint(geometry.beam.origin, stageSettings.dimensions, stageView, 1000, 560, stageZoom);
             const intersection = intersectBeamWithStage(geometry.beam, stageSettings.dimensions, stageElements);
             const endpointWorld = intersection?.point ?? pointAlongRay(geometry.beam, beamLength);
@@ -2482,7 +2491,7 @@ export default function App() {
               {level > 0 && <ellipse cx={endpoint.x} cy={endpoint.y} rx={Math.max(4, fieldRadius * .78)} ry={Math.max(2.5, fieldRadius * .22)} fill={color} opacity={Math.min(.88, level * .72 / Math.max(1, throwDistance * .08))} filter="url(#beam-glow)"><title>{intersection ? `${fixture.name} hits ${hitLabel} at ${intersection.distance.toFixed(1)} m` : `${fixture.name} beam`}</title></ellipse>}
               <g
                 className={`visualizer-fixture ${isMover ? 'moving' : 'static'} ${fixtureSelected ? 'selected' : ''}`}
-                transform={`translate(${origin.x} ${origin.y})`}
+                transform={`translate(${fixtureBase.x} ${fixtureBase.y})`}
                 role={interactive ? 'button' : undefined}
                 tabIndex={interactive ? 0 : undefined}
                 onPointerDown={(event) => { if (interactive) beginStageDrag(event, 'fixture', fixture.id, fixtureTransform(fixture, index, patch.length, stageSettings.dimensions).position); }}
@@ -2496,6 +2505,8 @@ export default function App() {
                   <rect x="-9" y="-8" width="18" height="17" rx="6" fill="#11171c" stroke={fixtureStroke} strokeWidth={fixtureSelected ? 3 : 2} />
                 </> : <circle r="11" fill="#11171c" stroke={fixtureStroke} strokeWidth={fixtureSelected ? 3 : 2} />}
                 <circle r="4.5" fill={color} opacity={Math.max(.35, level)} />
+                {(Math.abs(origin.x - fixtureBase.x) > 1 || Math.abs(origin.y - fixtureBase.y) > 1) && <line x1="0" y1="0" x2={origin.x - fixtureBase.x} y2={origin.y - fixtureBase.y} stroke={fixtureStroke} strokeWidth="1.5" opacity=".65" />}
+                <circle cx={origin.x - fixtureBase.x} cy={origin.y - fixtureBase.y} r="3.2" fill={color} stroke={fixtureStroke} strokeWidth="1" />
                 <text className="visualizer-fixture-name" x="0" y="-18" textAnchor="middle">{fixture.name}</text>
                 {interactive && fixtureSelected && <g className="stage-rotate-handle" transform="translate(22 -22)" onPointerDown={(event) => beginStageDrag(event, 'fixture', fixture.id, fixtureTransform(fixture, index, patch.length, stageSettings.dimensions).position, 'rotate')}>
                   <circle r="10" />
@@ -2838,7 +2849,7 @@ export default function App() {
             <div className="inspector-pair"><label><span>Universe</span><input type="number" min="1" value={inspectedFixture.universe ?? 1} onChange={(event) => savePatchedFixture({ ...inspectedFixture, universe: Number(event.target.value) })} /></label><label><span>Address</span><input type="number" min="1" max="512" value={inspectedFixture.address} onChange={(event) => savePatchedFixture({ ...inspectedFixture, address: Number(event.target.value) })} /></label></div>
             <label><span>Group</span><select value={inspectedFixture.group} onChange={(event) => savePatchedFixture({ ...inspectedFixture, group: event.target.value })}><option value="">Unassigned</option>{fixtureGroups.map((group) => <option key={group.id} value={group.name}>{group.name}</option>)}</select></label>
             <div className="inspector-pair"><label><span>Mounting</span><select value={inspectedFixture.mounting ?? 'hanging'} onChange={(event) => savePatchedFixture({ ...inspectedFixture, mounting: event.target.value as PatchedFixture['mounting'] })}><option value="hanging">Hanging</option><option value="floor">Floor</option><option value="wall">Wall</option><option value="custom">Custom</option></select></label><label><span>Orientation</span><select value={inspectedFixture.orientation ?? 'normal'} onChange={(event) => savePatchedFixture({ ...inspectedFixture, orientation: event.target.value as PatchedFixture['orientation'] })}><option value="normal">Normal</option><option value="inverted">Inverted</option><option value="rotated90">Rotated 90°</option><option value="rotated180">Rotated 180°</option><option value="custom">Custom</option></select></label></div>
-            <div className="transform-grid">{(['x', 'y', 'z'] as const).map((axis) => <label key={axis}><span>{axis.toUpperCase()}</span><input type="number" step="0.1" value={Number(activeStageTransform.position[axis].toFixed(2))} onChange={(event) => updateStageFixtureTransform('position', axis, Number(event.target.value))} /></label>)}{(['yaw', 'pitch', 'roll'] as const).map((axis) => <label key={axis}><span>{axis}</span><input type="number" step="1" value={Number(activeStageTransform.rotation[axis].toFixed(1))} onChange={(event) => updateStageFixtureTransform('rotation', axis, Number(event.target.value))} /></label>)}</div>
+            <div className="transform-grid">{(['x', 'y', 'z'] as const).map((axis) => <label key={axis}><span>{axis.toUpperCase()}</span><input type="number" step="0.1" value={Number(activeStageTransform.position[axis].toFixed(2))} onChange={(event) => updateStageFixtureTransform('position', axis, Number(event.target.value))} /></label>)}{(['yaw', 'pitch', 'roll'] as const).map((axis) => <label key={axis}><span>{axis}</span><input type="number" min="-180" max="180" step="1" value={Number(activeStageTransform.rotation[axis].toFixed(1))} onChange={(event) => updateStageFixtureTransform('rotation', axis, Number(event.target.value))} /></label>)}</div>
             {findProfile(inspectedFixture.profileId)?.movement && (() => {
               const fixtureIndex = patch.findIndex((item) => item.id === inspectedFixture.id);
               const movementState = fixtureGeometryState(universe, inspectedFixture, fixtureIndex, patch.length, stageSettings.dimensions).movement;
