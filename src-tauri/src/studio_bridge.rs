@@ -1,6 +1,7 @@
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::{
+    collections::HashMap,
     net::{TcpListener, TcpStream},
     sync::{
         atomic::{AtomicBool, Ordering},
@@ -51,6 +52,7 @@ pub struct StudioBridge {
     connected_clients: Arc<Mutex<usize>>,
     last_error: Arc<Mutex<Option<String>>>,
     requests_rx: Mutex<Receiver<BridgeRequest>>,
+    pending: Mutex<HashMap<String, Sender<StudioBridgeResponse>>>,
 }
 
 impl StudioBridge {
@@ -88,7 +90,7 @@ impl StudioBridge {
             Err(err) => *error.lock().unwrap() = Some(err.to_string()),
         });
 
-        Self { running, connected_clients, last_error, requests_rx: Mutex::new(requests_rx) }
+        Self { running, connected_clients, last_error, requests_rx: Mutex::new(requests_rx), pending: Mutex::new(HashMap::new()) }
     }
 
     pub fn status(&self) -> StudioBridgeStatus {
@@ -100,13 +102,20 @@ impl StudioBridge {
         }
     }
 
-    pub fn drain(&self) -> Vec<(StudioBridgeEnvelope, Sender<StudioBridgeResponse>)> {
+    pub fn drain(&self) -> Vec<StudioBridgeEnvelope> {
         let rx = self.requests_rx.lock().unwrap();
         let mut requests = Vec::new();
         while let Ok(request) = rx.try_recv() {
-            requests.push((request.envelope, request.reply));
+            self.pending.lock().unwrap().insert(request.envelope.id.clone(), request.reply);
+            requests.push(request.envelope);
         }
         requests
+    }
+
+    pub fn reply(&self, response: StudioBridgeResponse) -> Result<(), String> {
+        let reply = self.pending.lock().unwrap().remove(&response.id)
+            .ok_or_else(|| "Studio bridge request is no longer pending.".to_string())?;
+        reply.send(response).map_err(|err| err.to_string())
     }
 }
 
