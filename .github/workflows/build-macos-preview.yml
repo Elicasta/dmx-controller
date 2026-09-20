@@ -4,6 +4,8 @@ on:
   push:
     branches:
       - lumarig-0.5.0-integration
+    paths-ignore:
+      - 'README.md'
 
 permissions:
   contents: read
