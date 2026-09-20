@@ -114,6 +114,7 @@ import { ShowRuntime, type RuntimeDispatchResult } from './core/show-runtime';
 import { projectStagePoint, unprojectStagePoint, type StagePoint2D, type StageView } from './core/stage-projection';
 import { arrangeTargetPoints, buildStageTargets, type TargetArrangement, type TargetPoint } from './core/targets';
 import { RemoteRelay, type RelayCommandEnvelope, type RemoteRelayConfig, type RemoteRelayStatus } from './core/remote-relay';
+import { WorkflowTabs, lumaWorkspaceFor, legacyWorkspaceFor } from './app/WorkflowShell';
 
 type Workspace = 'setup' | 'program' | 'show' | 'live';
 type SetupView = 'fixtures' | 'groups' | 'patch' | 'stage' | 'settings';
@@ -2615,7 +2616,7 @@ export default function App() {
     <main className={`console-app workspace-${workspace} ${dmxStatus.blackout ? 'blackout-is-active' : ''}`}>
       <header className="console-header">
         <div className="console-brand"><span className="brand-mark">◆</span><div><small>SHOW</small><input aria-label="Current show name" value={showFile.name} onChange={(event) => setShowFile((current) => ({ ...current, name: event.target.value }))} /></div></div>
-        <nav className="console-workspace-tabs" aria-label="Workspace">{(['setup', 'program', 'show', 'live'] as Workspace[]).map((item) => <button key={item} className={workspace === item ? 'active' : ''} onClick={() => setWorkspace(item)}>{item.toUpperCase()}</button>)}</nav>
+        <WorkflowTabs workspace={lumaWorkspaceFor(workspace)} onChange={(nextWorkspace) => setWorkspace(legacyWorkspaceFor(nextWorkspace))} />
         <div className="console-header-status">
           <button className="tempo-pill" onClick={tapTempo}><strong>{tempoSource === 'midi' && midiBpm ? midiBpm : effectBpm} BPM</strong><small>{tempoSource === 'midi' ? 'MIDI CLOCK' : 'TAP'}</small></button>
           <button className={`connection-pill ${dmxStatus.connected ? 'online' : ''}`} onClick={() => { setWorkspace('setup'); setSetupView('settings'); }}><i />{dmxStatus.connected ? 'DMX Connected' : 'Virtual Output'}</button>
