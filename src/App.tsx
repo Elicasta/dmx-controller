@@ -2531,7 +2531,7 @@ export default function App() {
       showName: showFile.name,
       stage: {
         view: stageView,
-        mode: stageInteractionMode,
+        mode: stageView,
         objectCount: stageElements.length,
         selectedObjectId: selectedStageElementId,
         dimensions: { ...stageSettings.dimensions },
@@ -2593,7 +2593,7 @@ export default function App() {
       remotePublishTimerRef.current = null;
       remoteSnapshotHandlerRef.current?.();
     }, 120);
-  }, [remoteRelayStatus, showFile, activeCueId, globalMaster, dmxStatus, effectBpm, tempoSource, midiBpm, midiStatus, midiClockSeen, externalTransportRunning, externalSongPositionMs, showRecordingActive, showRecordingElapsedMs, activeEffect, patch, outputUniverse, fixtureGroups, savedLooks, stageView, stageInteractionMode, stageElements, selectedStageElementId, stageSettings]);
+  }, [remoteRelayStatus, showFile, activeCueId, globalMaster, dmxStatus, effectBpm, tempoSource, midiBpm, midiStatus, midiClockSeen, externalTransportRunning, externalSongPositionMs, showRecordingActive, showRecordingElapsedMs, activeEffect, patch, outputUniverse, fixtureGroups, savedLooks, stageView, stageElements, selectedStageElementId, stageSettings]);
 
   const consoleColorPresets = COLOR_PRESETS.map((preset) => ({
     name: preset.name,
