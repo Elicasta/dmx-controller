@@ -118,7 +118,7 @@ import { WorkflowTabs, lumaWorkspaceFor, legacyWorkspaceFor } from './app/Workfl
 
 type Workspace = 'setup' | 'program' | 'show' | 'live';
 type SetupView = 'fixtures' | 'groups' | 'stage' | 'settings';
-type ProgramMode = 'stage' | 'faders' | 'groups';
+type ProgramMode = 'programmer' | 'stage';
 type ShowMode = 'cues' | 'tracks' | 'library';
 type LiveBank = 'fixtures' | 'groups';
 
@@ -498,7 +498,7 @@ function FixturePatchEditor({ fixture, onSave, onRemove, onToggleSelected, onTog
 export default function App() {
   const [workspace, setWorkspace] = useState<Workspace>(() => initialConsoleValue('workspace', ['setup', 'program', 'show', 'live'], 'program'));
   const [setupView, setSetupView] = useState<SetupView>(() => initialConsoleValue('setup', ['fixtures', 'groups', 'stage', 'settings'], 'fixtures'));
-  const [programMode, setProgramMode] = useState<ProgramMode>(() => initialConsoleValue('program', ['stage', 'faders', 'groups'], 'faders'));
+  const [programMode, setProgramMode] = useState<ProgramMode>(() => initialConsoleValue('program', ['programmer', 'stage'], 'programmer'));
   const [showMode, setShowMode] = useState<ShowMode>(() => initialConsoleValue('show', ['cues', 'tracks'], 'cues'));
   const [fixtureSearch, setFixtureSearch] = useState('');
   const [selectedGroupId, setSelectedGroupId] = useState<string | null>(null);
@@ -2601,15 +2601,15 @@ export default function App() {
     color: rgbToHex(preset.rgb[0], preset.rgb[1], preset.rgb[2])
   }));
   const allLooks = [...STARTER_LOOKS, ...savedLooks];
-  const programEffectFixtures = programMode === 'groups' ? selectedGroupFixtures : selectedFixtureTargets;
-  const programEffectName = programMode === 'groups'
-    ? selectedGroup?.name ?? ''
+  const programTargetIsGroup = Boolean(selectedGroup && selectedGroupFixtures.length && selectedFixtureTargets.length === selectedGroupFixtures.length && selectedFixtureTargets.every((fixture) => selectedGroupFixtures.some((member) => member.id === fixture.id)));
+  const programEffectFixtures = programTargetIsGroup ? selectedGroupFixtures : selectedFixtureTargets;
+  const programEffectName = programTargetIsGroup
+    ? selectedGroup?.name ?? 'No group selected'
     : selectedFixtureTargets.length === 1
       ? selectedFixtureTargets[0].name
       : selectedFixtureTargets.length > 1
         ? `${selectedFixtureTargets.length} selected fixtures`
-        : '';
-  const inspectedFixture = patch.find((fixture) => fixture.selected) ?? stageFixture;
+        : 'No fixture selected';
   const selectedCompatibleColors = compatibleColorFixtures(selectedFixtureTargets);
 
   return (
@@ -2709,14 +2709,12 @@ export default function App() {
       {workspace === 'program' && <section className="console-workspace program-console">
         <FixtureBrowser patch={patch} groups={fixtureGroups} search={fixtureSearch} onSearchChange={setFixtureSearch} onSelectAll={selectAllFixtures} onClearSelection={clearFixtureSelection} onSelectFixture={selectFixtureFromConsole} onSelectGroup={selectFixtureGroup} selectedGroupId={selectedGroupId} />
         <div className="program-center console-center">
-          <nav className="workspace-subtabs program-subtabs">{([['stage', 'Stage View'], ['faders', 'Fader Mode'], ['groups', 'Groups']] as Array<[ProgramMode, string]>).map(([id, label]) => <button key={id} className={programMode === id ? 'active' : ''} onClick={() => setProgramMode(id)}>{label}</button>)}</nav>
-          {programMode !== 'stage' && <ColorDeck title={programMode === 'groups' ? 'GROUP COLOR' : 'GLOBAL COLOR'} subtitle={programMode === 'groups' ? selectedGroup?.name ?? 'Select a group' : selectedFixtureTargets.length ? `${selectedFixtureTargets.length} selected fixture${selectedFixtureTargets.length === 1 ? '' : 's'}` : 'Select fixtures before applying color'} color={globalColor} disabled={programMode === 'groups' ? !selectedGroup || compatibleColorFixtures(selectedGroupFixtures).length === 0 : selectedCompatibleColors.length === 0} presets={consoleColorPresets} onChange={(color) => programMode === 'groups' && selectedGroup ? applyGroupColor(selectedGroup, color) : applyGlobalColor(color)} />}
-          {programMode === 'faders' && <section className="fader-bank"><header><span>FIXTURE FADERS</span><strong>Fixture-level brightness · semantic dimmer</strong></header><div>{patch.map((fixture) => <VerticalFader key={fixture.id} id={fixture.id} name={fixture.name} subtitle={fixtureBrowserSubtitle(fixture)} color={fixture.labelColor ?? '#55e98d'} value={fixtureIntensityPercent(universe, fixture)} selected={fixture.selected} onChange={(value) => void setFixtureAttribute(fixture, 'dimmer', percentToDmx(value))} onSelect={() => selectFixtureFromConsole(fixture.id, true)} onFx={() => selectFixtureFromConsole(fixture.id)} />)}</div></section>}
-          {programMode === 'groups' && <section className="fader-bank"><header><span>GROUP MASTERS</span><strong>Non-destructive output multipliers</strong></header><div>{fixtureGroups.map((group) => { const members = fixturesInGroup(patch, group); return <VerticalFader key={group.id} id={group.id} name={group.name} subtitle={`${members.length} fixtures`} color={group.labelColor} value={Math.round(groupMasters[group.id] ?? group.masterDefault)} selected={selectedGroupId === group.id} onChange={(value) => applyGroupMaster(group, value)} onSelect={() => selectFixtureGroup(group.id)} onFx={() => selectFixtureGroup(group.id)} quickAction={{ label: 'Chase', onPress: () => startEffect('chase', members.map((fixture) => fixture.id)) }} />; })}</div></section>}
-          {programMode === 'stage' && <><div className="stage-console-toolbar"><div role="toolbar">{STAGE_DESIGNER_MODES.map((mode) => <button key={mode.id} className={stageMode === mode.id ? 'active' : ''} onClick={() => setStageMode(mode.id)}>{mode.label}</button>)}</div><span>{selectedFixtureTargets.length} selected</span></div><div className="program-stage">{renderStagePreview(true)}</div></>}
+          <section className="create-context-bar"><div><span>CREATE · TARGET</span><strong>{programEffectName}</strong><small>{programEffectFixtures.length ? `${programEffectFixtures.length} fixture${programEffectFixtures.length === 1 ? '' : 's'} ready` : 'Select a fixture or group on the left'}</small></div><div className="create-view-switch"><button className={programMode === 'programmer' ? 'active' : ''} onClick={() => setProgramMode('programmer')}>PROGRAMMER</button><button className={programMode === 'stage' ? 'active' : ''} onClick={() => setProgramMode('stage')}>STAGE</button></div></section>
+          {programMode === 'programmer' && <><ColorDeck title="COLOR" subtitle={programEffectName} color={globalColor} disabled={programTargetIsGroup ? !selectedGroup || compatibleColorFixtures(selectedGroupFixtures).length === 0 : selectedCompatibleColors.length === 0} presets={consoleColorPresets} onChange={(color) => programTargetIsGroup && selectedGroup ? applyGroupColor(selectedGroup, color) : applyGlobalColor(color)} /><section className="fader-bank create-intensity-bank"><header><span>INTENSITY</span><strong>{programTargetIsGroup ? 'Group master' : 'Selected fixture brightness'}</strong></header><div>{programTargetIsGroup && selectedGroup ? <VerticalFader id={selectedGroup.id} name={selectedGroup.name} subtitle={`${selectedGroupFixtures.length} fixtures`} color={selectedGroup.labelColor} value={Math.round(groupMasters[selectedGroup.id] ?? selectedGroup.masterDefault)} selected onChange={(value) => applyGroupMaster(selectedGroup, value)} onSelect={() => selectFixtureGroup(selectedGroup.id)} onFx={() => undefined} /> : selectedFixtureTargets.map((fixture) => <VerticalFader key={fixture.id} id={fixture.id} name={fixture.name} subtitle={fixtureBrowserSubtitle(fixture)} color={fixture.labelColor ?? '#55e98d'} value={fixtureIntensityPercent(universe, fixture)} selected onChange={(value) => void setFixtureAttribute(fixture, 'dimmer', percentToDmx(value))} onSelect={() => selectFixtureFromConsole(fixture.id, true)} onFx={() => undefined} />)}</div></section></>}
+          {programMode === 'stage' && <><div className="stage-console-toolbar"><div role="toolbar">{STAGE_DESIGNER_MODES.map((mode) => <button key={mode.id} className={stageMode === mode.id ? 'active' : ''} onClick={() => setStageMode(mode.id)}>{mode.label}</button>)}</div><span>{programEffectFixtures.length} targeted</span></div><div className="program-stage">{renderStagePreview(true)}</div></>}
           <LooksStrip looks={allLooks} onApply={runLook} onSave={saveCurrentLook} />
         </div>
-        <EffectsPanel title={programMode === 'groups' ? 'FX FOR SELECTED GROUP' : 'FX FOR SELECTED FIXTURE'} targetName={programEffectName} fixtures={programEffectFixtures} activeEffect={activeEffect} bpm={effectBpm} depth={effectDepth} disabled={programMode === 'groups' && !selectedGroup?.fxEnabled} onBpmChange={(value) => { setEffectBpm(value); effectBpmRef.current = value; setTempoSource('manual'); }} onDepthChange={(value) => { setEffectDepth(value); effectDepthRef.current = value; }} onStart={(effect) => toggleEffect(effect, programEffectFixtures.map((fixture) => fixture.id))} onPress={(effect) => startMomentaryEffect(effect, programEffectFixtures.map((fixture) => fixture.id))} onRelease={releaseMomentaryEffect} onStop={() => stopEffect()} />
+        <EffectsPanel title="FX" targetName={programEffectName} fixtures={programEffectFixtures} activeEffect={activeEffect} bpm={effectBpm} depth={effectDepth} disabled={programTargetIsGroup && !selectedGroup?.fxEnabled} onBpmChange={(value) => { setEffectBpm(value); effectBpmRef.current = value; setTempoSource('manual'); }} onDepthChange={(value) => { setEffectDepth(value); effectDepthRef.current = value; }} onStart={(effect) => toggleEffect(effect, programEffectFixtures.map((fixture) => fixture.id))} onPress={(effect) => startMomentaryEffect(effect, programEffectFixtures.map((fixture) => fixture.id))} onRelease={releaseMomentaryEffect} onStop={() => stopEffect()} />
       </section>}
 
       {workspace === 'show' && <section className="show-console console-workspace-wide">
