@@ -2529,6 +2529,21 @@ export default function App() {
     return {
       revision: runtimeRef.current?.snapshot.revision ?? 0,
       showName: showFile.name,
+      stage: {
+        view: stageView,
+        mode: stageInteractionMode,
+        objectCount: stageElements.length,
+        selectedObjectId: selectedStageElementId,
+        dimensions: { ...stageSettings.dimensions },
+        elements: stageElements.map((element) => ({
+          id: element.id,
+          type: element.type,
+          label: element.label,
+          color: element.color,
+          position: { ...stageElementPosition(element, stageSettings.dimensions) },
+          dimensions: element.dimensions ? { ...element.dimensions } : undefined
+        }))
+      },
       currentCue: activeCue ? { id: activeCue.id, number: activeCue.number, name: activeCue.name } : null,
       nextCue: nextCue ? { id: nextCue.id, number: nextCue.number, name: nextCue.name } : null,
       master: globalMaster / 100,
@@ -2542,9 +2557,10 @@ export default function App() {
       recorder: { active: showRecordingActive, elapsedMs: showRecordingElapsedMs },
       activeEffectIds: activeEffect ? [activeEffect] : [],
       selectedFixtureIds: patch.filter((fixture) => fixture.selected).map((fixture) => fixture.id),
-      fixtures: patch.map((fixture) => {
+      fixtures: patch.map((fixture, index) => {
         const mode = findMode(fixture);
         const values = fixtureValues(outputUniverse, fixture);
+        const geometry = fixtureGeometryState(outputUniverse, fixture, index, patch.length, stageSettings.dimensions);
         return {
           id: fixture.id,
           name: fixture.name,
@@ -2552,7 +2568,13 @@ export default function App() {
           labelColor: fixture.labelColor ?? '#55f29a',
           intensity: values.dimmer / 255,
           color: rgbToHex(values.red, values.green, values.blue),
-          capabilities: [...new Set(mode?.channels.map((channel) => channel.parameter).filter((parameter): parameter is FixtureParameter => Boolean(parameter)) ?? [])]
+          capabilities: [...new Set(mode?.channels.map((channel) => channel.parameter).filter((parameter): parameter is FixtureParameter => Boolean(parameter)) ?? [])],
+          stagePosition: { ...geometry.beam.origin },
+          beamDirection: { ...geometry.beam.direction },
+          beamAngleDegrees: geometry.beam.angleDegrees,
+          panDegrees: geometry.movement.pan,
+          tiltDegrees: geometry.movement.tilt,
+          movementCapable: geometry.movementCapable
         };
       }),
       groups: fixtureGroups.map((group) => ({ id: group.id, name: group.name, labelColor: group.labelColor, fixtureIds: [...group.fixtureOrder] })),
@@ -2571,7 +2593,7 @@ export default function App() {
       remotePublishTimerRef.current = null;
       remoteSnapshotHandlerRef.current?.();
     }, 120);
-  }, [remoteRelayStatus, showFile, activeCueId, globalMaster, dmxStatus, effectBpm, tempoSource, midiBpm, midiStatus, midiClockSeen, externalTransportRunning, externalSongPositionMs, showRecordingActive, showRecordingElapsedMs, activeEffect, patch, outputUniverse, fixtureGroups, savedLooks]);
+  }, [remoteRelayStatus, showFile, activeCueId, globalMaster, dmxStatus, effectBpm, tempoSource, midiBpm, midiStatus, midiClockSeen, externalTransportRunning, externalSongPositionMs, showRecordingActive, showRecordingElapsedMs, activeEffect, patch, outputUniverse, fixtureGroups, savedLooks, stageView, stageInteractionMode, stageElements, selectedStageElementId, stageSettings]);
 
   const consoleColorPresets = COLOR_PRESETS.map((preset) => ({
     name: preset.name,
