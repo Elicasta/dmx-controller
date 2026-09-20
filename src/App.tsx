@@ -2654,7 +2654,7 @@ export default function App() {
             <label><span>Size</span><input type="range" min="10" max="100" value={selectedStageElement.size} onChange={(event) => updateStageElement(selectedStageElement.id, { size: Number(event.target.value) })} /></label>
             <label><span>Color</span><input className="inspector-color" type="color" value={selectedStageElement.color} onChange={(event) => updateStageElement(selectedStageElement.id, { color: event.target.value })} /></label>
             <button className="danger-button stage-delete-button" onClick={() => removeStageElement(selectedStageElement.id)}>Delete Stage Object</button>
-inspectedFixture ? <>
+          </> : inspectedFixture ? <>
             <header><span>FIXTURE INSPECTOR</span><strong>{inspectedFixture.name}</strong><small>{findProfile(inspectedFixture.profileId)?.manufacturer} {findProfile(inspectedFixture.profileId)?.model}</small></header>
             <label><span>Name</span><input value={inspectedFixture.name} onChange={(event) => savePatchedFixture({ ...inspectedFixture, name: event.target.value })} /></label>
             <div className="inspector-pair"><label><span>Universe</span><input type="number" min="1" value={inspectedFixture.universe ?? 1} onChange={(event) => savePatchedFixture({ ...inspectedFixture, universe: Number(event.target.value) })} /></label><label><span>Address</span><input type="number" min="1" max="512" value={inspectedFixture.address} onChange={(event) => savePatchedFixture({ ...inspectedFixture, address: Number(event.target.value) })} /></label></div>
