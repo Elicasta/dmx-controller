@@ -2368,13 +2368,11 @@ export default function App() {
   }
 
   function renderStagePreview(interactive = false) {
+    const plotView: StageView = 'top';
     const beamLength = Math.max(stageSettings.dimensions.width, stageSettings.dimensions.depth, stageSettings.dimensions.height) * 1.2;
     return (
-      <div className={`multi-stage physical-stage stage-view-${stageView} stage-mode-${stageMode}`}>
-        <div className="stage-view-toolbar" role="group" aria-label="Stage view">
-          {(['perspective', 'top', 'front', 'side'] as StageView[]).map((view) => <button key={view} className={stageView === view ? 'active' : ''} onClick={() => setStageView(view)}>{view}</button>)}
-        </div>
-        <svg className="stage-geometry-svg" viewBox="0 0 1000 560" aria-label={`${stageView} physical stage view`}>
+      <div className={`multi-stage physical-stage stage-view-${plotView} stage-mode-${stageMode}`}>
+        <svg className="stage-geometry-svg" viewBox="0 0 1000 560" aria-label={`top physical stage plot`}>
           <defs>
             <filter id="beam-glow"><feGaussianBlur stdDeviation="7" /></filter>
             <pattern id="stage-grid" width="50" height="50" patternUnits="userSpaceOnUse"><path d="M 50 0 L 0 0 0 50" fill="none" stroke="rgba(125,145,166,.12)" strokeWidth="1" /></pattern>
@@ -2388,19 +2386,19 @@ export default function App() {
             const color = `rgb(${rgb.join(' ')})`;
             const level = dmxStatus.blackout ? 0 : values.dimmer / 255;
             const geometry = fixtureGeometryState(outputUniverse, fixture, index, patch.length, stageSettings.dimensions);
-            const origin = projectStagePoint(geometry.beam.origin, stageSettings.dimensions, stageView);
+            const origin = projectStagePoint(geometry.beam.origin, stageSettings.dimensions, plotView);
             const intersection = intersectBeamWithStage(geometry.beam, stageSettings.dimensions);
-            const endpoint = projectStagePoint(intersection?.point ?? pointAlongRay(geometry.beam, beamLength), stageSettings.dimensions, stageView);
+            const endpoint = projectStagePoint(intersection?.point ?? pointAlongRay(geometry.beam, beamLength), stageSettings.dimensions, plotView);
             const strokeWidth = Math.max(4, geometry.beam.angleDegrees * .65);
             return <g key={fixture.id} className={stageFixture?.id === fixture.id && interactive ? 'editing' : ''}>
               <line x1={origin.x} y1={origin.y} x2={endpoint.x} y2={endpoint.y} stroke={color} strokeWidth={strokeWidth * 2.4} opacity={level * .2} filter="url(#beam-glow)" />
               <line x1={origin.x} y1={origin.y} x2={endpoint.x} y2={endpoint.y} stroke={color} strokeWidth={strokeWidth} opacity={level * .68} strokeLinecap="round" />
               <circle cx={endpoint.x} cy={endpoint.y} r={Math.max(4, strokeWidth * .65)} fill={color} opacity={level}><title>{intersection ? `${fixture.name} hits ${intersection.surface} at ${intersection.distance.toFixed(1)} m` : `${fixture.name} beam`}</title></circle>
-              <circle cx={origin.x} cy={origin.y} r="8" fill="#11161d" stroke={fixture.labelColor ?? '#657080'} strokeWidth={stageFixture?.id === fixture.id && interactive ? 5 : 3} />
+              <circle cx={origin.x} cy={origin.y} r="9" fill={level > 0 ? color : "#11161d"} fillOpacity={level > 0 ? Math.max(.3, level) : 1} stroke={fixture.labelColor ?? "#657080"} strokeWidth={stageFixture?.id === fixture.id && interactive ? 5 : 3} />
             </g>;
           })}
           {interactive && ['aim', 'measure', 'target'].includes(stageMode) && stageTargets.map((target) => {
-            const projected = projectStagePoint(target.position, stageSettings.dimensions, stageView);
+            const projected = projectStagePoint(target.position, stageSettings.dimensions, plotView);
             const selected = target.id === selectedTarget?.id;
             const activate = () => {
               setSelectedTargetId(target.id);
@@ -2428,7 +2426,7 @@ export default function App() {
         </svg>
         {stageElements.map((element) => {
           const worldPosition = stageElementPosition(element, stageSettings.dimensions);
-          const projected = projectStagePoint(worldPosition, stageSettings.dimensions, stageView);
+          const projected = projectStagePoint(worldPosition, stageSettings.dimensions, plotView);
           const scale = .58 + element.depth * .006;
           const widthFactor = element.type === 'back-wall' ? 5 : element.type === 'riser' ? 3.2 : element.type === 'person' ? 1.8 : 2.2;
           const selected = interactive && selectedStageElementId === element.id;
@@ -2446,7 +2444,7 @@ export default function App() {
         })}
         {patch.map((fixture, index) => {
           const geometry = fixtureGeometryState(outputUniverse, fixture, index, patch.length, stageSettings.dimensions);
-          const projected = projectStagePoint(geometry.beam.origin, stageSettings.dimensions, stageView);
+          const projected = projectStagePoint(geometry.beam.origin, stageSettings.dimensions, plotView);
           return <div className={`stage-light physical-fixture ${stageFixture?.id === fixture.id && interactive ? 'editing' : ''} ${fixture.selected ? 'selected' : ''}`} key={fixture.id} style={{ left: `${projected.x / 10}%`, top: `${projected.y / 5.6}%`, zIndex: 40 }}><button className="stage-unit stage-unit-button" style={{ borderColor: fixture.labelColor ?? '#505b68' }} aria-label={`${stageMode === 'move' ? 'Drag' : 'Select'} ${fixture.name} on stage`} onPointerDown={(event) => { if (interactive) beginStageDrag(event, 'fixture', fixture.id, fixtureTransform(fixture, index, patch.length, stageSettings.dimensions).position); }} onPointerMove={(event) => { if (interactive) moveStageDrag(event); }} onPointerUp={(event) => { if (interactive) endStageDrag(event); }} onPointerCancel={(event) => { if (interactive) endStageDrag(event); }} onClick={(event) => { if (interactive) selectFixtureFromConsole(fixture.id, event.metaKey || event.ctrlKey || event.shiftKey); }} /><span className="stage-light-label" style={{ borderColor: fixture.labelColor ?? '#3a444f', color: fixture.labelColor ?? '#c9d0d8' }}>{fixture.name}{geometry.movementCapable ? ` · ${Math.round(geometry.movement.pan)}°/${Math.round(geometry.movement.tilt)}°` : ''}</span></div>;
         })}
         <div className="stage-coordinate-key">X stage left/right · Y floor/ceiling · Z downstage/upstage · meters internally</div>
