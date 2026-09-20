@@ -1741,3 +1741,49 @@ input[type="text"], input[type="number"], .add-fixture-grid input, .patch-card-b
 .live-looks button{height:83px;min-height:83px;}
 .live-health{grid-row:6;min-height:37px;}
 .live-master{grid-row:1/5;}
+
+
+/* LumaRig 0.5 · guided BUILD workflow */
+.build-step-intro {
+  margin: 0 0 14px;
+  padding: 16px 18px;
+  border: 1px solid rgba(255,255,255,.08);
+  border-radius: 12px;
+  background: rgba(255,255,255,.025);
+}
+.build-step-intro > span {
+  display: block;
+  margin-bottom: 6px;
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: .16em;
+  opacity: .58;
+}
+.build-step-intro h2 {
+  margin: 0;
+  font-size: 18px;
+  letter-spacing: -.02em;
+}
+.build-step-intro p {
+  max-width: 760px;
+  margin: 6px 0 0;
+  font-size: 12px;
+  line-height: 1.5;
+  opacity: .64;
+}
+.setup-subtabs button {
+  position: relative;
+}
+.setup-subtabs button.active::after {
+  content: '';
+  position: absolute;
+  left: 18%;
+  right: 18%;
+  bottom: -1px;
+  height: 2px;
+  border-radius: 2px;
+  background: currentColor;
+}
+.stage-build-intro {
+  margin: 10px 12px 0;
+}
