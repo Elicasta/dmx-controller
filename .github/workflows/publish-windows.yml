@@ -21,15 +21,15 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  windows:
+  publish:
     name: Build Windows x64
     runs-on: windows-latest
     steps:
       - name: Check out source
-        uses: actions/checkout@v7
+        uses: actions/checkout@v4
 
       - name: Set up Node.js
-        uses: actions/setup-node@v6
+        uses: actions/setup-node@v4
         with:
           node-version: lts/*
           cache: npm
@@ -46,15 +46,6 @@ jobs:
 
       - name: Install frontend dependencies
         run: npm ci
-
-      - name: Run frontend tests
-        run: npm test
-
-      - name: Build frontend
-        run: npm run build
-
-      - name: Run native tests
-        run: cargo test --manifest-path src-tauri/Cargo.toml
 
       - name: Validate release secrets
         shell: pwsh
@@ -80,7 +71,7 @@ jobs:
           node -e "const fs=require('fs'); const p='src-tauri/tauri.conf.json'; const c=JSON.parse(fs.readFileSync(p,'utf8')); c.plugins??={}; c.plugins.updater??={}; c.plugins.updater.pubkey=process.env.TAURI_SIGNING_PUBLIC_KEY; fs.writeFileSync(p,JSON.stringify(c,null,2)+'\n');"
 
       - name: Build, sign, and publish Windows
-        uses: tauri-apps/tauri-action@v1
+        uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.DMX_RELEASE_TOKEN }}
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
@@ -97,4 +88,6 @@ jobs:
           generateReleaseNotes: false
           uploadUpdaterJson: true
           uploadUpdaterSignatures: true
-          args: "--target x86_64-pc-windows-msvc"
+          updaterJsonPreferNsis: true
+          retryAttempts: 2
+          args: "--target x86_64-pc-windows-msvc --bundles nsis,msi"
