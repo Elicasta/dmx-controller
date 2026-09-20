@@ -4,6 +4,7 @@ import {
   fixtureEndAddress,
   fixtureStagePosition,
   fixtureParameterUpdate,
+  migratePatchedFixture,
   isPatchedFixture,
   patchCollision,
   validatePatch,
@@ -32,6 +33,22 @@ describe('fixture patch helpers', () => {
 
   it('keeps stage positions inside the visible design area', () => {
     expect(fixtureStagePosition({ ...DEFAULT_PATCH[0], stageX: 200, stageY: -4, stageDepth: 500, stageDirection: -200 }, 0, 1)).toEqual({ x: 95, y: 5, depth: 100, direction: -90 });
+  });
+
+  it('sanitizes persisted physical transforms into the stage volume', () => {
+    const migrated = migratePatchedFixture({
+      ...DEFAULT_PATCH[0],
+      transform: {
+        position: { x: 999, y: -20, z: 999 },
+        rotation: { yaw: 27, pitch: 100, roll: 12121 }
+      }
+    }, 0, 1);
+    expect(migrated.transform?.position.x).toBeLessThanOrEqual(6.096);
+    expect(migrated.transform?.position.y).toBe(0);
+    expect(migrated.transform?.position.z).toBeLessThanOrEqual(7.3152);
+    expect(migrated.transform?.rotation.yaw).toBe(27);
+    expect(migrated.transform?.rotation.pitch).toBe(100);
+    expect(migrated.transform?.rotation.roll).toBe(-119);
   });
 
   it('validates persisted fixture calibration observations', () => {

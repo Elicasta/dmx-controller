@@ -485,6 +485,7 @@ export default function App() {
   const [updateStatus, setUpdateStatus] = useState<UpdateStatus>('idle');
   const [updateInfo, setUpdateInfo] = useState<UpdateMetadata | null>(null);
   const [updateError, setUpdateError] = useState('');
+  const updateProductName = appVersion.includes('stage-preview') ? 'LumaRig Stage Preview' : 'LumaRig';
 
   const [devices, setDevices] = useState<UdmxDeviceInfo[]>([]);
   const [selectedDevice, setSelectedDevice] = useState('');
@@ -572,7 +573,20 @@ export default function App() {
   const [stageSettings, setStageSettings] = useState<StageSettings>(loadStageSettings);
   const [stageView, setStageView] = useState<StageView>('perspective');
   const [stageMode, setStageMode] = useState<StageDesignerMode>('select');
-  const stageDragRef = useRef<{ pointerId: number; kind: 'fixture' | 'element'; id: string; preserved: Vec3; moved: boolean } | null>(null);
+  const [stageSnapEnabled, setStageSnapEnabled] = useState(true);
+  const [stageSnapMeters, setStageSnapMeters] = useState(.5);
+  const [visualizerHaze, setVisualizerHaze] = useState(.32);
+  const [stageZoom, setStageZoom] = useState(1);
+  const stageDragRef = useRef<{
+    pointerId: number;
+    kind: 'fixture' | 'element';
+    id: string;
+    mode: 'move' | 'rotate';
+    preserved: Vec3;
+    startPoint?: StagePoint2D;
+    startRotation?: { yaw: number; pitch: number; roll: number };
+    moved: boolean;
+  } | null>(null);
   const [selectedTargetId, setSelectedTargetId] = useState('target-center-stage');
   const [aimArrangement, setAimArrangement] = useState<TargetArrangement>('converge');
   const [aimSpreadMeters, setAimSpreadMeters] = useState(4);
@@ -643,11 +657,12 @@ export default function App() {
     horizontal: Math.atan2(selectedTarget.position.x - activeStageGeometry.beam.origin.x, selectedTarget.position.z - activeStageGeometry.beam.origin.z) * 180 / Math.PI,
     vertical: Math.atan2(selectedTarget.position.y - activeStageGeometry.beam.origin.y, Math.hypot(selectedTarget.position.x - activeStageGeometry.beam.origin.x, selectedTarget.position.z - activeStageGeometry.beam.origin.z)) * 180 / Math.PI
   } : null;
-  const activeStageIntersection = activeStageGeometry ? intersectBeamWithStage(activeStageGeometry.beam, stageSettings.dimensions) : null;
+  const activeStageIntersection = activeStageGeometry ? intersectBeamWithStage(activeStageGeometry.beam, stageSettings.dimensions, stageElements) : null;
   const selectedStageElement = stageElements.find((element) => element.id === selectedStageElementId) ?? null;
-  const selectedStagePosition = selectedStageElement
-    ? stageElementPosition(selectedStageElement, stageSettings.dimensions)
-    : { x: 0, y: 0, z: 0 };
+  const selectedStageElementResolved = selectedStageElement ? migrateStageElement(selectedStageElement, stageSettings.dimensions) : null;
+  const selectedStagePosition = selectedStageElementResolved?.transform?.position ?? { x: 0, y: 0, z: 0 };
+  const selectedStageRotation = selectedStageElementResolved?.transform?.rotation ?? { yaw: 0, pitch: 0, roll: 0 };
+  const selectedStageDimensions = selectedStageElementResolved?.dimensions ?? { x: 1, y: 1, z: 1 };
   const midiControls = useMemo(() => buildControlRegistry(patch), [patch]);
   const midiControlGroups = useMemo(() => {
     const groups = new Map<string, MidiAssignableControl[]>();
@@ -733,6 +748,24 @@ export default function App() {
   }, []);
   useEffect(() => window.localStorage.setItem(STAGE_STORAGE_KEY, JSON.stringify(makeStageDocument(stageElements, stageSettings.dimensions))), [stageElements, stageSettings.dimensions]);
   useEffect(() => window.localStorage.setItem(STAGE_SETTINGS_STORAGE_KEY, JSON.stringify(stageSettings)), [stageSettings]);
+  useEffect(() => {
+    const stageEditorActive = (workspace === 'setup' && setupView === 'stage') || (workspace === 'program' && programMode === 'stage');
+    if (!stageEditorActive || !selectedStageElementId) return;
+    const handleStageKey = (event: KeyboardEvent) => {
+      const active = document.activeElement as HTMLElement | null;
+      if (active && ['INPUT', 'TEXTAREA', 'SELECT'].includes(active.tagName)) return;
+      if (event.key === 'Escape') {
+        setSelectedStageElementId(null);
+        return;
+      }
+      if (event.key === 'Delete' || event.key === 'Backspace') {
+        event.preventDefault();
+        removeStageElement(selectedStageElementId);
+      }
+    };
+    window.addEventListener('keydown', handleStageKey);
+    return () => window.removeEventListener('keydown', handleStageKey);
+  }, [workspace, setupView, programMode, selectedStageElementId]);
 
   const refreshDmxStatus = useCallback(async () => {
     try { setDmxStatus(await invoke<DmxStatus>('dmx_status')); } catch { /* browser preview */ }
@@ -1321,11 +1354,11 @@ export default function App() {
         setUpdateInfo(update);
         setAppVersion(update.currentVersion);
         setUpdateStatus('available');
-        if (!silent) setMessage(`LumaRig ${update.version} is ready to install.`);
+        if (!silent) setMessage(`${updateProductName} ${update.version} is ready to install.`);
       } else {
         setUpdateInfo(null);
         setUpdateStatus('current');
-        if (!silent) setMessage(`LumaRig ${appVersion} is up to date.`);
+        if (!silent) setMessage(`${updateProductName} ${appVersion} is up to date.`);
       }
     } catch (error) {
       if (silent) {
@@ -1458,9 +1491,16 @@ export default function App() {
   ) {
     if (!stageFixture) return;
     const currentTransform = fixtureTransform(stageFixture, patch.indexOf(stageFixture), patch.length, stageSettings.dimensions);
+    if (!Number.isFinite(value)) return;
+    const clampedPosition = axis === 'x'
+      ? Math.max(-stageSettings.dimensions.width / 2, Math.min(stageSettings.dimensions.width / 2, value))
+      : axis === 'y'
+        ? Math.max(0, Math.min(stageSettings.dimensions.height, value))
+        : Math.max(0, Math.min(stageSettings.dimensions.depth, value));
+    const wrappedRotation = ((value + 180) % 360 + 360) % 360 - 180;
     const nextTransform = kind === 'position'
-      ? { ...currentTransform, position: { ...currentTransform.position, [axis]: value } }
-      : { ...currentTransform, rotation: { ...currentTransform.rotation, [axis]: value } };
+      ? { ...currentTransform, position: { ...currentTransform.position, [axis]: clampedPosition } }
+      : { ...currentTransform, rotation: { ...currentTransform.rotation, [axis]: wrappedRotation } };
     const nextFixture = { ...stageFixture, transform: nextTransform };
     setOrganizerDraft(nextFixture);
     setPatch((current) => current.map((fixture) => fixture.id === stageFixture.id ? nextFixture : fixture));
@@ -1660,6 +1700,15 @@ export default function App() {
     if (!stageFixture) return;
     void setChannels(fixtureMovementUpdates(stageFixture, .5, .5), true, 'ui');
     setMessage(`${stageFixture.name} sent to profile home.`);
+  }
+
+  function setMoverAxis(fixture: PatchedFixture, axis: 'pan' | 'tilt', normalized: number) {
+    const index = patch.findIndex((item) => item.id === fixture.id);
+    if (index < 0) return;
+    const geometry = fixtureGeometryState(universeRef.current, fixture, index, patch.length, stageSettings.dimensions);
+    const pan = axis === 'pan' ? normalized : geometry.movement.panNormalized;
+    const tilt = axis === 'tilt' ? normalized : geometry.movement.tiltNormalized;
+    void setChannels(fixtureMovementUpdates(fixture, pan, tilt), true, 'ui');
   }
 
   function removeFixture(fixture: PatchedFixture) {
@@ -2110,14 +2159,60 @@ export default function App() {
     }));
   }
 
-  function removeStageElement(id: string) {
-    setStageElements((current) => current.filter((element) => element.id !== id));
-    setSelectedStageElementId(null);
-    setMessage('Stage element removed.');
+  function updateStageElementRotation(id: string, axis: 'yaw' | 'pitch' | 'roll', value: number) {
+    setStageElements((current) => current.map((element) => {
+      if (element.id !== id) return element;
+      const migrated = migrateStageElement(element, stageSettings.dimensions);
+      return { ...migrated, transform: { ...migrated.transform!, rotation: { ...migrated.transform!.rotation, [axis]: value } } };
+    }));
   }
 
-  function stagePointFromPointer(event: ReactPointerEvent<HTMLElement>): StagePoint2D | null {
-    const stage = event.currentTarget.closest<HTMLElement>('.multi-stage');
+  function updateStageElementDimensions(id: string, axis: 'x' | 'y' | 'z', value: number) {
+    setStageElements((current) => current.map((element) => {
+      if (element.id !== id) return element;
+      const migrated = migrateStageElement(element, stageSettings.dimensions);
+      return {
+        ...migrated,
+        dimensions: {
+          ...migrated.dimensions!,
+          [axis]: Math.max(.05, value)
+        }
+      };
+    }));
+  }
+
+  function duplicateStageElement(id: string) {
+    const source = stageElements.find((element) => element.id === id);
+    if (!source) return;
+    const migrated = migrateStageElement(source, stageSettings.dimensions);
+    const copy: StageElement = {
+      ...migrated,
+      id: `stage-${migrated.type}-${Date.now().toString(36)}-copy`,
+      label: `${migrated.label} Copy`,
+      transform: {
+        position: {
+          x: migrated.transform!.position.x + .45,
+          y: migrated.transform!.position.y,
+          z: Math.min(stageSettings.dimensions.depth, migrated.transform!.position.z + .35)
+        },
+        rotation: { ...migrated.transform!.rotation }
+      },
+      dimensions: { ...migrated.dimensions! }
+    };
+    setStageElements((current) => [...current, copy]);
+    setSelectedStageElementId(copy.id);
+    setMessage(`${source.label} duplicated.`);
+  }
+
+  function removeStageElement(id: string) {
+    const removed = stageElements.find((element) => element.id === id);
+    setStageElements((current) => current.filter((element) => element.id !== id));
+    setSelectedStageElementId(null);
+    setMessage(removed ? `${removed.label} removed from the stage.` : 'Stage element removed.');
+  }
+
+  function stagePointFromPointer(event: ReactPointerEvent<Element>): StagePoint2D | null {
+    const stage = event.currentTarget.closest('.multi-stage') as HTMLElement | null;
     if (!stage) return null;
     const bounds = stage.getBoundingClientRect();
     if (!bounds.width || !bounds.height) return null;
@@ -2128,16 +2223,35 @@ export default function App() {
   }
 
   function beginStageDrag(
-    event: ReactPointerEvent<HTMLElement>,
+    event: ReactPointerEvent<Element>,
     kind: 'fixture' | 'element',
     id: string,
-    preserved: Vec3
+    preserved: Vec3,
+    forcedMode?: 'move' | 'rotate'
   ) {
-    if (stageMode !== 'move' || (event.pointerType === 'mouse' && event.button !== 0)) return;
+    const requestedMode = forcedMode ?? (stageMode === 'rotate' ? 'rotate' : stageMode === 'move' ? 'move' : null);
+    if (!requestedMode || (event.pointerType === 'mouse' && event.button !== 0)) return;
     event.preventDefault();
     event.stopPropagation();
     event.currentTarget.setPointerCapture(event.pointerId);
-    stageDragRef.current = { pointerId: event.pointerId, kind, id, preserved, moved: false };
+    const startPoint = stagePointFromPointer(event) ?? undefined;
+    const startRotation = kind === 'fixture'
+      ? (() => {
+          const fixture = patch.find((item) => item.id === id);
+          if (!fixture) return undefined;
+          return fixtureTransform(fixture, patch.indexOf(fixture), patch.length, stageSettings.dimensions).rotation;
+        })()
+      : migrateStageElement(stageElements.find((element) => element.id === id)!, stageSettings.dimensions).transform?.rotation;
+    stageDragRef.current = {
+      pointerId: event.pointerId,
+      kind,
+      id,
+      mode: requestedMode,
+      preserved,
+      startPoint,
+      startRotation,
+      moved: false
+    };
     if (kind === 'fixture') {
       setStageFixtureId(id);
       setSelectedStageElementId(null);
@@ -2147,13 +2261,42 @@ export default function App() {
     }
   }
 
-  function moveStageDrag(event: ReactPointerEvent<HTMLElement>) {
+  function moveStageDrag(event: ReactPointerEvent<Element>) {
     const drag = stageDragRef.current;
     if (!drag || drag.pointerId !== event.pointerId) return;
     const point = stagePointFromPointer(event);
     if (!point) return;
     event.preventDefault();
-    const position = unprojectStagePoint(point, stageSettings.dimensions, stageView, drag.preserved);
+
+    if (drag.mode === 'rotate') {
+      if (!drag.startPoint || !drag.startRotation) return;
+      const delta = (point.x - drag.startPoint.x) * .35;
+      const axis = stageView === 'front' ? 'roll' : stageView === 'side' ? 'pitch' : 'yaw';
+      const rotation = { ...drag.startRotation, [axis]: drag.startRotation[axis] + delta };
+      drag.moved = true;
+      if (drag.kind === 'fixture') {
+        setPatch((current) => current.map((fixture, index) => {
+          if (fixture.id !== drag.id) return fixture;
+          const transform = fixtureTransform(fixture, index, current.length, stageSettings.dimensions);
+          return { ...fixture, transform: { ...transform, rotation } };
+        }));
+      } else {
+        setStageElements((current) => current.map((element) => {
+          if (element.id !== drag.id) return element;
+          const migrated = migrateStageElement(element, stageSettings.dimensions);
+          return { ...migrated, transform: { ...migrated.transform!, rotation } };
+        }));
+      }
+      return;
+    }
+
+    const rawPosition = unprojectStagePoint(point, stageSettings.dimensions, stageView, drag.preserved, 1000, 560, stageZoom);
+    const snap = (value: number) => stageSnapEnabled ? Math.round(value / stageSnapMeters) * stageSnapMeters : value;
+    const position = {
+      x: snap(rawPosition.x),
+      y: snap(rawPosition.y),
+      z: snap(rawPosition.z)
+    };
     drag.moved = true;
     if (drag.kind === 'fixture') {
       setPatch((current) => current.map((fixture, index) => {
@@ -2170,7 +2313,7 @@ export default function App() {
     }
   }
 
-  function endStageDrag(event: ReactPointerEvent<HTMLElement>) {
+  function endStageDrag(event: ReactPointerEvent<Element>) {
     const drag = stageDragRef.current;
     if (!drag || drag.pointerId !== event.pointerId) return;
     if (event.currentTarget.hasPointerCapture(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId);
@@ -2179,7 +2322,9 @@ export default function App() {
       const itemName = drag.kind === 'fixture'
         ? patchRef.current.find((fixture) => fixture.id === drag.id)?.name ?? 'Fixture'
         : stageElements.find((element) => element.id === drag.id)?.label ?? 'Stage object';
-      setMessage(`${itemName} moved in ${stageView} view. Its physical coordinates are saved with the show.`);
+      setMessage(drag.mode === 'rotate'
+        ? `${itemName} rotated in ${stageView} view.`
+        : `${itemName} moved in ${stageView} view. Its physical coordinates are saved with the show.`);
     }
   }
 
@@ -2234,38 +2379,144 @@ export default function App() {
 
   function renderStagePreview(interactive = false) {
     const beamLength = Math.max(stageSettings.dimensions.width, stageSettings.dimensions.depth, stageSettings.dimensions.height) * 1.2;
+    const stageViews: Array<{ id: StageView; label: string }> = [
+      { id: 'perspective', label: 'Show' },
+      { id: 'top', label: 'Plan' },
+      { id: 'front', label: 'Front' },
+      { id: 'side', label: 'Side' }
+    ];
+    const ambient = patch.reduce((result, fixture) => {
+      const values = fixtureValues(outputUniverse, fixture);
+      const level = dmxStatus.blackout ? 0 : values.dimmer / 255;
+      const color: [number, number, number] = values.red + values.green + values.blue > 0
+        ? [values.red, values.green, values.blue]
+        : values.uv > 0 ? [120, 62, 255] : [42, 48, 56];
+      result.red += color[0] * level;
+      result.green += color[1] * level;
+      result.blue += color[2] * level;
+      result.weight += level;
+      return result;
+    }, { red: 0, green: 0, blue: 0, weight: 0 });
+    const ambientRgb = ambient.weight > 0
+      ? `${Math.round(ambient.red / ambient.weight)} ${Math.round(ambient.green / ambient.weight)} ${Math.round(ambient.blue / ambient.weight)}`
+      : '26 33 41';
+    const ambientStrength = Math.min(.46, .08 + ambient.weight / Math.max(1, patch.length) * .36);
     return (
-      <div className={`multi-stage physical-stage stage-view-${stageView} stage-mode-${stageMode}`}>
+      <div
+        className={`multi-stage physical-stage stage-view-${stageView} stage-mode-${stageMode}`}
+        style={{ '--stage-ambient': ambientRgb, '--stage-ambient-strength': ambientStrength } as import('react').CSSProperties}
+      >
         <div className="stage-view-toolbar" role="group" aria-label="Stage view">
-          {(['perspective', 'top', 'front', 'side'] as StageView[]).map((view) => <button key={view} className={stageView === view ? 'active' : ''} onClick={() => setStageView(view)}>{view}</button>)}
+          {stageViews.map((view) => <button key={view.id} className={stageView === view.id ? 'active' : ''} onClick={() => setStageView(view.id)}>{view.label}</button>)}
+          <span className="stage-zoom-divider" />
+          <button aria-label="Zoom out" disabled={stageZoom <= .7} onClick={() => setStageZoom((value) => Math.max(.7, Number((value - .1).toFixed(1))))}>−</button>
+          <b className="stage-zoom-readout">{Math.round(stageZoom * 100)}%</b>
+          <button aria-label="Zoom in" disabled={stageZoom >= 1.8} onClick={() => setStageZoom((value) => Math.min(1.8, Number((value + .1).toFixed(1))))}>＋</button>
+          <button aria-label="Reset zoom" onClick={() => setStageZoom(1)}>Fit</button>
         </div>
+        {interactive && selectedStageElement && <div className="stage-selection-actions"><span>{selectedStageElement.label}</span><button onClick={() => duplicateStageElement(selectedStageElement.id)}>Duplicate</button><button className="danger-button" onClick={() => removeStageElement(selectedStageElement.id)}>Delete</button></div>}
         <svg className="stage-geometry-svg" viewBox="0 0 1000 560" aria-label={`${stageView} physical stage view`}>
           <defs>
             <filter id="beam-glow"><feGaussianBlur stdDeviation="7" /></filter>
             <pattern id="stage-grid" width="50" height="50" patternUnits="userSpaceOnUse"><path d="M 50 0 L 0 0 0 50" fill="none" stroke="rgba(125,145,166,.12)" strokeWidth="1" /></pattern>
           </defs>
-          <rect x="80" y="56" width="840" height="448" rx="10" fill="url(#stage-grid)" stroke="rgba(125,145,166,.28)" />
-          <line x1="500" y1="56" x2="500" y2="504" stroke="rgba(125,145,166,.2)" strokeDasharray="8 8" />
-          <line x1="80" y1="280" x2="920" y2="280" stroke="rgba(125,145,166,.2)" strokeDasharray="8 8" />
+          {(() => {
+            const floorCorners = [
+              { x: -stageSettings.dimensions.width / 2, y: 0, z: 0 },
+              { x: stageSettings.dimensions.width / 2, y: 0, z: 0 },
+              { x: stageSettings.dimensions.width / 2, y: 0, z: stageSettings.dimensions.depth },
+              { x: -stageSettings.dimensions.width / 2, y: 0, z: stageSettings.dimensions.depth }
+            ].map((point) => projectStagePoint(point, stageSettings.dimensions, stageView, 1000, 560, stageZoom));
+            const outline = floorCorners.map((point) => `${point.x},${point.y}`).join(' ');
+            if (stageView === 'front' || stageView === 'side') {
+              const horizontal = stageView === 'front' ? stageSettings.dimensions.width : stageSettings.dimensions.depth;
+              const corners = [
+                stageView === 'front' ? { x: -horizontal / 2, y: 0, z: 0 } : { x: 0, y: 0, z: 0 },
+                stageView === 'front' ? { x: horizontal / 2, y: 0, z: 0 } : { x: 0, y: 0, z: horizontal },
+                stageView === 'front' ? { x: horizontal / 2, y: stageSettings.dimensions.height, z: 0 } : { x: 0, y: stageSettings.dimensions.height, z: horizontal },
+                stageView === 'front' ? { x: -horizontal / 2, y: stageSettings.dimensions.height, z: 0 } : { x: 0, y: stageSettings.dimensions.height, z: 0 }
+              ].map((point) => projectStagePoint(point, stageSettings.dimensions, stageView, 1000, 560, stageZoom));
+              return <polygon points={corners.map((point) => `${point.x},${point.y}`).join(' ')} fill="url(#stage-grid)" stroke="rgba(125,145,166,.34)" />;
+            }
+            return <polygon points={outline} fill="url(#stage-grid)" stroke="rgba(125,145,166,.34)" />;
+          })()}
+          <text className="stage-axis-label" x="500" y="24" textAnchor="middle">{stageView === 'top' ? 'UPSTAGE' : stageView === 'front' || stageView === 'side' ? 'CEILING' : 'UPSTAGE'}</text>
+          <text className="stage-axis-label" x="500" y="548" textAnchor="middle">{stageView === 'top' || stageView === 'perspective' ? 'DOWNSTAGE · AUDIENCE' : 'FLOOR'}</text>
           {patch.map((fixture, index) => {
             const values = fixtureValues(outputUniverse, fixture);
-            const rgb: [number, number, number] = values.red + values.green + values.blue > 0 ? [values.red, values.green, values.blue] : values.uv > 0 ? [120, 62, 255] : [75, 83, 94];
+            const profile = findProfile(fixture.profileId);
+            const rgb: [number, number, number] = values.red + values.green + values.blue > 0 ? [values.red, values.green, values.blue] : values.uv > 0 ? [120, 62, 255] : [235, 241, 247];
             const color = `rgb(${rgb.join(' ')})`;
             const level = dmxStatus.blackout ? 0 : values.dimmer / 255;
             const geometry = fixtureGeometryState(outputUniverse, fixture, index, patch.length, stageSettings.dimensions);
-            const origin = projectStagePoint(geometry.beam.origin, stageSettings.dimensions, stageView);
-            const intersection = intersectBeamWithStage(geometry.beam, stageSettings.dimensions);
-            const endpoint = projectStagePoint(intersection?.point ?? pointAlongRay(geometry.beam, beamLength), stageSettings.dimensions, stageView);
-            const strokeWidth = Math.max(4, geometry.beam.angleDegrees * .65);
-            return <g key={fixture.id} className={stageFixture?.id === fixture.id && interactive ? 'editing' : ''}>
-              <line x1={origin.x} y1={origin.y} x2={endpoint.x} y2={endpoint.y} stroke={color} strokeWidth={strokeWidth * 2.4} opacity={level * .2} filter="url(#beam-glow)" />
-              <line x1={origin.x} y1={origin.y} x2={endpoint.x} y2={endpoint.y} stroke={color} strokeWidth={strokeWidth} opacity={level * .68} strokeLinecap="round" />
-              <circle cx={endpoint.x} cy={endpoint.y} r={Math.max(4, strokeWidth * .65)} fill={color} opacity={level}><title>{intersection ? `${fixture.name} hits ${intersection.surface} at ${intersection.distance.toFixed(1)} m` : `${fixture.name} beam`}</title></circle>
-              <circle cx={origin.x} cy={origin.y} r="8" fill="#11161d" stroke={fixture.labelColor ?? '#657080'} strokeWidth={stageFixture?.id === fixture.id && interactive ? 5 : 3} />
+            const physicalTransform = fixtureTransform(fixture, index, patch.length, stageSettings.dimensions);
+            const fixtureBase = projectStagePoint(physicalTransform.position, stageSettings.dimensions, stageView, 1000, 560, stageZoom);
+            const origin = projectStagePoint(geometry.beam.origin, stageSettings.dimensions, stageView, 1000, 560, stageZoom);
+            const intersection = intersectBeamWithStage(geometry.beam, stageSettings.dimensions, stageElements);
+            const endpointWorld = intersection?.point ?? pointAlongRay(geometry.beam, beamLength);
+            const endpoint = projectStagePoint(endpointWorld, stageSettings.dimensions, stageView, 1000, 560, stageZoom);
+            const throwDistance = intersection?.distance ?? beamLength;
+            const beamRadiusMeters = throwDistance * Math.tan(geometry.beam.angleDegrees * Math.PI / 360);
+            const fieldAngle = geometry.beam.fieldAngleDegrees ?? geometry.beam.angleDegrees * 1.35;
+            const fieldRadiusMeters = throwDistance * Math.tan(fieldAngle * Math.PI / 360);
+            const screenScale = stageView === 'side'
+              ? 840 / Math.max(.01, stageSettings.dimensions.depth)
+              : 840 / Math.max(.01, stageSettings.dimensions.width);
+            const beamRadius = Math.max(3, Math.min(150, beamRadiusMeters * screenScale));
+            const fieldRadius = Math.max(beamRadius, Math.min(190, fieldRadiusMeters * screenScale));
+            const dx = endpoint.x - origin.x;
+            const dy = endpoint.y - origin.y;
+            const screenLength = Math.max(1, Math.hypot(dx, dy));
+            const normalX = -dy / screenLength;
+            const normalY = dx / screenLength;
+            const beamLeft = { x: endpoint.x + normalX * beamRadius, y: endpoint.y + normalY * beamRadius };
+            const beamRight = { x: endpoint.x - normalX * beamRadius, y: endpoint.y - normalY * beamRadius };
+            const fieldLeft = { x: endpoint.x + normalX * fieldRadius, y: endpoint.y + normalY * fieldRadius };
+            const fieldRight = { x: endpoint.x - normalX * fieldRadius, y: endpoint.y - normalY * fieldRadius };
+            const gradientId = `stage-beam-${index}`;
+            const fieldGradientId = `stage-field-${index}`;
+            const hitLabel = intersection?.surface === 'stage-object' ? intersection.elementName ?? 'stage object' : intersection?.surface;
+            const fixtureSelected = stageFixture?.id === fixture.id && interactive;
+            const fixtureStroke = fixture.labelColor ?? '#66727d';
+            const isMover = Boolean(profile?.movement);
+            return <g key={fixture.id} className={`stage-beam ${fixtureSelected ? 'editing' : ''}`}>
+              <defs>
+                <linearGradient id={gradientId} gradientUnits="userSpaceOnUse" x1={origin.x} y1={origin.y} x2={endpoint.x} y2={endpoint.y}><stop offset="0%" stopColor={color} stopOpacity={level * visualizerHaze * .95} /><stop offset="70%" stopColor={color} stopOpacity={level * visualizerHaze * .35} /><stop offset="100%" stopColor={color} stopOpacity="0" /></linearGradient>
+                <linearGradient id={fieldGradientId} gradientUnits="userSpaceOnUse" x1={origin.x} y1={origin.y} x2={endpoint.x} y2={endpoint.y}><stop offset="0%" stopColor={color} stopOpacity={level * visualizerHaze * .34} /><stop offset="100%" stopColor={color} stopOpacity="0" /></linearGradient>
+              </defs>
+              {level > 0 && visualizerHaze > .01 && <>
+                <polygon points={`${origin.x},${origin.y} ${fieldLeft.x},${fieldLeft.y} ${fieldRight.x},${fieldRight.y}`} fill={`url(#${fieldGradientId})`} />
+                <polygon points={`${origin.x},${origin.y} ${beamLeft.x},${beamLeft.y} ${beamRight.x},${beamRight.y}`} fill={`url(#${gradientId})`} filter="url(#beam-glow)" />
+              </>}
+              {level > 0 && <ellipse cx={endpoint.x} cy={endpoint.y} rx={Math.max(4, fieldRadius * .78)} ry={Math.max(2.5, fieldRadius * .22)} fill={color} opacity={Math.min(.88, level * .72 / Math.max(1, throwDistance * .08))} filter="url(#beam-glow)"><title>{intersection ? `${fixture.name} hits ${hitLabel} at ${intersection.distance.toFixed(1)} m` : `${fixture.name} beam`}</title></ellipse>}
+              <g
+                className={`visualizer-fixture ${isMover ? 'moving' : 'static'} ${fixtureSelected ? 'selected' : ''}`}
+                transform={`translate(${fixtureBase.x} ${fixtureBase.y})`}
+                role={interactive ? 'button' : undefined}
+                tabIndex={interactive ? 0 : undefined}
+                onPointerDown={(event) => { if (interactive) beginStageDrag(event, 'fixture', fixture.id, fixtureTransform(fixture, index, patch.length, stageSettings.dimensions).position); }}
+                onPointerMove={(event) => { if (interactive) moveStageDrag(event); }}
+                onPointerUp={(event) => { if (interactive) endStageDrag(event); }}
+                onPointerCancel={(event) => { if (interactive) endStageDrag(event); }}
+                onClick={(event) => { if (interactive) selectFixtureFromConsole(fixture.id, event.metaKey || event.ctrlKey || event.shiftKey); }}
+              >
+                {isMover ? <>
+                  <path d="M -11 7 V 14 H 11 V 7" fill="none" stroke={fixtureStroke} strokeWidth="3" />
+                  <rect x="-9" y="-8" width="18" height="17" rx="6" fill="#11171c" stroke={fixtureStroke} strokeWidth={fixtureSelected ? 3 : 2} />
+                </> : <circle r="11" fill="#11171c" stroke={fixtureStroke} strokeWidth={fixtureSelected ? 3 : 2} />}
+                <circle r="4.5" fill={color} opacity={Math.max(.35, level)} />
+                {(Math.abs(origin.x - fixtureBase.x) > 1 || Math.abs(origin.y - fixtureBase.y) > 1) && <line x1="0" y1="0" x2={origin.x - fixtureBase.x} y2={origin.y - fixtureBase.y} stroke={fixtureStroke} strokeWidth="1.5" opacity=".65" />}
+                <circle cx={origin.x - fixtureBase.x} cy={origin.y - fixtureBase.y} r="3.2" fill={color} stroke={fixtureStroke} strokeWidth="1" />
+                <text className="visualizer-fixture-name" x="0" y="-18" textAnchor="middle">{fixture.name}</text>
+                {interactive && fixtureSelected && <g className="stage-rotate-handle" transform="translate(22 -22)" onPointerDown={(event) => beginStageDrag(event, 'fixture', fixture.id, fixtureTransform(fixture, index, patch.length, stageSettings.dimensions).position, 'rotate')}>
+                  <circle r="10" />
+                  <text x="0" y="4" textAnchor="middle">↻</text>
+                </g>}
+              </g>
             </g>;
           })}
           {interactive && ['aim', 'measure', 'target'].includes(stageMode) && stageTargets.map((target) => {
-            const projected = projectStagePoint(target.position, stageSettings.dimensions, stageView);
+            const projected = projectStagePoint(target.position, stageSettings.dimensions, stageView, 1000, 560, stageZoom);
             const selected = target.id === selectedTarget?.id;
             const activate = () => {
               setSelectedTargetId(target.id);
@@ -2292,29 +2543,59 @@ export default function App() {
           })}
         </svg>
         {stageElements.map((element) => {
-          const worldPosition = stageElementPosition(element, stageSettings.dimensions);
-          const projected = projectStagePoint(worldPosition, stageSettings.dimensions, stageView);
-          const scale = .58 + element.depth * .006;
-          const widthFactor = element.type === 'back-wall' ? 5 : element.type === 'riser' ? 3.2 : element.type === 'person' ? 1.8 : 2.2;
+          const resolved = migrateStageElement(element, stageSettings.dimensions);
+          const worldPosition = stageElementPosition(resolved, stageSettings.dimensions);
+          const projected = projectStagePoint(worldPosition, stageSettings.dimensions, stageView, 1000, 560, stageZoom);
+          const dimensions = resolved.dimensions!;
+          const normalizedDepth = Math.max(0, Math.min(1, worldPosition.z / Math.max(.01, stageSettings.dimensions.depth)));
+          const perspectiveScale = stageView === 'perspective' ? 1 - normalizedDepth * .32 : 1;
+          const widthSpan = stageView === 'side' ? stageSettings.dimensions.depth : stageSettings.dimensions.width;
+          const heightSpan = stageView === 'top' ? stageSettings.dimensions.depth : stageSettings.dimensions.height;
+          const widthMeters = stageView === 'side' ? dimensions.z : dimensions.x;
+          const heightMeters = stageView === 'top' ? dimensions.z : dimensions.y;
+          const projectedWidth = Math.max(24, Math.min(520, widthMeters / Math.max(.01, widthSpan) * 840 * perspectiveScale));
+          const projectedHeight = Math.max(8, Math.min(260, heightMeters / Math.max(.01, heightSpan) * 448 * (stageView === 'perspective' ? perspectiveScale : 1)));
+          const rotation = stageView === 'top'
+            ? resolved.transform!.rotation.yaw
+            : stageView === 'front'
+              ? resolved.transform!.rotation.roll
+              : stageView === 'side'
+                ? resolved.transform!.rotation.pitch
+                : resolved.transform!.rotation.yaw * .35;
           const selected = interactive && selectedStageElementId === element.id;
           const target = stageTargets.find((item) => item.id === `target-element-${element.id}`);
           const targetable = interactive && ['aim', 'measure', 'target'].includes(stageMode);
-          return <button className={`stage-object stage-object-${element.type} ${selected ? 'selected' : ''} ${targetable ? 'targetable' : ''}`} aria-label={`${stageMode === 'aim' ? 'Aim at' : stageMode === 'move' ? 'Drag' : 'Select'} ${element.label} stage element`} key={element.id} style={{ left: `${projected.x / 10}%`, top: `${projected.y / 5.6}%`, zIndex: Math.round(20 + element.depth / 12), color: element.color, transform: `translate(-50%, -50%) scale(${scale})`, width: `${element.size * widthFactor}px` }} onPointerDown={(event) => { if (interactive) beginStageDrag(event, 'element', element.id, worldPosition); }} onPointerMove={(event) => { if (interactive) moveStageDrag(event); }} onPointerUp={(event) => { if (interactive) endStageDrag(event); }} onPointerCancel={(event) => { if (interactive) endStageDrag(event); }} onClick={() => {
-            if (!interactive) return;
-            if (targetable && target) {
-              setSelectedTargetId(target.id);
-              if (stageMode === 'aim') void aimAtTarget(target);
-              return;
-            }
-            setSelectedStageElementId(element.id);
-          }}><span className="stage-object-shape" style={{ borderColor: element.color, backgroundColor: element.type === 'led-screen' ? element.color : undefined }} /><b>{element.label}</b></button>;
+          return <button
+            className={`stage-object stage-object-${element.type} ${selected ? 'selected' : ''} ${targetable ? 'targetable' : ''}`}
+            aria-label={`${stageMode === 'aim' ? 'Aim at' : stageMode === 'move' ? 'Drag' : 'Select'} ${element.label} stage element`}
+            key={element.id}
+            title={`${element.label} · ${dimensions.x.toFixed(1)} × ${dimensions.y.toFixed(1)} × ${dimensions.z.toFixed(1)} m`}
+            style={{
+              left: `${projected.x / 10}%`,
+              top: `${projected.y / 5.6}%`,
+              zIndex: Math.round(60 - normalizedDepth * 20),
+              color: element.color,
+              transform: `translate(-50%, -50%) rotate(${rotation}deg)`,
+              width: `${projectedWidth}px`
+            }}
+            onPointerDown={(event) => { if (interactive) beginStageDrag(event, 'element', element.id, worldPosition); }}
+            onPointerMove={(event) => { if (interactive) moveStageDrag(event); }}
+            onPointerUp={(event) => { if (interactive) endStageDrag(event); }}
+            onPointerCancel={(event) => { if (interactive) endStageDrag(event); }}
+            onClick={() => {
+              if (!interactive) return;
+              if (targetable && target) {
+                setSelectedTargetId(target.id);
+                if (stageMode === 'aim') void aimAtTarget(target);
+                return;
+              }
+              setSelectedStageElementId(element.id);
+            }}
+          ><span className="stage-object-shape" style={{ borderColor: element.color, height: `${projectedHeight}px`, backgroundColor: element.type === 'led-screen' ? element.color : undefined }} />{selected && <span className="stage-object-rotate-handle" title="Drag to rotate" onPointerDown={(event) => beginStageDrag(event, 'element', element.id, worldPosition, 'rotate')}>↻</span>}<b>{element.label}</b></button>;
         })}
-        {patch.map((fixture, index) => {
-          const geometry = fixtureGeometryState(outputUniverse, fixture, index, patch.length, stageSettings.dimensions);
-          const projected = projectStagePoint(geometry.beam.origin, stageSettings.dimensions, stageView);
-          return <div className={`stage-light physical-fixture ${stageFixture?.id === fixture.id && interactive ? 'editing' : ''} ${fixture.selected ? 'selected' : ''}`} key={fixture.id} style={{ left: `${projected.x / 10}%`, top: `${projected.y / 5.6}%`, zIndex: 40 }}><button className="stage-unit stage-unit-button" style={{ borderColor: fixture.labelColor ?? '#505b68' }} aria-label={`${stageMode === 'move' ? 'Drag' : 'Select'} ${fixture.name} on stage`} onPointerDown={(event) => { if (interactive) beginStageDrag(event, 'fixture', fixture.id, fixtureTransform(fixture, index, patch.length, stageSettings.dimensions).position); }} onPointerMove={(event) => { if (interactive) moveStageDrag(event); }} onPointerUp={(event) => { if (interactive) endStageDrag(event); }} onPointerCancel={(event) => { if (interactive) endStageDrag(event); }} onClick={(event) => { if (interactive) selectFixtureFromConsole(fixture.id, event.metaKey || event.ctrlKey || event.shiftKey); }} /><span className="stage-light-label" style={{ borderColor: fixture.labelColor ?? '#3a444f', color: fixture.labelColor ?? '#c9d0d8' }}>{fixture.name}{geometry.movementCapable ? ` · ${Math.round(geometry.movement.pan)}°/${Math.round(geometry.movement.tilt)}°` : ''}</span></div>;
-        })}
-        <div className="stage-coordinate-key">X stage left/right · Y floor/ceiling · Z downstage/upstage · meters internally</div>
+        <div className="visualizer-haze-control"><span>HAZE</span><input aria-label="Visualizer haze" type="range" min="0" max="1" step=".05" value={visualizerHaze} onChange={(event) => setVisualizerHaze(Number(event.target.value))} /><b>{Math.round(visualizerHaze * 100)}%</b></div>
+        {interactive && stageMode === 'measure' && selectedTargetMetrics && <div className="stage-measure-card"><span>MEASURE TO {selectedTarget?.name?.toUpperCase()}</span><strong>{metersToDisplay(selectedTargetMetrics.distance, stageSettings.unit).toFixed(1)} {stageUnitLabel}</strong><small>H {selectedTargetMetrics.horizontal.toFixed(1)}° · V {selectedTargetMetrics.vertical.toFixed(1)}°</small></div>}
+        <div className="stage-coordinate-key">{stageView === 'top' ? 'PLAN · X left/right · Z downstage/upstage' : stageView === 'front' ? 'FRONT · X left/right · Y floor/ceiling' : stageView === 'side' ? 'SIDE · Z downstage/upstage · Y floor/ceiling' : 'SHOW · live output visualizer'} · {stageSettings.unit === 'feet' ? 'feet shown in inspector' : 'meters shown in inspector'}</div>
       </div>
     );
   }
@@ -2400,6 +2681,16 @@ export default function App() {
   function remoteStateSnapshot() {
     const bpm = tempoSource === 'midi' && midiBpm ? midiBpm : effectBpm;
     return {
+      protocolVersion: 2,
+      appName: appVersion.includes('stage-preview') ? 'LumaRig Stage Preview' : 'LumaRig',
+      appVersion,
+      buildChannel: appVersion.includes('stage-preview') ? 'stage-preview' : 'production',
+      stage: {
+        view: stageView,
+        mode: stageMode,
+        objectCount: stageElements.length,
+        selectedObjectId: selectedStageElementId
+      },
       revision: runtimeRef.current?.snapshot.revision ?? 0,
       showName: showFile.name,
       currentCue: activeCue ? { id: activeCue.id, number: activeCue.number, name: activeCue.name } : null,
@@ -2444,7 +2735,7 @@ export default function App() {
       remotePublishTimerRef.current = null;
       remoteSnapshotHandlerRef.current?.();
     }, 120);
-  }, [remoteRelayStatus, showFile, activeCueId, globalMaster, dmxStatus, effectBpm, tempoSource, midiBpm, midiStatus, midiClockSeen, externalTransportRunning, externalSongPositionMs, showRecordingActive, showRecordingElapsedMs, activeEffect, patch, outputUniverse, fixtureGroups, savedLooks]);
+  }, [remoteRelayStatus, appVersion, showFile, activeCueId, globalMaster, dmxStatus, effectBpm, tempoSource, midiBpm, midiStatus, midiClockSeen, externalTransportRunning, externalSongPositionMs, showRecordingActive, showRecordingElapsedMs, activeEffect, patch, outputUniverse, fixtureGroups, savedLooks, stageView, stageMode, stageElements, selectedStageElementId]);
 
   const consoleColorPresets = COLOR_PRESETS.map((preset) => ({
     name: preset.name,
@@ -2499,12 +2790,17 @@ export default function App() {
 
         <div className="setup-center console-center">
           {setupView === 'stage' && <>
-            <div className="stage-console-toolbar"><div role="toolbar" aria-label="Stage Designer mode">{STAGE_DESIGNER_MODES.map((mode) => <button key={mode.id} className={stageMode === mode.id ? 'active' : ''} onClick={() => setStageMode(mode.id)}>{mode.label}</button>)}</div><span>{stageSettings.unit === 'feet' ? 'FEET' : 'METERS'} · {stageSettings.dimensions.width.toFixed(1)} × {stageSettings.dimensions.depth.toFixed(1)} m</span></div>
+            <div className="stage-console-toolbar"><div role="toolbar" aria-label="Stage Designer mode">{STAGE_DESIGNER_MODES.map((mode) => <button key={mode.id} className={stageMode === mode.id ? 'active' : ''} onClick={() => setStageMode(mode.id)}>{mode.label}</button>)}</div><div className="stage-editor-options"><button className={stageSnapEnabled ? 'active' : ''} onClick={() => setStageSnapEnabled((value) => !value)}>Snap</button><select aria-label="Stage snap spacing" value={stageSnapMeters} onChange={(event) => setStageSnapMeters(Number(event.target.value))}><option value=".25">0.25 m</option><option value=".5">0.5 m</option><option value="1">1 m</option></select></div><span>{selectedStageElement ? `OBJECT · ${selectedStageElement.label}` : `${stageSettings.unit === 'feet' ? 'FEET' : 'METERS'} · STAGE DESIGNER`}</span></div>
+            <div className="stage-dimension-strip">
+              <label><span>Units</span><select value={stageSettings.unit} onChange={(event) => setStageSettings((current) => ({ ...current, unit: event.target.value as StageUnit }))}><option value="feet">Feet</option><option value="meters">Meters</option></select></label>
+              {(['width', 'depth', 'height'] as const).map((axis) => <label key={axis}><span>{axis}</span><input type="number" min="1" step=".1" value={Number(metersToDisplay(stageSettings.dimensions[axis], stageSettings.unit).toFixed(1))} onChange={(event) => setStageSettings((current) => ({ ...current, dimensions: { ...current.dimensions, [axis]: Math.max(.5, displayToMeters(Number(event.target.value), current.unit)) } }))} /><b>{stageUnitLabel}</b></label>)}
+              <div className="stage-dimension-help"><strong>{stageSettings.dimensions.width.toFixed(1)} × {stageSettings.dimensions.depth.toFixed(1)} m</strong><span>Real dimensions drive fixture positions, targets, and view scale.</span></div>
+            </div>
             <div className="dominant-stage">{renderStagePreview(true)}</div>
             <div className="stage-bottom-tools">
               <section><header><strong>TARGETS &amp; AIM</strong><span>{selectedMovingFixtures.length} mover{selectedMovingFixtures.length === 1 ? '' : 's'} selected</span></header><div className="inline-control-grid"><select value={selectedTargetId} onChange={(event) => setSelectedTargetId(event.target.value)}>{stageTargets.map((target) => <option key={target.id} value={target.id}>{target.name}</option>)}</select><select value={aimArrangement} onChange={(event) => setAimArrangement(event.target.value as TargetArrangement)}><option value="converge">Converge</option><option value="fan-horizontal">Horizontal fan</option><option value="fan-vertical">Vertical fan</option><option value="mirror">Mirror</option><option value="cross">Cross</option></select><button className="console-primary" disabled={!selectedTarget || !selectedMovingFixtures.length} onClick={() => selectedTarget && void aimAtTarget(selectedTarget)}>Aim selected</button></div></section>
               <section><header><strong>POSITION PALETTES</strong><span>{showFile.positionPalettes?.length ?? 0} saved</span></header><div className="palette-chip-row">{showFile.positionPalettes?.map((palette) => <button key={palette.id} onClick={() => void runPositionPalette(palette)}><span>{palette.kind}</span>{palette.name}</button>)}<button className="add-palette-chip" onClick={savePositionPalette}>＋ Save current</button></div></section>
-              <section><header><strong>STAGE ELEMENTS</strong><span>{stageElements.length}</span></header><div className="palette-chip-row">{STAGE_ELEMENT_LIBRARY.map((element) => <button key={element.type} onClick={() => addStageElement(element.type)}>＋ {element.name}</button>)}</div></section>
+              <section className="stage-library-section"><header><strong>ADD TO STAGE</strong><span>{stageElements.length} objects</span></header><div className="stage-object-library">{STAGE_ELEMENT_LIBRARY.map((element) => <button key={element.type} className={`library-object library-${element.type}`} title={element.description} onClick={() => addStageElement(element.type)}><i /><span><strong>{element.name}</strong><small>{element.description}</small></span></button>)}</div></section>
             </div>
           </>}
 
@@ -2523,7 +2819,7 @@ export default function App() {
             <section className="console-panel midi-mapping-console"><header><div><span>MIDI ASSIGNER</span><h2>Map controls</h2></div><b>{midiMappings.length} mappings</b></header><div className="midi-add-row"><select value={newMidiTarget} onChange={(event) => setNewMidiTarget(event.target.value)}>{midiControlGroups.map(([group, controls]) => <optgroup key={group} label={group}>{controls.map((control) => <option key={control.id} value={control.id}>{control.label}</option>)}</optgroup>)}</select><button className="console-primary" onClick={() => beginMidiAssignment()}>Add + Learn</button></div><div className="midi-map-list">{midiMappings.map((mapping) => { const control = midiControls.find((item) => item.id === mapping.target); const learning = midiLearnMappingId === mapping.id; return <div className={`midi-map-row ${learning ? 'is-learning' : ''}`} key={mapping.id}><strong>{control?.label ?? 'Unavailable'}</strong><span>{learning ? 'Move or press a control…' : midiBindingLabel(mapping)}</span><button onClick={() => setMidiLearnMappingId(learning ? null : mapping.id)}>{learning ? 'Cancel' : 'Learn'}</button><button onClick={() => removeMidiAssignment(mapping.id)}>Remove</button></div>; })}</div></section>
             <section className="console-panel connection-console remote-relay-console"><header><div><span>REMOTE CONTROL · SEPARATE NETWORKS</span><h2>Secure Cloud Relay</h2></div><b className={remoteRelayStatus === 'connected' ? 'healthy' : ''}>{remoteRelayStatus}</b></header><p>Both this Mac and the Vercel controller connect outbound to one private Supabase Realtime channel. No router port forwarding is required.</p><label><span>Supabase Project URL</span><input value={remoteRelayConfig.url} placeholder="https://project.supabase.co" onChange={(event) => setRemoteRelayConfig((current) => ({ ...current, url: event.target.value }))} /></label><label><span>Publishable Key</span><input type="password" value={remoteRelayConfig.publishableKey} onChange={(event) => setRemoteRelayConfig((current) => ({ ...current, publishableKey: event.target.value }))} /></label><div className="inspector-pair"><label><span>Account Email</span><input type="email" value={remoteRelayConfig.email} onChange={(event) => setRemoteRelayConfig((current) => ({ ...current, email: event.target.value }))} /></label><label><span>Password · never stored</span><input type="password" value={remoteRelayConfig.password ?? ''} onChange={(event) => setRemoteRelayConfig((current) => ({ ...current, password: event.target.value }))} /></label></div><label><span>Room Code · use the same code on the remote</span><div className="relay-room-row"><input value={remoteRelayConfig.roomCode} onChange={(event) => setRemoteRelayConfig((current) => ({ ...current, roomCode: event.target.value }))} /><button onClick={() => setRemoteRelayConfig((current) => ({ ...current, roomCode: `${crypto.randomUUID().replace(/-/g, '')}${crypto.randomUUID().replace(/-/g, '')}` }))}>Generate</button></div></label>{remoteRelayError && <p className="relay-error">{remoteRelayError}</p>}<div className="settings-actions">{remoteRelayStatus === 'connected' ? <button onClick={disconnectRemoteRelay}>Disconnect relay</button> : <button className="console-primary" onClick={connectRemoteRelay}>Connect remote relay</button>}</div></section>
             <section className="console-panel connection-console"><header><div><span>AUDIO REACTIVE · BETA</span><h2>Sound Input</h2></div><b>{audioArmed ? 'Armed' : audioEnabled ? 'Monitoring' : 'Off'}</b></header><div className="audio-meter"><span style={{ width: `${audioLevel * 100}%` }} /></div><label><span>Sensitivity · {settings.audioSensitivity}%</span><input type="range" min="1" max="100" value={settings.audioSensitivity} onChange={(event) => setSettings((current) => ({ ...current, audioSensitivity: Number(event.target.value) }))} /></label>{audioError && <p>{audioError}</p>}<div className="settings-actions">{audioEnabled ? <><button onClick={stopAudioInput}>Stop input</button><button className="console-primary" onClick={() => { audioBaseUniverseRef.current = [...universeRef.current]; setAudioArmed(!audioArmed); }}>{audioArmed ? 'Disarm lights' : 'Arm selected lights'}</button></> : <button className="console-primary" onClick={startAudioInput}>Enable input</button>}</div></section>
-            <section className="console-panel software-update-console"><header><div><span>SOFTWARE UPDATE</span><h2>LumaRig</h2></div><b className={updateStatus === 'available' ? 'healthy' : ''}>v{appVersion}</b></header><div className="update-summary"><strong>{updateStatus === 'available' && updateInfo ? `Version ${updateInfo.version} available` : updateStatus === 'checking' ? 'Checking GitHub Releases…' : updateStatus === 'installing' ? 'Installing update…' : updateStatus === 'current' ? 'You are up to date' : updateStatus === 'error' ? 'Update check failed' : 'Automatic update checks enabled'}</strong><small>{updateStatus === 'available' ? 'The signed update is ready. Output will be zeroed and disconnected before the app restarts.' : 'Release builds check the public update feed shortly after launch.'}</small></div>{updateInfo?.notes && <p className="update-notes">{updateInfo.notes}</p>}{updateError && <p className="update-error">{updateError}</p>}<div className="settings-actions"><button disabled={updateStatus === 'checking' || updateStatus === 'installing'} onClick={() => void checkForUpdates(false)}>{updateStatus === 'checking' ? 'Checking…' : 'Check for Updates'}</button>{updateStatus === 'available' && updateInfo && <button className="console-primary" onClick={() => void installAvailableUpdate()}>{`Install v${updateInfo.version}`}</button>}</div></section>
+            <section className="console-panel software-update-console"><header><div><span>{appVersion.includes('stage-preview') ? 'PREVIEW UPDATE CHANNEL' : 'SOFTWARE UPDATE'}</span><h2>{updateProductName}</h2></div><b className={updateStatus === 'available' ? 'healthy' : ''}>v{appVersion}</b></header><div className="update-summary"><strong>{updateStatus === 'available' && updateInfo ? `Version ${updateInfo.version} available` : updateStatus === 'checking' ? 'Checking GitHub Releases…' : updateStatus === 'installing' ? 'Installing update…' : updateStatus === 'current' ? 'You are up to date' : updateStatus === 'error' ? 'Update check failed' : 'Automatic update checks enabled'}</strong><small>{updateStatus === 'available' ? 'The signed update is ready. Output will be zeroed and disconnected before the app restarts.' : appVersion.includes('stage-preview') ? 'Preview builds follow stage-editor-v2 and never update production LumaRig.' : 'Release builds check the public update feed shortly after launch.'}</small></div>{updateInfo?.notes && <p className="update-notes">{updateInfo.notes}</p>}{updateError && <p className="update-error">{updateError}</p>}<div className="settings-actions"><button disabled={updateStatus === 'checking' || updateStatus === 'installing'} onClick={() => void checkForUpdates(false)}>{updateStatus === 'checking' ? 'Checking…' : 'Check for Updates'}</button>{updateStatus === 'available' && updateInfo && <button className="console-primary" onClick={() => void installAvailableUpdate()}>{`Install v${updateInfo.version}`}</button>}</div></section>
             <section className="console-panel safety-settings"><header><div><span>PERFORMANCE SAFETY</span><h2>Guardrails</h2></div></header><label><span>Grand master limit</span><input type="range" min="10" max="100" value={settings.masterLimit} onChange={(event) => setSettings((current) => ({ ...current, masterLimit: Number(event.target.value) }))} /><b>{settings.masterLimit}%</b></label><label><span>Confirm blackout release</span><input type="checkbox" checked={settings.confirmBlackoutRelease} onChange={(event) => setSettings((current) => ({ ...current, confirmBlackoutRelease: event.target.checked }))} /></label></section>
             <details className="console-panel raw-dmx-console"><summary>Raw DMX Monitor · Channels 1–{VISIBLE_CHANNELS}</summary><div>{Array.from({ length: VISIBLE_CHANNELS }, (_, index) => <label key={index}><span>CH {index + 1}</span><input type="number" min="0" max="255" value={universe[index]} onChange={(event) => setChannel(index + 1, Number(event.target.value))} /></label>)}</div></details>
           </div>}
@@ -2538,13 +2834,27 @@ export default function App() {
             <label className="inspector-toggle"><span>FX Enabled</span><input type="checkbox" checked={selectedGroup.fxEnabled} onChange={(event) => updateFixtureGroup(selectedGroup.id, { fxEnabled: event.target.checked })} /></label>
             <label><span>Group Notes</span><textarea maxLength={500} value={selectedGroup.notes} onChange={(event) => updateFixtureGroup(selectedGroup.id, { notes: event.target.value })} /></label>
             <button className="console-primary" disabled={!assignmentIds.length} onClick={() => assignCheckedFixtures()}>Assign Selected ({assignmentIds.length})</button><button onClick={createFixtureGroup}>＋ Create Group</button><button className="danger-button" onClick={() => deleteFixtureGroup(selectedGroup.id)}>Delete Group</button>
+          </> : setupView === 'stage' && selectedStageElementResolved ? <>
+            <header><span>STAGE OBJECT</span><strong>{selectedStageElementResolved.label}</strong><small>{STAGE_ELEMENT_LIBRARY.find((item) => item.type === selectedStageElementResolved.type)?.description}</small></header>
+            <label><span>Name</span><input value={selectedStageElementResolved.label} onChange={(event) => updateStageElement(selectedStageElementResolved.id, { label: event.target.value })} /></label>
+            <div className="inspector-pair"><label><span>Type</span><select value={selectedStageElementResolved.type} onChange={(event) => updateStageElement(selectedStageElementResolved.id, { type: event.target.value as StageElementType })}>{STAGE_ELEMENT_LIBRARY.map((item) => <option key={item.type} value={item.type}>{item.name}</option>)}</select></label><label><span>Color</span><input className="inspector-color" type="color" value={selectedStageElementResolved.color} onChange={(event) => updateStageElement(selectedStageElementResolved.id, { color: event.target.value })} /></label></div>
+            <div className="stage-inspector-section"><span>POSITION · {stageUnitLabel.toUpperCase()}</span><div className="transform-grid">{(['x', 'y', 'z'] as const).map((axis) => <label key={axis}><span>{axis.toUpperCase()}</span><input type="number" step=".1" value={Number(metersToDisplay(selectedStagePosition[axis], stageSettings.unit).toFixed(2))} onChange={(event) => updateStageElementPosition(selectedStageElementResolved.id, axis, displayToMeters(Number(event.target.value), stageSettings.unit))} /></label>)}</div></div>
+            <div className="stage-inspector-section"><span>SIZE · W / H / D</span><div className="transform-grid">{([['x', 'W'], ['y', 'H'], ['z', 'D']] as const).map(([axis, label]) => <label key={axis}><span>{label}</span><input type="number" min=".05" step=".1" value={Number(metersToDisplay(selectedStageDimensions[axis], stageSettings.unit).toFixed(2))} onChange={(event) => updateStageElementDimensions(selectedStageElementResolved.id, axis, displayToMeters(Number(event.target.value), stageSettings.unit))} /></label>)}</div></div>
+            <div className="stage-inspector-section"><span>ROTATION · DEGREES</span><div className="transform-grid">{(['yaw', 'pitch', 'roll'] as const).map((axis) => <label key={axis}><span>{axis}</span><input type="number" step="1" value={Number(selectedStageRotation[axis].toFixed(1))} onChange={(event) => updateStageElementRotation(selectedStageElementResolved.id, axis, Number(event.target.value))} /></label>)}</div></div>
+            <div className="stage-object-actions"><button onClick={() => duplicateStageElement(selectedStageElementResolved.id)}>Duplicate</button><button className="danger-button" onClick={() => removeStageElement(selectedStageElementResolved.id)}>Delete Object</button></div>
+            <small className="stage-delete-hint">Delete / Backspace removes the selected object. Esc clears selection.</small>
           </> : inspectedFixture ? <>
             <header><span>FIXTURE INSPECTOR</span><strong>{inspectedFixture.name}</strong><small>{findProfile(inspectedFixture.profileId)?.manufacturer} {findProfile(inspectedFixture.profileId)?.model}</small></header>
             <label><span>Name</span><input value={inspectedFixture.name} onChange={(event) => savePatchedFixture({ ...inspectedFixture, name: event.target.value })} /></label>
             <div className="inspector-pair"><label><span>Universe</span><input type="number" min="1" value={inspectedFixture.universe ?? 1} onChange={(event) => savePatchedFixture({ ...inspectedFixture, universe: Number(event.target.value) })} /></label><label><span>Address</span><input type="number" min="1" max="512" value={inspectedFixture.address} onChange={(event) => savePatchedFixture({ ...inspectedFixture, address: Number(event.target.value) })} /></label></div>
             <label><span>Group</span><select value={inspectedFixture.group} onChange={(event) => savePatchedFixture({ ...inspectedFixture, group: event.target.value })}><option value="">Unassigned</option>{fixtureGroups.map((group) => <option key={group.id} value={group.name}>{group.name}</option>)}</select></label>
             <div className="inspector-pair"><label><span>Mounting</span><select value={inspectedFixture.mounting ?? 'hanging'} onChange={(event) => savePatchedFixture({ ...inspectedFixture, mounting: event.target.value as PatchedFixture['mounting'] })}><option value="hanging">Hanging</option><option value="floor">Floor</option><option value="wall">Wall</option><option value="custom">Custom</option></select></label><label><span>Orientation</span><select value={inspectedFixture.orientation ?? 'normal'} onChange={(event) => savePatchedFixture({ ...inspectedFixture, orientation: event.target.value as PatchedFixture['orientation'] })}><option value="normal">Normal</option><option value="inverted">Inverted</option><option value="rotated90">Rotated 90°</option><option value="rotated180">Rotated 180°</option><option value="custom">Custom</option></select></label></div>
-            <div className="transform-grid">{(['x', 'y', 'z'] as const).map((axis) => <label key={axis}><span>{axis.toUpperCase()}</span><input type="number" step="0.1" value={Number(activeStageTransform.position[axis].toFixed(2))} onChange={(event) => updateStageFixtureTransform('position', axis, Number(event.target.value))} /></label>)}{(['yaw', 'pitch', 'roll'] as const).map((axis) => <label key={axis}><span>{axis}</span><input type="number" step="1" value={Number(activeStageTransform.rotation[axis].toFixed(1))} onChange={(event) => updateStageFixtureTransform('rotation', axis, Number(event.target.value))} /></label>)}</div>
+            <div className="transform-grid">{(['x', 'y', 'z'] as const).map((axis) => <label key={axis}><span>{axis.toUpperCase()}</span><input type="number" step="0.1" value={Number(activeStageTransform.position[axis].toFixed(2))} onChange={(event) => updateStageFixtureTransform('position', axis, Number(event.target.value))} /></label>)}{(['yaw', 'pitch', 'roll'] as const).map((axis) => <label key={axis}><span>{axis}</span><input type="number" min="-180" max="180" step="1" value={Number(activeStageTransform.rotation[axis].toFixed(1))} onChange={(event) => updateStageFixtureTransform('rotation', axis, Number(event.target.value))} /></label>)}</div>
+            {findProfile(inspectedFixture.profileId)?.movement && (() => {
+              const fixtureIndex = patch.findIndex((item) => item.id === inspectedFixture.id);
+              const movementState = fixtureGeometryState(universe, inspectedFixture, fixtureIndex, patch.length, stageSettings.dimensions).movement;
+              return <div className="mover-controls"><div className="mover-controls-heading"><span>MOVING HEAD</span><button onClick={() => { void setChannels(fixtureMovementUpdates(inspectedFixture, .5, .5), true, 'ui'); }}>Home</button></div><label><span>Pan <b>{Math.round(movementState.pan)}°</b></span><input type="range" min="0" max="1" step=".001" value={movementState.panNormalized} onChange={(event) => setMoverAxis(inspectedFixture, 'pan', Number(event.target.value))} /></label><label><span>Tilt <b>{Math.round(movementState.tilt)}°</b></span><input type="range" min="0" max="1" step=".001" value={movementState.tiltNormalized} onChange={(event) => setMoverAxis(inspectedFixture, 'tilt', Number(event.target.value))} /></label></div>;
+            })()}
             <div className="calibration-status"><span>CALIBRATION</span><strong>{inspectedFixture.calibration?.status ?? 'uncalibrated'}</strong><small>{Math.round((inspectedFixture.calibration?.confidence ?? 0) * 100)}% confidence</small></div><button onClick={() => setCalibrationOpen((value) => !value)}>{calibrationOpen ? 'Close Calibration' : 'Calibrate Position'}</button>{calibrationOpen && <div className="calibration-mini"><button onClick={homeActiveFixture}>Send Home</button><button onClick={captureCalibrationObservation}>Capture Target</button><button onClick={solveActiveFixtureCalibration}>Solve</button><button onClick={resetActiveFixtureCalibration}>Reset</button></div>}
           </> : <div className="empty-inspector"><strong>No selection</strong><span>Select a fixture or stage object to inspect it.</span></div>}
         </aside>
@@ -2557,7 +2867,7 @@ export default function App() {
           {programMode !== 'stage' && <ColorDeck title={programMode === 'groups' ? 'GROUP COLOR' : 'GLOBAL COLOR'} subtitle={programMode === 'groups' ? selectedGroup?.name ?? 'Select a group' : selectedFixtureTargets.length ? `${selectedFixtureTargets.length} selected fixture${selectedFixtureTargets.length === 1 ? '' : 's'}` : 'Select fixtures before applying color'} color={globalColor} disabled={programMode === 'groups' ? !selectedGroup || compatibleColorFixtures(selectedGroupFixtures).length === 0 : selectedCompatibleColors.length === 0} presets={consoleColorPresets} onChange={(color) => programMode === 'groups' && selectedGroup ? applyGroupColor(selectedGroup, color) : applyGlobalColor(color)} />}
           {programMode === 'faders' && <section className="fader-bank"><header><span>FIXTURE FADERS</span><strong>Fixture-level brightness · semantic dimmer</strong></header><div>{patch.map((fixture) => <VerticalFader key={fixture.id} id={fixture.id} name={fixture.name} subtitle={fixtureBrowserSubtitle(fixture)} color={fixture.labelColor ?? '#55e98d'} value={fixtureIntensityPercent(universe, fixture)} selected={fixture.selected} onChange={(value) => void setFixtureAttribute(fixture, 'dimmer', percentToDmx(value))} onSelect={() => selectFixtureFromConsole(fixture.id, true)} onFx={() => selectFixtureFromConsole(fixture.id)} />)}</div></section>}
           {programMode === 'groups' && <section className="fader-bank"><header><span>GROUP MASTERS</span><strong>Non-destructive output multipliers</strong></header><div>{fixtureGroups.map((group) => { const members = fixturesInGroup(patch, group); return <VerticalFader key={group.id} id={group.id} name={group.name} subtitle={`${members.length} fixtures`} color={group.labelColor} value={Math.round(groupMasters[group.id] ?? group.masterDefault)} selected={selectedGroupId === group.id} onChange={(value) => applyGroupMaster(group, value)} onSelect={() => selectFixtureGroup(group.id)} onFx={() => selectFixtureGroup(group.id)} quickAction={{ label: 'Chase', onPress: () => startEffect('chase', members.map((fixture) => fixture.id)) }} />; })}</div></section>}
-          {programMode === 'stage' && <><div className="stage-console-toolbar"><div role="toolbar">{STAGE_DESIGNER_MODES.map((mode) => <button key={mode.id} className={stageMode === mode.id ? 'active' : ''} onClick={() => setStageMode(mode.id)}>{mode.label}</button>)}</div><span>{selectedFixtureTargets.length} selected</span></div><div className="program-stage">{renderStagePreview(true)}</div></>}
+          {programMode === 'stage' && <><div className="stage-console-toolbar"><div role="toolbar">{STAGE_DESIGNER_MODES.map((mode) => <button key={mode.id} className={stageMode === mode.id ? 'active' : ''} onClick={() => setStageMode(mode.id)}>{mode.label}</button>)}</div><div className="stage-editor-options"><button className={stageSnapEnabled ? 'active' : ''} onClick={() => setStageSnapEnabled((value) => !value)}>Snap</button><select value={stageSnapMeters} onChange={(event) => setStageSnapMeters(Number(event.target.value))}><option value=".25">0.25 m</option><option value=".5">0.5 m</option><option value="1">1 m</option></select></div><span>{selectedFixtureTargets.length} selected</span></div><div className="program-stage">{renderStagePreview(true)}</div></>}
           <LooksStrip looks={allLooks} onApply={runLook} onSave={saveCurrentLook} />
         </div>
         <EffectsPanel title={programMode === 'groups' ? 'FX FOR SELECTED GROUP' : 'FX FOR SELECTED FIXTURE'} targetName={programEffectName} fixtures={programEffectFixtures} activeEffect={activeEffect} bpm={effectBpm} depth={effectDepth} disabled={programMode === 'groups' && !selectedGroup?.fxEnabled} onBpmChange={(value) => { setEffectBpm(value); effectBpmRef.current = value; setTempoSource('manual'); }} onDepthChange={(value) => { setEffectDepth(value); effectDepthRef.current = value; }} onStart={(effect) => startEffect(effect, programEffectFixtures.map((fixture) => fixture.id))} onPress={(effect) => startMomentaryEffect(effect, programEffectFixtures.map((fixture) => fixture.id))} onRelease={releaseMomentaryEffect} onStop={() => stopEffect()} />
