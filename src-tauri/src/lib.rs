@@ -1,11 +1,13 @@
 mod dmx;
 mod midi;
 mod output;
+mod studio_bridge;
 mod updates;
 
 use dmx::{DmxEngine, DmxStatus};
 use midi::{MidiEngine, MidiEvent, MidiInputInfo, MidiStatus};
 use output::udmx::UdmxDeviceInfo;
+use studio_bridge::{StudioBridge, StudioBridgeEnvelope, StudioBridgeResponse, StudioBridgeStatus};
 use tauri::State;
 
 #[tauri::command]
@@ -68,12 +70,39 @@ fn drain_midi_events(engine: State<'_, MidiEngine>) -> Vec<MidiEvent> {
     engine.drain_events()
 }
 
+#[tauri::command]
+fn studio_bridge_status(bridge: State<'_, StudioBridge>) -> StudioBridgeStatus {
+    bridge.status()
+}
+
+#[tauri::command]
+fn drain_studio_bridge(bridge: State<'_, StudioBridge>) -> Vec<StudioBridgeEnvelope> {
+    bridge.drain().into_iter().map(|(envelope, _)| envelope).collect()
+}
+
+#[tauri::command]
+fn reply_studio_bridge(
+    bridge: State<'_, StudioBridge>,
+    id: String,
+    ok: bool,
+    error: Option<String>,
+    payload: Option<serde_json::Value>,
+) -> Result<(), String> {
+    for (envelope, reply) in bridge.drain() {
+        if envelope.id == id {
+            return reply.send(StudioBridgeResponse { id, ok, error, payload }).map_err(|err| err.to_string());
+        }
+    }
+    Err("Studio bridge request is no longer pending.".into())
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_updater::Builder::new().build())
         .manage(DmxEngine::new())
         .manage(MidiEngine::new())
+        .manage(StudioBridge::new())
         .manage(updates::UpdateState::default())
         .invoke_handler(tauri::generate_handler![
             list_udmx_devices,
@@ -88,6 +117,9 @@ pub fn run() {
             disconnect_midi,
             midi_status,
             drain_midi_events,
+            studio_bridge_status,
+            drain_studio_bridge,
+            reply_studio_bridge,
             updates::app_version,
             updates::check_for_update,
             updates::install_update
