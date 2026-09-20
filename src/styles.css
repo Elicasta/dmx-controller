@@ -1787,3 +1787,28 @@ input[type="text"], input[type="number"], .add-fixture-grid input, .patch-card-b
 .stage-build-intro {
   margin: 10px 12px 0;
 }
+
+
+/* LumaRig 0.5 · target-first CREATE */
+.create-context-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 12px 14px;
+  border-bottom: 1px solid rgba(255,255,255,.08);
+}
+.create-context-bar > div:first-child { display: grid; gap: 2px; }
+.create-context-bar span { font-size: 9px; font-weight: 800; letter-spacing: .16em; opacity: .55; }
+.create-context-bar strong { font-size: 16px; }
+.create-context-bar small { opacity: .58; }
+.create-view-switch { display: flex; gap: 6px; }
+.create-view-switch button {
+  min-width: 96px;
+  padding: 9px 12px;
+  border-radius: 8px;
+}
+.create-view-switch button.active {
+  box-shadow: inset 0 0 0 1px currentColor;
+}
+.create-intensity-bank { margin-top: 10px; }
