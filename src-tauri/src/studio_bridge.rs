@@ -15,7 +15,7 @@ use tungstenite::{accept, Message};
 
 pub const STUDIO_BRIDGE_PORT: u16 = 47777;
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct StudioBridgeEnvelope {
     pub id: String,
