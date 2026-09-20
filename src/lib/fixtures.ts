@@ -470,10 +470,29 @@ export function migratePatchedFixture(
   total: number,
   dimensions: StageDimensions = DEFAULT_STAGE_DIMENSIONS
 ): PatchedFixture {
+  const transform = fixtureTransform(fixture, index, total, dimensions);
+  const finite = (value: number, fallback: number) => Number.isFinite(value) ? value : fallback;
+  const clamp = (value: number, minimum: number, maximum: number) => Math.max(minimum, Math.min(maximum, value));
+  const wrapDegrees = (value: number) => {
+    const finiteValue = finite(value, 0);
+    return ((finiteValue + 180) % 360 + 360) % 360 - 180;
+  };
+  const safeTransform: FixtureTransform = {
+    position: {
+      x: clamp(finite(transform.position.x, 0), -dimensions.width / 2, dimensions.width / 2),
+      y: clamp(finite(transform.position.y, dimensions.trimHeight), 0, dimensions.height),
+      z: clamp(finite(transform.position.z, dimensions.depth * .35), 0, dimensions.depth)
+    },
+    rotation: {
+      yaw: wrapDegrees(transform.rotation.yaw),
+      pitch: wrapDegrees(transform.rotation.pitch),
+      roll: wrapDegrees(transform.rotation.roll)
+    }
+  };
   return {
     ...fixture,
     universe: fixture.universe ?? 1,
-    transform: fixtureTransform(fixture, index, total, dimensions),
+    transform: safeTransform,
     mounting: fixture.mounting ?? 'hanging',
     orientation: fixture.orientation ?? 'normal',
     calibration: { ...EMPTY_CALIBRATION, ...fixture.calibration }
