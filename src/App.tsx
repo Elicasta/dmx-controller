@@ -1791,7 +1791,7 @@ export default function App() {
     void setChannels(updates);
     const selectedIds = new Set(selected.map((fixture) => fixture.id));
     setPatch((current) => current.filter((fixture) => !selectedIds.has(fixture.id)));
-    if (stageFixtureId && selectedIds.has(stageFixtureId)) setStageFixtureId(null);
+    if (stageFixtureId && selectedIds.has(stageFixtureId)) setStageFixtureId('');
     setMessage(`${selected.length} fixture${selected.length === 1 ? '' : 's'} deleted from the patch.`);
   }
 
