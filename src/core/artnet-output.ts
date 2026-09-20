@@ -45,8 +45,9 @@ export class ArtNetOutputDriver implements OutputDriver {
       this.framesSent += 1;
       this.lastError = undefined;
     } catch (error) {
+      // Visualization is intentionally non-fatal. A dead LumaViz target must
+      // never turn a valid physical-lighting frame into an output failure.
       this.lastError = String(error);
-      throw error;
     }
   }
 
