@@ -2683,7 +2683,7 @@ export default function App() {
 
       {workspace === 'setup' && <section className="console-workspace setup-console">
         <nav className="workspace-subtabs setup-subtabs">{([
-          ['fixtures', 'Fixtures'], ['groups', 'Group Assignment'], ['patch', 'Patch'], ['stage', 'Stage View'], ['settings', 'Settings']
+          ['stage', 'Stage'], ['patch', 'Patch'], ['fixtures', 'Fixtures'], ['groups', 'Groups'], ['settings', 'System']
         ] as Array<[SetupView, string]>).map(([id, label]) => <button key={id} className={setupView === id ? 'active' : ''} onClick={() => setSetupView(id)}>{label}</button>)}</nav>
         <FixtureBrowser
           patch={patch}
