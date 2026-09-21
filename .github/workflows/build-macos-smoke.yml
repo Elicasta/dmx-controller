@@ -1,0 +1,62 @@
+name: Build macOS Smoke
+
+on:
+  push:
+    branches:
+      - build/artnet-smoke
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: macos-latest
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: lts/*
+          cache: npm
+
+      - name: Set up Rust targets
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-darwin,x86_64-apple-darwin
+
+      - name: Cache Rust build
+        uses: swatinem/rust-cache@v2
+        with:
+          workspaces: "./src-tauri -> target"
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Test frontend and Art-Net driver
+        run: npm test
+
+      - name: Test native Art-Net sender
+        run: cargo test --manifest-path src-tauri/Cargo.toml
+
+      - name: Build universal app and DMG
+        run: npm run tauri:build -- --target universal-apple-darwin --bundles app,dmg
+
+      - name: Verify app signature and DMG
+        run: |
+          APP_PATH="$(find src-tauri/target/universal-apple-darwin/release/bundle/macos -maxdepth 1 -name '*.app' -print -quit)"
+          DMG_PATH="$(find src-tauri/target/universal-apple-darwin/release/bundle/dmg -maxdepth 1 -name '*.dmg' -print -quit)"
+          test -n "$APP_PATH" || (echo "No .app found" && exit 1)
+          test -n "$DMG_PATH" || (echo "No DMG found" && exit 1)
+          codesign --verify --deep --strict --verbose=2 "$APP_PATH"
+          hdiutil verify "$DMG_PATH"
+
+      - name: Upload LumaRig Art-Net test build
+        uses: actions/upload-artifact@v4
+        with:
+          name: LumaRig-ArtNet-macOS-universal
+          if-no-files-found: error
+          path: |
+            src-tauri/target/universal-apple-darwin/release/bundle/dmg/*.dmg
+            src-tauri/target/universal-apple-darwin/release/bundle/macos/*.app
