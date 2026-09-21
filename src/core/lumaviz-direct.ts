@@ -20,6 +20,10 @@ export type SemanticFixtureState = {
   group: string;
   profileId: string;
   modeId: string;
+  manufacturer?: string;
+  model?: string;
+  category?: string;
+  capabilities: string[];
   universe: number;
   address: number;
   intensity?: number;
@@ -96,6 +100,10 @@ export function semanticFrameFromResolvedOutput(
         group: fixture.group,
         profileId: fixture.profileId,
         modeId: fixture.modeId,
+        manufacturer: profile?.manufacturer,
+        model: profile?.model,
+        category: profile?.category,
+        capabilities: mode?.channels.flatMap((channel) => channel.parameter ? [channel.parameter] : []) ?? [],
         universe: fixture.universe ?? 1,
         address: fixture.address,
         intensity: dimmer,
