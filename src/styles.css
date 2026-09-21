@@ -2059,3 +2059,15 @@ body { overflow: hidden; }
 .stage-coordinate-key b { color:#bcb2ff; letter-spacing:.8px; }
 .physical-stage .stage-geometry-svg { background:radial-gradient(circle at 50% 48%, rgba(34,40,48,.36), rgba(9,12,16,.12) 58%, rgba(5,7,9,.5)); }
 .physical-fixture .stage-unit-button { box-shadow:0 0 0 1px rgba(255,255,255,.025),0 4px 10px rgba(0,0,0,.34); }
+
+
+.sync-inspector-tabs { display:grid; grid-template-columns:1fr 1fr; gap:4px; }
+.sync-inspector-tabs button { height:25px; padding:0; color:#697580; background:#10151a; font-size:6px; font-weight:850; letter-spacing:.7px; }
+.sync-inspector-tabs button.active { color:#d8d1ff; border-color:#6654d4; background:#211b38; }
+.inspector-stage-sync details { border-top:1px solid #29313a; padding-top:5px; }
+.inspector-stage-sync summary { cursor:pointer; color:#8f9aa5; font-size:7px; font-weight:800; }
+.inspector-stage-sync pre { max-height:130px; overflow:auto; margin:6px 0 0; padding:7px; border-radius:4px; background:#080b0e; color:#8995a0; font-size:6px; line-height:1.45; white-space:pre-wrap; }
+.stage-sync-history { display:grid; gap:5px; max-height:250px; overflow:auto; }
+.stage-sync-history article { grid-template-columns:1fr auto; align-items:center; }
+.stage-sync-history article b,.stage-sync-history article span { grid-column:1; }
+.stage-sync-history article button { grid-column:2; grid-row:1 / span 2; }
