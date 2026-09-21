@@ -2050,3 +2050,12 @@ body { overflow: hidden; }
 .inspector-stage-sync article span { color:#77838e; font-size:7px; }
 .inspector-stage-sync article div { display:flex; justify-content:flex-end; gap:5px; }
 .inspector-stage-sync article button { height:25px; padding:0 9px; font-size:7px; }
+
+
+.stage-view-toolbar .stage-representation-label { display:flex; align-items:baseline; gap:6px; margin-right:5px; padding-right:10px; border-right:1px solid #303842; color:#d8dce2; font-size:8px; font-weight:900; letter-spacing:1px; }
+.stage-representation-label small { color:#697580; font-size:6px; font-weight:800; letter-spacing:.65px; }
+.stage-view-toolbar .stage-fallback-badge { margin-left:auto; padding:5px 8px; border:1px solid #303944; border-radius:4px; color:#84909b; background:#11161b; font-size:6px; font-weight:850; letter-spacing:.65px; }
+.stage-view-toolbar .stage-fallback-badge::before { content:''; display:inline-block; width:5px; height:5px; margin-right:5px; border-radius:50%; background:#64e78d; box-shadow:0 0 7px rgba(100,231,141,.5); vertical-align:1px; }
+.stage-coordinate-key b { color:#bcb2ff; letter-spacing:.8px; }
+.physical-stage .stage-geometry-svg { background:radial-gradient(circle at 50% 48%, rgba(34,40,48,.36), rgba(9,12,16,.12) 58%, rgba(5,7,9,.5)); }
+.physical-fixture .stage-unit-button { box-shadow:0 0 0 1px rgba(255,255,255,.025),0 4px 10px rgba(0,0,0,.34); }
