@@ -152,3 +152,15 @@ export async function sendLumaVizStageChange(change: unknown): Promise<void> {
 export async function drainLumaVizStageChanges<T = unknown>(): Promise<T[]> {
   return invoke<T[]>('drain_lumaviz_stage_changes');
 }
+
+
+export type LumaVizPreviewFrame = {
+  type: 'preview-frame';
+  dataUrl: string;
+  timestamp: number;
+  view?: string;
+};
+
+export async function lumaVizPreviewFrame(): Promise<LumaVizPreviewFrame | null> {
+  return invoke<LumaVizPreviewFrame | null>('lumaviz_preview_frame');
+}
