@@ -2386,7 +2386,7 @@ export default function App() {
             baseRevision: 0,
             createdAt: new Date().toISOString(),
             summary: `${fixture.name} position / rotation`,
-            before: drag.origin,
+            before: { position: drag.preserved },
             after: { position: after.position, rotation: after.rotation },
             status: 'applied'
           }).catch(() => undefined);
@@ -2395,34 +2395,7 @@ export default function App() {
     }
   }
 
-  useEffect(() => {
-    if (!directStatus.listening) return;
-    const timer = window.setInterval(() => {
-      void drainLumaVizStageChanges<StageChange>().then((changes) => {
-        if (!changes.length) return;
-        const normalized = changes.map((change) => ({ ...change, status: 'pending' as const }));
-        normalized.forEach((change) => {
-          const conflict = hasRevisionConflict(stageRevision, change);
-          const decision = decideIncomingChange(stageSyncPolicy, change);
-          const safeLiveApply = decision === 'apply' && !conflict && !canAutoApplyDangerousChange(stageSyncPolicy, change.category);
-          if (safeLiveApply && change.entityKind === 'fixture' && change.category === 'fixturePosition') {
-            const after = change.after as { position?: Vec3; rotation?: { x: number; y: number; z: number } } | null;
-            if (after?.position) {
-              setPatch((current) => current.map((fixture, index) => {
-                if (fixture.id !== change.entityId) return fixture;
-                const existing = fixtureTransform(fixture, index, current.length, stageSettings.dimensions);
-                return { ...fixture, transform: { position: { ...after.position! }, rotation: after.rotation ? { ...after.rotation } : existing.rotation } };
-              }));
-              setStageRevision((revision) => revision + 1);
-              change.status = 'applied';
-            }
-          }
-        });
-        setStageSyncChanges((current) => [...normalized, ...current].slice(0, 100));
-      }).catch(() => undefined);
-    }, 250);
-    return () => window.clearInterval(timer);
-  }, [directStatus.listening, stageRevision, stageSyncPolicy]);
+
 
   function applySurfaceXY(clientX: number, clientY: number, element: HTMLElement) {
     if (!surfaceSupports('position')) return;
@@ -2750,12 +2723,40 @@ export default function App() {
   const [stageRevision, setStageRevision] = useState(1);
   const [stageSyncTab, setStageSyncTab] = useState<'sync' | 'history'>('sync');
   const pendingStageChanges = stageSyncChanges.filter((change) => change.status === 'pending');
+  useEffect(() => {
+    if (!directStatus.listening) return;
+    const timer = window.setInterval(() => {
+      void drainLumaVizStageChanges<StageChange>().then((changes) => {
+        if (!changes.length) return;
+        const normalized: StageChange[] = changes.map((change) => ({ ...change, status: 'pending' }));
+        normalized.forEach((change) => {
+          const conflict = hasRevisionConflict(stageRevision, change);
+          const decision = decideIncomingChange(stageSyncPolicy, change);
+          const safeLiveApply = decision === 'apply' && !conflict && !canAutoApplyDangerousChange(stageSyncPolicy, change.category);
+          if (safeLiveApply && change.entityKind === 'fixture' && change.category === 'fixturePosition') {
+            const after = change.after as { position?: Vec3; rotation?: { yaw: number; pitch: number; roll: number } } | null;
+            if (after?.position) {
+              setPatch((current) => current.map((fixture, index) => {
+                if (fixture.id !== change.entityId) return fixture;
+                const existing = fixtureTransform(fixture, index, current.length, stageSettings.dimensions);
+                return { ...fixture, transform: { position: { ...after.position! }, rotation: after.rotation ? { ...after.rotation } : existing.rotation } };
+              }));
+              setStageRevision((revision) => revision + 1);
+              change.status = 'applied';
+            }
+          }
+        });
+        setStageSyncChanges((current) => [...normalized, ...current].slice(0, 100));
+      }).catch(() => undefined);
+    }, 250);
+    return () => window.clearInterval(timer);
+  }, [directStatus.listening, stageRevision, stageSyncPolicy]);
   const setStageSyncMode = (mode: StageSyncMode) => setStageSyncPolicy((current) => ({ ...current, mode }));
   const resolveStageChange = (id: string, status: 'approved' | 'rejected') => {
     const change = stageSyncChanges.find((item) => item.id === id);
     if (!change) return;
     if (status === 'approved' && change.entityKind === 'fixture' && change.category === 'fixturePosition') {
-      const after = change.after as { position?: Vec3; rotation?: { x: number; y: number; z: number } } | null;
+      const after = change.after as { position?: Vec3; rotation?: { yaw: number; pitch: number; roll: number } } | null;
       if (after?.position) {
         setPatch((current) => current.map((fixture, index) => {
           if (fixture.id !== change.entityId) return fixture;
@@ -2772,7 +2773,7 @@ export default function App() {
   const revertStageChange = (id: string) => {
     const change = stageSyncChanges.find((item) => item.id === id);
     if (!change || change.entityKind !== 'fixture' || change.category !== 'fixturePosition') return;
-    const before = change.before as { position?: Vec3; rotation?: { x: number; y: number; z: number } } | Vec3 | null;
+    const before = change.before as { position?: Vec3; rotation?: { yaw: number; pitch: number; roll: number } } | Vec3 | null;
     const position = before && 'position' in before && before.position ? before.position : before as Vec3 | null;
     if (!position || typeof position.x !== 'number') return;
     setPatch((current) => current.map((fixture, index) => {
@@ -2939,7 +2940,7 @@ export default function App() {
       {(workspace === 'setup' || workspace === 'program') && <section className="persistent-control-surface">
         <div className="surface-tabs">{(['intensity','color','position','beam','gobo','fx','speed'] as ControlSurfaceTab[]).map((tab) => <button key={tab} disabled={!surfaceSupports(tab)} className={controlSurfaceTab === tab ? 'active' : ''} onClick={() => setControlSurfaceTab(tab)}>{tab.toUpperCase()}</button>)}<span>{selectedFixtureTargets.length ? `${selectedFixtureTargets.length} SELECTED` : 'NO SELECTION'}</span>{(['encoders','faders','xy','palettes'] as ControlSurfaceMode[]).map((mode) => <button key={mode} className={controlSurfaceMode === mode ? 'surface-mode active' : 'surface-mode'} onClick={() => setControlSurfaceMode(mode)}>{mode.toUpperCase()}</button>)}</div>
         <div className={`surface-controls surface-${controlSurfaceTab}`}>
-          {controlSurfaceTab === 'intensity' && <><label><span>DIMMER</span><input type="range" min="0" max="100" value={selectedFixtureTargets.length === 1 ? fixtureIntensityPercent(universe, selectedFixtureTargets[0]) : 0} disabled={!selectedFixtureTargets.length} onChange={(event) => selectedFixtureTargets.forEach((fixture) => void setFixtureAttribute(fixture, 'dimmer', percentToDmx(Number(event.target.value))))} /></label><label><span>GRAND MASTER</span><input type="range" min="0" max={settings.masterLimit} value={globalMaster} onChange={(event) => applyGlobalMaster(Number(event.target.value))} /></label></>}
+          {controlSurfaceTab === 'intensity' && <><label><span>DIMMER</span><input type="range" min="0" max="100" value={selectedFixtureTargets.length === 1 ? (fixtureIntensityPercent(universe, selectedFixtureTargets[0]) ?? 0) : 0} disabled={!selectedFixtureTargets.length} onChange={(event) => selectedFixtureTargets.forEach((fixture) => void setFixtureAttribute(fixture, 'dimmer', percentToDmx(Number(event.target.value))))} /></label><label><span>GRAND MASTER</span><input type="range" min="0" max={settings.masterLimit} value={globalMaster} onChange={(event) => applyGlobalMaster(Number(event.target.value))} /></label></>}
           {controlSurfaceTab === 'color' && <ColorDeck title="COLOR" subtitle={compatibleColorFixtures(selectedFixtureTargets).length ? `${compatibleColorFixtures(selectedFixtureTargets).length} compatible fixture${compatibleColorFixtures(selectedFixtureTargets).length === 1 ? '' : 's'}` : 'Color wheel fixture'} color={globalColor} disabled={!surfaceSupports('color')} onChange={(color) => { setGlobalColor(color); const rgb = hexToRgb(color); compatibleColorFixtures(selectedFixtureTargets).forEach((fixture) => void setFixtureColor(fixture, rgb)); }} presets={COLOR_PRESETS.map((preset) => ({ name: preset.name, color: rgbToHex(preset.rgb[0], preset.rgb[1], preset.rgb[2]) }))} />}
           {controlSurfaceTab === 'position' && (controlSurfaceMode === 'xy' ? <div className="surface-xy-pad" onPointerDown={(event) => { event.currentTarget.setPointerCapture(event.pointerId); applySurfaceXY(event.clientX,event.clientY,event.currentTarget); }} onPointerMove={(event) => { if (event.currentTarget.hasPointerCapture(event.pointerId)) applySurfaceXY(event.clientX,event.clientY,event.currentTarget); }}><i /><span>PAN</span><b>TILT</b></div> : controlSurfaceMode === 'palettes' ? <div className="surface-palette-bank">{(showFile.positionPalettes ?? []).map((palette) => <button key={palette.id} onClick={() => void runPositionPalette(palette)}><i>◎</i><strong>{palette.name}</strong><small>{palette.kind}</small></button>)}{!(showFile.positionPalettes ?? []).length && <small>No position palettes saved yet.</small>}</div> : <div className="surface-parameter-bank">{surfaceParameterControl('pan','PAN')}{surfaceParameterControl('tilt','TILT')}{selectedCapabilities.has('panFine') && surfaceParameterControl('panFine','PAN FINE')}{selectedCapabilities.has('tiltFine') && surfaceParameterControl('tiltFine','TILT FINE')}</div>)}
           {controlSurfaceTab === 'beam' && <div className="surface-parameter-bank">{surfaceParameterControl('zoom','ZOOM')}{surfaceParameterControl('focus','FOCUS')}{surfaceParameterControl('iris','IRIS')}{surfaceParameterControl('prism','PRISM')}</div>}
