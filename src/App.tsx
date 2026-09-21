@@ -125,6 +125,7 @@ const WORKSPACE_LABELS: Record<Workspace, string> = { setup: 'CREATE', program: 
 type SetupView = 'fixtures' | 'groups' | 'patch' | 'stage' | 'settings';
 type ProgramMode = 'stage' | 'faders' | 'groups';
 type ControlSurfaceMode = 'encoders' | 'faders' | 'xy' | 'palettes';
+type ControlSurfaceTab = 'intensity' | 'color' | 'position' | 'beam' | 'gobo' | 'fx' | 'speed';
 type ShowMode = 'cues' | 'tracks' | 'library';
 type LiveBank = 'fixtures' | 'groups';
 
@@ -721,6 +722,23 @@ export default function App() {
   const selectedGroup = fixtureGroups.find((group) => group.id === selectedGroupId) ?? fixtureGroups[0] ?? null;
   const selectedGroupFixtures = selectedGroup ? fixturesInGroup(patch, selectedGroup) : [];
   const selectedFixtureTargets = selectedFixtures(patch);
+  const selectedCapabilities = useMemo(() => {
+    const supported = new Set<FixtureParameter>();
+    selectedFixtureTargets.forEach((fixture) => findMode(fixture)?.channels.forEach((channel) => {
+      if (channel.parameter) supported.add(channel.parameter);
+    }));
+    return supported;
+  }, [selectedFixtureTargets]);
+  const surfaceSupports = (tab: ControlSurfaceTab) => {
+    if (!selectedFixtureTargets.length) return tab === 'intensity';
+    if (tab === 'intensity') return selectedCapabilities.has('dimmer');
+    if (tab === 'color') return compatibleColorFixtures(selectedFixtureTargets).length > 0 || selectedCapabilities.has('colorWheel');
+    if (tab === 'position') return selectedCapabilities.has('pan') || selectedCapabilities.has('tilt');
+    if (tab === 'beam') return ['zoom','focus','iris','prism'].some((parameter) => selectedCapabilities.has(parameter as FixtureParameter));
+    if (tab === 'gobo') return selectedCapabilities.has('gobo') || selectedCapabilities.has('goboRotate');
+    if (tab === 'fx') return selectedFixtureTargets.length > 0;
+    return selectedCapabilities.has('movementSpeed') || activeEffect !== null;
+  };
 
   useEffect(() => {
     if (JSON.stringify(showFile.groups ?? []) === JSON.stringify(fixtureGroups)) return;
@@ -2709,6 +2727,7 @@ export default function App() {
   const inspectedFixture = patch.find((fixture) => fixture.selected) ?? stageFixture;
   const selectedCompatibleColors = compatibleColorFixtures(selectedFixtureTargets);
   const [controlSurfaceMode, setControlSurfaceMode] = useState<ControlSurfaceMode>('encoders');
+  const [controlSurfaceTab, setControlSurfaceTab] = useState<ControlSurfaceTab>('intensity');
   const [stageSyncPolicy, setStageSyncPolicy] = useState<StageSyncPolicy>(DEFAULT_STAGE_SYNC_POLICY);
   const [stageSyncChanges, setStageSyncChanges] = useState<StageChange[]>([]);
   const [stageRevision, setStageRevision] = useState(1);
@@ -2901,10 +2920,15 @@ export default function App() {
       </section>}
 
       {(workspace === 'setup' || workspace === 'program') && <section className="persistent-control-surface">
-        <div className="surface-tabs"><button className="active">INTENSITY</button><button>COLOR</button><button>POSITION</button><button>BEAM</button><button>GOBO</button><button>FX</button><button>SPEED</button><span>{selectedFixtureTargets.length ? `${selectedFixtureTargets.length} SELECTED` : 'NO SELECTION'}</span>{(['encoders','faders','xy','palettes'] as ControlSurfaceMode[]).map((mode) => <button key={mode} className={controlSurfaceMode === mode ? 'surface-mode active' : 'surface-mode'} onClick={() => setControlSurfaceMode(mode)}>{mode.toUpperCase()}</button>)}</div>
-        <div className="surface-controls">
-          <label><span>DIMMER</span><input type="range" min="0" max="100" value={selectedFixtureTargets.length === 1 ? fixtureIntensityPercent(universe, selectedFixtureTargets[0]) : 0} disabled={!selectedFixtureTargets.length} onChange={(event) => selectedFixtureTargets.forEach((fixture) => void setFixtureAttribute(fixture, 'dimmer', percentToDmx(Number(event.target.value))))} /></label>
-          <label><span>GRAND MASTER</span><input type="range" min="0" max={settings.masterLimit} value={globalMaster} onChange={(event) => applyGlobalMaster(Number(event.target.value))} /></label>
+        <div className="surface-tabs">{(['intensity','color','position','beam','gobo','fx','speed'] as ControlSurfaceTab[]).map((tab) => <button key={tab} disabled={!surfaceSupports(tab)} className={controlSurfaceTab === tab ? 'active' : ''} onClick={() => setControlSurfaceTab(tab)}>{tab.toUpperCase()}</button>)}<span>{selectedFixtureTargets.length ? `${selectedFixtureTargets.length} SELECTED` : 'NO SELECTION'}</span>{(['encoders','faders','xy','palettes'] as ControlSurfaceMode[]).map((mode) => <button key={mode} className={controlSurfaceMode === mode ? 'surface-mode active' : 'surface-mode'} onClick={() => setControlSurfaceMode(mode)}>{mode.toUpperCase()}</button>)}</div>
+        <div className={`surface-controls surface-${controlSurfaceTab}`}>
+          {controlSurfaceTab === 'intensity' && <><label><span>DIMMER</span><input type="range" min="0" max="100" value={selectedFixtureTargets.length === 1 ? fixtureIntensityPercent(universe, selectedFixtureTargets[0]) : 0} disabled={!selectedFixtureTargets.length} onChange={(event) => selectedFixtureTargets.forEach((fixture) => void setFixtureAttribute(fixture, 'dimmer', percentToDmx(Number(event.target.value))))} /></label><label><span>GRAND MASTER</span><input type="range" min="0" max={settings.masterLimit} value={globalMaster} onChange={(event) => applyGlobalMaster(Number(event.target.value))} /></label></>}
+          {controlSurfaceTab === 'color' && <ColorDeck title="COLOR" subtitle={compatibleColorFixtures(selectedFixtureTargets).length ? `${compatibleColorFixtures(selectedFixtureTargets).length} compatible fixture${compatibleColorFixtures(selectedFixtureTargets).length === 1 ? '' : 's'}` : 'Color wheel fixture'} color={globalColor} disabled={!surfaceSupports('color')} onChange={(color) => { setGlobalColor(color); const rgb = hexToRgb(color); compatibleColorFixtures(selectedFixtureTargets).forEach((fixture) => void setFixtureColor(fixture, rgb)); }} presets={COLOR_PRESETS} />}
+          {controlSurfaceTab === 'position' && <div className="surface-parameter-bank">{(['pan','tilt'] as FixtureParameter[]).map((parameter) => <label key={parameter}><span>{parameter.toUpperCase()}</span><input type="range" min="0" max="255" disabled={!selectedCapabilities.has(parameter)} value={selectedFixtureTargets.length === 1 ? readFixtureParameter(universe, selectedFixtureTargets[0], parameter) : 127} onChange={(event) => selectedFixtureTargets.forEach((fixture) => void setFixtureAttribute(fixture, parameter, Number(event.target.value)))} /></label>)}</div>}
+          {controlSurfaceTab === 'beam' && <div className="surface-parameter-bank">{(['zoom','focus','iris','prism'] as FixtureParameter[]).map((parameter) => <label key={parameter}><span>{parameter.toUpperCase()}</span><input type="range" min="0" max="255" disabled={!selectedCapabilities.has(parameter)} value={selectedFixtureTargets.length === 1 ? readFixtureParameter(universe, selectedFixtureTargets[0], parameter) : 0} onChange={(event) => selectedFixtureTargets.forEach((fixture) => void setFixtureAttribute(fixture, parameter, Number(event.target.value)))} /></label>)}</div>}
+          {controlSurfaceTab === 'gobo' && <div className="surface-parameter-bank">{(['gobo','goboRotate'] as FixtureParameter[]).map((parameter) => <label key={parameter}><span>{parameter === 'goboRotate' ? 'ROTATE' : 'GOBO'}</span><input type="range" min="0" max="255" disabled={!selectedCapabilities.has(parameter)} value={selectedFixtureTargets.length === 1 ? readFixtureParameter(universe, selectedFixtureTargets[0], parameter) : 0} onChange={(event) => selectedFixtureTargets.forEach((fixture) => void setFixtureAttribute(fixture, parameter, Number(event.target.value)))} /></label>)}</div>}
+          {controlSurfaceTab === 'fx' && <div className="surface-fx-bank">{EFFECT_PRESETS.map((effect) => <button key={effect.id} disabled={!effectSupportedByFixtures(effect.id, selectedFixtureTargets)} className={activeEffect === effect.id ? 'active' : ''} onClick={() => toggleEffect(effect.id)}><span className={`fx-icon fx-${effect.id}`} /><b>{effect.name}</b></button>)}</div>}
+          {controlSurfaceTab === 'speed' && <div className="surface-parameter-bank"><label><span>FX SPEED</span><input type="range" min="30" max="240" value={effectBpm} onChange={(event) => setEffectBpm(Number(event.target.value))} /></label><label><span>FX DEPTH</span><input type="range" min="0" max="100" value={effectDepth} onChange={(event) => setEffectDepth(Number(event.target.value))} /></label>{selectedCapabilities.has('movementSpeed') && <label><span>MOVE SPEED</span><input type="range" min="0" max="255" value={selectedFixtureTargets.length === 1 ? readFixtureParameter(universe, selectedFixtureTargets[0], 'movementSpeed') : 0} onChange={(event) => selectedFixtureTargets.forEach((fixture) => void setFixtureAttribute(fixture, 'movementSpeed', Number(event.target.value)))} /></label>}</div>}
           <div className="surface-quick"><button onClick={() => setWorkspace('show')}>CUES</button><button onClick={goPreviousCue}>PREV</button><button className="surface-go" onClick={goNextCue} disabled={!nextCue}>GO <small>{nextCue?.name ?? 'END'}</small></button><button onClick={() => setWorkspace('live')}>LIVE</button></div>
         </div>
       </section>}
