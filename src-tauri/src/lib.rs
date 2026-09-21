@@ -5,7 +5,7 @@ mod updates;
 
 use dmx::{DmxEngine, DmxStatus};
 use midi::{MidiEngine, MidiEvent, MidiInputInfo, MidiStatus};
-use output::{artnet::ArtNetEngine, udmx::UdmxDeviceInfo};
+use output::{artnet::ArtNetEngine, lumaviz_direct::LumaVizDirectEngine, udmx::UdmxDeviceInfo};
 use tauri::State;
 
 #[tauri::command]
@@ -74,6 +74,7 @@ pub fn run() {
         .plugin(tauri_plugin_updater::Builder::new().build())
         .manage(DmxEngine::new())
         .manage(ArtNetEngine::default())
+        .manage(LumaVizDirectEngine::default())
         .manage(MidiEngine::new())
         .manage(updates::UpdateState::default())
         .invoke_handler(tauri::generate_handler![
@@ -85,6 +86,9 @@ pub fn run() {
             set_blackout,
             dmx_status,
             output::artnet::send_artnet_frame,
+            output::lumaviz_direct::start_lumaviz_direct,
+            output::lumaviz_direct::lumaviz_direct_status,
+            output::lumaviz_direct::send_lumaviz_fixture_frame,
             list_midi_inputs,
             connect_midi,
             disconnect_midi,
