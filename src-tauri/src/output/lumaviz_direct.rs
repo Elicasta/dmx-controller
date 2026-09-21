@@ -16,6 +16,15 @@ const DIRECT_PORT: u16 = 9460;
 #[serde(rename_all = "camelCase")]
 pub struct DirectFixtureState {
     pub id: String,
+    pub name: Option<String>,
+    pub group: Option<String>,
+    pub profile_id: Option<String>,
+    pub mode_id: Option<String>,
+    pub manufacturer: Option<String>,
+    pub model: Option<String>,
+    pub category: Option<String>,
+    pub universe: Option<u16>,
+    pub address: Option<u16>,
     pub intensity: Option<f64>,
     pub color: Option<String>,
     pub pan: Option<f64>,
