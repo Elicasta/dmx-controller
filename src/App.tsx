@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ChangeEvent, type PointerEvent as ReactPointerEvent } from 'react';
-import { drainLumaVizStageChanges, lumaVizDirectStatus, semanticFrameFromResolvedOutput, sendLumaVizDirectFrame, sendLumaVizStageChange, startLumaVizDirect, type LumaVizDirectStatus } from './core/lumaviz-direct';
+import { drainLumaVizStageChanges, lumaVizDirectStatus, lumaVizPreviewFrame, semanticFrameFromResolvedOutput, sendLumaVizDirectFrame, sendLumaVizStageChange, startLumaVizDirect, type LumaVizDirectStatus } from './core/lumaviz-direct';
 import { invoke } from '@tauri-apps/api/core';
 import {
   applyUniverseUpdates,
@@ -529,6 +529,7 @@ export default function App() {
   const settingsRef = useRef(settings);
   const [artNetTelemetry, setArtNetTelemetry] = useState({ framesSent: 0, lastError: "" });
   const [directStatus, setDirectStatus] = useState<LumaVizDirectStatus>({ listening: false, port: 9460, clients: 0, framesSent: 0 });
+  const [lumaVizPreview, setLumaVizPreview] = useState<{ dataUrl: string; timestamp: number; view?: string } | null>(null);
   const directSequenceRef = useRef(0);
   const [remoteRelayConfig, setRemoteRelayConfig] = useState<RemoteRelayConfig>(loadRemoteRelayConfig);
   const [remoteRelayStatus, setRemoteRelayStatus] = useState<RemoteRelayStatus>('disconnected');
@@ -2767,6 +2768,21 @@ export default function App() {
   const [stageSyncTab, setStageSyncTab] = useState<'sync' | 'history'>('sync');
   const pendingStageChanges = stageSyncChanges.filter((change) => change.status === 'pending');
   useEffect(() => {
+    if (workspace !== 'show' || directStatus.clients < 1) {
+      setLumaVizPreview(null);
+      return;
+    }
+    let cancelled = false;
+    const poll = window.setInterval(() => {
+      void lumaVizPreviewFrame().then((frame) => {
+        if (cancelled) return;
+        if (frame && Date.now() - frame.timestamp < 1500) setLumaVizPreview({ dataUrl: frame.dataUrl, timestamp: frame.timestamp, view: frame.view });
+        else setLumaVizPreview(null);
+      }).catch(() => { if (!cancelled) setLumaVizPreview(null); });
+    }, 250);
+    return () => { cancelled = true; window.clearInterval(poll); };
+  }, [workspace, directStatus.clients]);
+  useEffect(() => {
     if (!directStatus.listening) return;
     const timer = window.setInterval(() => {
       void drainLumaVizStageChanges<StageChange>().then((changes) => {
@@ -2962,7 +2978,7 @@ export default function App() {
         {showMode === 'cues' ? <div className="show-reference-main">
           <section className="show-cues-card"><header><div><strong>Cues</strong><small>Create, organize, and fine-tune your cues.</small></div><input aria-label="Search cues" placeholder="Search cues…" /></header><div className="show-cue-actions"><button className="console-primary" onClick={captureCue}>＋ Add Cue</button><button>＋ Add Folder</button><button>•••</button></div><div className="show-cue-columns"><span>#</span><span>Name</span><span>Fade</span><span>Delay</span></div><div className="show-reference-cue-list">{showFile.cues.length ? showFile.cues.map((cue,index) => <button key={cue.id} className={activeCueId === cue.id ? 'active' : ''} onClick={() => { setActiveCueId(cue.id); }}><b>{cue.number}</b><i style={{background:cue.color ?? lookSwatch(cue.values)}}/><span>{cue.name}</span><small>{cue.fadeMs ? `${cue.fadeMs/1000}s` : 'Snap'}</small><small>{(cue.delayMs ?? 0)/1000}s</small><em>•••</em></button>) : <div className="empty-cues"><strong>No cues yet</strong><span>Build a look in Program, then add your first cue.</span></div>}</div></section>
           <section className="show-cue-details"><header><strong>Cue Details</strong><button>•••</button></header>{activeCue ? <><label><span>Name</span><input value={activeCue.name} onChange={(event)=>updateCueProperties(activeCue.id,{name:event.target.value})}/></label><label><span>Color</span><input type="color" value={activeCue.color ?? '#55e98d'} onChange={(event)=>updateCueProperties(activeCue.id,{color:event.target.value})}/></label><div className="inspector-pair"><label><span>Fade Time</span><input type="number" min="0" step=".1" value={activeCue.fadeMs/1000} onChange={(event)=>updateCueProperties(activeCue.id,{fadeMs:Number(event.target.value)*1000})}/></label><label><span>Delay</span><input type="number" min="0" step=".1" value={(activeCue.delayMs ?? 0)/1000} onChange={(event)=>updateCueProperties(activeCue.id,{delayMs:Number(event.target.value)*1000})}/></label></div><label><span>Follow</span><select value={(activeCue.followMs ?? 0)>0?'follow':'manual'} onChange={(event)=>updateCueProperties(activeCue.id,{followMs:event.target.value==='follow'?Math.max(1000,activeCue.followMs ?? 1000):0})}><option value="manual">Next Cue / Manual</option><option value="follow">Timed Follow</option></select></label><label><span>Description</span><textarea value={activeCue.description ?? ''} onChange={(event)=>updateCueProperties(activeCue.id,{description:event.target.value})}/></label><div className="cue-target-summary"><strong>Included Targets</strong><span>{patch.length} fixtures · {fixtureGroups.length} groups</span></div><button className="console-primary" onClick={()=>updateCue(activeCue.id)}>Update From Output</button></> : <div className="empty-inspector"><strong>Select a cue</strong><span>Its timing and metadata will appear here.</span></div>}</section>
-          <section className="show-stage-preview"><header><strong>Stage Preview</strong><div><button onClick={()=>setStageView('front')}>Front</button><button onClick={()=>setStageView(stageView==='perspective'?'front':'perspective')}>{stageView==='perspective'?'2D':'3D'}</button></div></header>{renderStagePreview()}</section>
+          <section className="show-stage-preview"><header><div className="preview-title"><strong>Stage Preview</strong><small className={lumaVizPreview ? 'viz-live' : 'local-live'}>● {lumaVizPreview ? `LumaViz LIVE · ${(lumaVizPreview.view ?? 'camera').toUpperCase()}` : 'LumaRig LOCAL'}</small></div><div>{!lumaVizPreview && <><button onClick={()=>setStageView('front')}>Front</button><button onClick={()=>setStageView(stageView==='perspective'?'front':'perspective')}>{stageView==='perspective'?'2D':'3D'}</button></>}</div></header>{lumaVizPreview ? <div className="lumaviz-preview-feed"><img src={lumaVizPreview.dataUrl} alt="Live LumaViz stage preview" /><span>LIVE VISUALIZER FEED</span></div> : renderStagePreview()}</section>
           <section className="show-cue-timeline"><header><strong>Cue Timeline</strong><small>{activeCue?.name ?? 'Select a cue'}</small></header><div className="cue-timeline-ruler">{[0,1,2,3,4,5,6,7,8].map((n)=><span key={n}>{n}s</span>)}</div><div className="cue-timeline-tracks"><label>☼ Intensity<i style={{width:activeCue?`${Math.min(92,28+(activeCue.fadeMs/1000)*16)}%`:'0%'}}/></label><label>● Color<i className="color" style={{width:activeCue?'48%':'0%'}}/></label><label>✣ Position<i className="position" style={{width:activeCue?'66%':'0%'}}/></label><label>✳ FX<i className="fx" style={{width:activeCue?.linkedEffectId?'72%':'0%'}}/></label></div></section>
           <section className="show-settings-card"><header><strong>Show Settings</strong></header><div><label><span>Tempo (BPM)</span><input type="number" min="20" max="240" value={effectBpm} onChange={(event)=>{setEffectBpm(Number(event.target.value));effectBpmRef.current=Number(event.target.value);}}/></label><label><span>Timecode</span><input value={formatShowTime(externalSongPositionMs || showTrackPositionMs)} readOnly/></label><label><span>External Sync</span><select value={tempoSource} onChange={(event)=>setTempoSource(event.target.value as 'manual'|'midi')}><option value="manual">Internal</option><option value="midi">MIDI Clock</option></select></label></div></section>
           <section className="show-mini-library"><header><strong>Show Library</strong><button onClick={()=>setShowMode('library')}>＋ New Show</button></header>{showLibrary.slice(0,4).map((item)=><button key={item.id} onClick={()=>loadShowProject(item)}><span>▤ <strong>{item.name}</strong></span><small>{new Date(item.savedAt).toLocaleDateString()}</small></button>)}</section>
