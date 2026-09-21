@@ -8,6 +8,7 @@ use std::{
     },
 };
 use tauri::State;
+use std::time::Duration;
 
 use super::DMX_CHANNELS;
 
@@ -16,6 +17,8 @@ const ARTNET_HEADER: &[u8; 8] = b"Art-Net\0";
 const OP_DMX: u16 = 0x5000;
 const PROTOCOL_VERSION: u16 = 14;
 const MAX_ARTNET_UNIVERSE: u16 = 32_768;
+const LUMAVIZ_PROBE: &[u8] = b"LUMARIG-LUMAVIZ-PROBE-v1";
+const LUMAVIZ_ACK: &[u8] = b"LUMAVIZ-LUMARIG-ACK-v1";
 
 pub struct ArtNetEngine {
     socket: Mutex<Option<UdpSocket>>,
@@ -61,6 +64,23 @@ impl ArtNetEngine {
         operation(guard.as_ref().expect("socket initialized"))
     }
 
+    pub fn probe_lumaviz(&self, target: &str) -> Result<bool, String> {
+        let target_ip = Ipv4Addr::from_str(target.trim())
+            .map_err(|_| "LumaViz target must be an IPv4 address".to_string())?;
+        let socket = UdpSocket::bind(("0.0.0.0", 0))
+            .map_err(|error| format!("Could not open LumaViz probe socket: {error}"))?;
+        socket.set_read_timeout(Some(Duration::from_millis(350)))
+            .map_err(|error| format!("Could not set LumaViz probe timeout: {error}"))?;
+        socket.send_to(LUMAVIZ_PROBE, SocketAddrV4::new(target_ip, ARTNET_PORT))
+            .map_err(|error| format!("LumaViz probe failed: {error}"))?;
+        let mut reply = [0u8; 64];
+        match socket.recv_from(&mut reply) {
+            Ok((count, _)) => Ok(&reply[..count] == LUMAVIZ_ACK),
+            Err(error) if matches!(error.kind(), std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut) => Ok(false),
+            Err(error) => Err(format!("LumaViz acknowledgement failed: {error}")),
+        }
+    }
+
     pub fn send_frame(&self, target: &str, universe: u16, values: &[u8]) -> Result<(), String> {
         let target_ip = Ipv4Addr::from_str(target.trim())
             .map_err(|_| "Art-Net target must be an IPv4 address such as 127.0.0.1 or 255.255.255.255".to_string())?;
@@ -100,6 +120,11 @@ pub fn build_artdmx_packet(universe: u16, sequence: u8, values: &[u8]) -> Result
     }
 
     Ok(packet)
+}
+
+#[tauri::command]
+pub fn probe_lumaviz(engine: State<'_, ArtNetEngine>, target: String) -> Result<bool, String> {
+    engine.probe_lumaviz(&target)
 }
 
 #[tauri::command]
