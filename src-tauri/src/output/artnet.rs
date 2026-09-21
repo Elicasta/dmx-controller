@@ -1,5 +1,6 @@
 use std::{
     net::{Ipv4Addr, SocketAddrV4, UdpSocket},
+    time::Duration,
     str::FromStr,
     sync::{
         atomic::{AtomicU8, Ordering},
@@ -20,6 +21,9 @@ pub struct ArtNetEngine {
     socket: Mutex<Option<UdpSocket>>,
     sequence: AtomicU8,
 }
+
+const LUMAVIZ_PING: &[u8] = b"LUMARIG-PING";
+const LUMAVIZ_ACK: &[u8] = b"LUMAVIZ-ACK";
 
 impl Default for ArtNetEngine {
     fn default() -> Self {
@@ -106,6 +110,25 @@ pub fn send_artnet_frame(
     values: Vec<u8>,
 ) -> Result<(), String> {
     engine.send_frame(&target, universe, &values)
+}
+
+#[tauri::command]
+pub fn probe_lumaviz(engine: State<'_, ArtNetEngine>, target: String) -> Result<bool, String> {
+    let target_ip = Ipv4Addr::from_str(target.trim())
+        .map_err(|_| "LumaViz target must be an IPv4 address".to_string())?;
+    let destination = SocketAddrV4::new(target_ip, ARTNET_PORT);
+    engine.with_socket(|socket| {
+        socket.set_read_timeout(Some(Duration::from_millis(350)))
+            .map_err(|error| format!("Could not set LumaViz probe timeout: {error}"))?;
+        socket.send_to(LUMAVIZ_PING, destination)
+            .map_err(|error| format!("LumaViz probe send failed: {error}"))?;
+        let mut reply = [0u8; 64];
+        match socket.recv_from(&mut reply) {
+            Ok((count, source)) => Ok(source.ip() == target_ip && &reply[..count] == LUMAVIZ_ACK),
+            Err(error) if matches!(error.kind(), std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut) => Ok(false),
+            Err(error) => Err(format!("LumaViz probe receive failed: {error}")),
+        }
+    })
 }
 
 #[cfg(test)]
