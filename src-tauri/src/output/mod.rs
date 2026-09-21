@@ -16,3 +16,5 @@ pub trait DmxOutput {
         self.send_range(0, values)
     }
 }
+
+pub mod lumaviz_direct;
