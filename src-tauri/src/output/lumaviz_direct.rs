@@ -57,6 +57,7 @@ pub struct LumaVizDirectEngine {
     frames_sent: Arc<AtomicU64>,
     shared: Arc<Mutex<Shared>>,
     incoming: Arc<Mutex<Vec<serde_json::Value>>>,
+    preview_frame: Arc<Mutex<Option<serde_json::Value>>>,
 }
 
 impl LumaVizDirectEngine {
@@ -142,8 +143,14 @@ impl LumaVizDirectEngine {
                     match socket.read() {
                         Ok(Message::Text(text)) => {
                             if let Ok(value) = serde_json::from_str::<serde_json::Value>(text.as_str()) {
-                                if value.get("type").and_then(|v| v.as_str()) == Some("stage-change") {
-                                    if let Ok(mut queue) = incoming.lock() { queue.push(value); }
+                                match value.get("type").and_then(|v| v.as_str()) {
+                                    Some("stage-change") => {
+                                        if let Ok(mut queue) = incoming.lock() { queue.push(value); }
+                                    }
+                                    Some("preview-frame") => {
+                                        if let Ok(mut preview) = engine.preview_frame.lock() { *preview = Some(value); }
+                                    }
+                                    _ => {}
                                 }
                             }
                         }
@@ -162,6 +169,11 @@ impl LumaVizDirectEngine {
     pub fn drain_stage_changes(&self) -> Vec<serde_json::Value> {
         self.poll_incoming();
         self.incoming.lock().map(|mut queue| std::mem::take(&mut *queue)).unwrap_or_default()
+    }
+
+    pub fn latest_preview_frame(&self) -> Option<serde_json::Value> {
+        self.poll_incoming();
+        self.preview_frame.lock().ok().and_then(|preview| preview.clone())
     }
 
     pub fn broadcast_stage_change(&self, change: serde_json::Value) -> Result<(), String> {
@@ -228,6 +240,11 @@ pub fn send_lumaviz_fixture_frame(
 #[tauri::command]
 pub fn drain_lumaviz_stage_changes(engine: tauri::State<'_, LumaVizDirectEngine>) -> Vec<serde_json::Value> {
     engine.drain_stage_changes()
+}
+
+#[tauri::command]
+pub fn lumaviz_preview_frame(engine: tauri::State<'_, LumaVizDirectEngine>) -> Option<serde_json::Value> {
+    engine.latest_preview_frame()
 }
 
 #[tauri::command]
