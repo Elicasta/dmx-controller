@@ -2097,3 +2097,20 @@ body { overflow: hidden; }
   .surface-color .color-deck { grid-template-columns:auto 54px 1fr; }
   .surface-color .color-preset-row { display:none; }
 }
+
+
+.surface-xy-pad { position:relative; flex:1; min-height:92px; overflow:hidden; border:1px solid #303944; border-radius:6px; cursor:crosshair; touch-action:none; background:linear-gradient(rgba(110,124,140,.09) 1px,transparent 1px),linear-gradient(90deg,rgba(110,124,140,.09) 1px,transparent 1px),radial-gradient(circle at center,rgba(113,92,255,.14),transparent 55%),#0b0f13; background-size:24px 24px,24px 24px,auto,auto; }
+.surface-xy-pad::before,.surface-xy-pad::after { content:''; position:absolute; background:rgba(145,155,166,.25); pointer-events:none; }
+.surface-xy-pad::before { left:50%; top:0; bottom:0; width:1px; }
+.surface-xy-pad::after { top:50%; left:0; right:0; height:1px; }
+.surface-xy-pad i { position:absolute; left:50%; top:50%; width:14px; height:14px; transform:translate(-50%,-50%); border:2px solid #9d8cff; border-radius:50%; box-shadow:0 0 15px rgba(157,140,255,.35); }
+.surface-xy-pad span,.surface-xy-pad b { position:absolute; color:#697580; font-size:6px; letter-spacing:.8px; }
+.surface-xy-pad span { right:8px; bottom:6px; }.surface-xy-pad b { left:7px; top:6px; writing-mode:vertical-rl; }
+.surface-encoder { position:relative; justify-items:center; }
+.encoder-dial { --encoder-value:0deg; width:52px; height:52px; grid-column:1 / -1; display:grid; place-items:center; border:1px solid #39424d; border-radius:50%; background:conic-gradient(from 225deg,#7966ff 0deg,var(--encoder-value),#171d23 var(--encoder-value),270deg,#0d1115 270deg); box-shadow:inset 0 0 0 7px #101419; }
+.encoder-dial b { display:grid; place-items:center; width:31px; height:31px; border-radius:50%; background:#0c1014; color:#d9dde2; font-size:8px; }
+.encoder-hit { position:absolute; inset:22px 4px 4px; opacity:0; cursor:ew-resize; }
+.surface-palette-bank { flex:1; display:grid; grid-template-columns:repeat(6,minmax(80px,1fr)); gap:6px; align-items:stretch; }
+.surface-palette-bank button { display:grid; place-items:center; align-content:center; gap:2px; min-height:68px; border:1px solid #29313a; background:#101419; color:#9aa5af; }
+.surface-palette-bank button:hover { border-color:#6553ce; background:#171329; }
+.surface-palette-bank button i { color:#9c8cff; font-size:16px; }.surface-palette-bank button strong { font-size:7px; }.surface-palette-bank button small { color:#626e79; font-size:6px; text-transform:uppercase; }
