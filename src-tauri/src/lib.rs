@@ -90,6 +90,7 @@ pub fn run() {
             output::lumaviz_direct::lumaviz_direct_status,
             output::lumaviz_direct::send_lumaviz_fixture_frame,
             output::lumaviz_direct::drain_lumaviz_stage_changes,
+            output::lumaviz_direct::lumaviz_preview_frame,
             output::lumaviz_direct::send_lumaviz_stage_change,
             list_midi_inputs,
             connect_midi,
