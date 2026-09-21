@@ -103,7 +103,12 @@ export class ShowRuntime {
 
   dispatch(envelope: ControlCommandEnvelope): RuntimeDispatchResult {
     const command = envelope.command;
-    const universe = 'universe' in command ? command.universe : this.activeUniverse;
+    const groupUniverses = command.type === 'group.color' || command.type === 'group.master.set'
+      ? [...new Set(this.patch.filter((fixture) => fixture.group === command.groupName).map((fixture) => fixture.universe ?? 1))]
+      : [];
+    const universe = 'universe' in command
+      ? command.universe
+      : groupUniverses[0] ?? this.activeUniverse;
     this.activeUniverse = universe;
     const previous = this.universes.get(universe) ?? makeUniverse();
     const previousBase = this.baseUniverses.get(universe) ?? makeUniverse();
@@ -182,6 +187,9 @@ export class ShowRuntime {
       nextBase = applyUniverseUpdates(previousBase, updates);
     } else if (command.type === 'group.master.set') {
       this.groupMasters.set(command.groupName, Math.max(0, Math.min(1, command.value)));
+      if (groupUniverses.length > 1) {
+        warnings.push(`Group ${command.groupName} spans universes ${groupUniverses.join(', ')}; all member universes require output refresh.`);
+      }
     } else if (command.type === 'master.set') {
       this.master = Math.max(0, Math.min(1, command.value));
     } else if (command.type === 'blackout.set') {
