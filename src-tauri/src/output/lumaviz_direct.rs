@@ -78,12 +78,16 @@ impl LumaVizDirectEngine {
             match listener.accept() {
                 Ok((stream, _)) => {
                     let _ = stream.set_nonblocking(false);
-                    let mut accepted_path = false;
                     match accept_hdr(stream, |request: &Request, response: Response| {
-                        accepted_path = request.uri().path() == "/lumaviz";
-                        Ok(response)
+                        if request.uri().path() == "/lumaviz" {
+                            Ok(response)
+                        } else {
+                            Err(tungstenite::handshake::server::ErrorResponse::new(Some(
+                                "LumaViz Direct requires /lumaviz".into(),
+                            )))
+                        }
                     }) {
-                        Ok(mut socket) if accepted_path => {
+                        Ok(mut socket) => {
                             let _ = socket.get_mut().set_read_timeout(Some(Duration::from_millis(800)));
                             match socket.read() {
                                 Ok(Message::Text(text)) if valid_hello(text.as_str()) => {
@@ -98,7 +102,6 @@ impl LumaVizDirectEngine {
                                 Err(error) => engine.set_error(format!("LumaViz Direct handshake failed: {error}")),
                             }
                         }
-                        Ok(_) => engine.set_error("LumaViz Direct rejected a WebSocket path other than /lumaviz.".into()),
                         Err(error) => engine.set_error(format!("LumaViz Direct WebSocket upgrade failed: {error}")),
                     }
                 }
