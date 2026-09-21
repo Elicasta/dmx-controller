@@ -1796,3 +1796,59 @@ input[type="text"], input[type="number"], .add-fixture-grid input, .patch-card-b
 .setup-subtabs{grid-template-columns:repeat(4,minmax(0,1fr))}
 .setup-subtabs button{min-height:48px;font-size:13px}
 .setup-subtabs button.active{border-color:#55e98d;background:linear-gradient(180deg,rgba(85,233,141,.1),rgba(85,233,141,.025));box-shadow:inset 0 -2px #55e98d}
+
+
+/* v0.5 BUILD workspace — full cockpit treatment */
+:root{--lr-green:#55e98d;--lr-green-dim:#193d28;--lr-panel:#10161a;--lr-panel-2:#151d22;--lr-line:#29343b;--lr-text:#e8eef1;--lr-muted:#77858e}
+.setup-console{
+  grid-template-columns:260px minmax(0,1fr) 300px;
+  grid-template-rows:58px minmax(0,1fr);
+  gap:8px;padding:8px;background:#080c0f;
+}
+.setup-console>.setup-subtabs{grid-column:1/-1;grid-row:1;display:grid;gap:7px;padding:5px;border:1px solid #263138;border-radius:10px;background:#0d1317}
+.setup-subtabs button{border-radius:7px!important;background:#12191e!important;color:#7d8b94!important;font-size:12px!important;font-weight:900!important;letter-spacing:.05em}
+.setup-subtabs button.active{background:linear-gradient(180deg,#1c3324,#13251a)!important;color:#78f0a2!important;border-color:#3b8d59!important;box-shadow:inset 0 -2px #55e98d,0 0 18px rgba(85,233,141,.07)!important}
+.setup-console>.fixture-browser{grid-column:1;grid-row:2;border:1px solid var(--lr-line);border-radius:9px;background:var(--lr-panel);overflow:hidden}
+.setup-console>.setup-center{grid-column:2;grid-row:2;border:1px solid var(--lr-line);border-radius:9px;background:#0b1013;overflow:hidden}
+.setup-console>.setup-inspector{grid-column:3;grid-row:2;border:1px solid var(--lr-line);border-radius:9px;background:var(--lr-panel);overflow:auto}
+.setup-scroll-area{padding:12px!important;display:flex!important;flex-direction:column;gap:10px!important}
+.fixture-selection-toolbar{min-height:62px;border-radius:8px;background:linear-gradient(180deg,#141d22,#0f1519)}
+.batch-fixture-panel{border-radius:9px!important;background:linear-gradient(180deg,#151d22,#0f1519)!important}
+.batch-fixture-panel>header{min-height:68px!important}
+.batch-fixture-grid{gap:9px!important;padding:13px!important}
+.batch-fixture-grid label{padding:9px;border:1px solid #273139;border-radius:7px;background:#0c1216}
+.batch-fixture-grid label span{display:block;margin-bottom:6px;color:#71808a;font-size:8px;font-weight:900;letter-spacing:.08em}
+.batch-fixture-grid select,.batch-fixture-grid input{min-height:38px;border-radius:5px;background:#11191e}
+.add-batch{min-height:58px!important;border-color:#42955f!important;background:linear-gradient(180deg,#25633c,#173d27)!important;color:#baffce!important;font-size:11px!important}
+.compact-patch-list{display:grid!important;grid-template-columns:repeat(auto-fill,minmax(330px,1fr));gap:8px!important}
+.compact-patch-list>*{border-radius:8px!important}
+.group-assignment-view{padding:14px!important}
+.group-assignment-view>header{padding:16px 18px!important;border:1px solid var(--lr-line);border-radius:9px;background:linear-gradient(180deg,#151d22,#10161a)}
+.group-card-grid{grid-template-columns:repeat(auto-fill,minmax(260px,1fr))!important;gap:10px!important;margin-top:12px!important}
+.assignment-group-card,.create-group-card{border-radius:9px!important;background:linear-gradient(180deg,#151d22,#0f1519)!important}
+.assignment-group-card.selected{border-color:#55e98d!important;box-shadow:0 0 0 1px rgba(85,233,141,.18),0 12px 30px rgba(0,0,0,.25)}
+.stage-console-toolbar{min-height:48px!important;padding:6px!important;border-bottom:1px solid var(--lr-line);background:#0d1418}
+.stage-console-toolbar>div{display:flex;gap:4px;flex-wrap:wrap}
+.stage-console-toolbar button{min-height:34px!important;padding:0 11px!important;border-radius:5px!important;font-size:8px!important;font-weight:900}
+.stage-console-toolbar button.active{border-color:#55e98d!important;background:#173522!important;color:#78efa1!important}
+.dominant-stage{margin:8px!important;border:1px solid #303c44!important;border-radius:9px!important;box-shadow:inset 0 0 50px rgba(0,0,0,.35)}
+.stage-bottom-tools{gap:8px!important;padding:0 8px 8px!important}
+.stage-bottom-tools>section{border:1px solid var(--lr-line)!important;border-radius:8px!important;background:#10171b!important}
+.settings-console{display:grid!important;grid-template-columns:repeat(2,minmax(0,1fr));align-content:start;gap:10px!important;padding:12px!important}
+.settings-console>.console-panel{margin:0!important;border:1px solid var(--lr-line)!important;border-radius:9px!important;background:linear-gradient(180deg,#151d22,#0e1418)!important;box-shadow:0 10px 24px rgba(0,0,0,.12)}
+.settings-console>.console-panel>header{min-height:62px!important;border-bottom:1px solid #263138}
+.settings-console>.console-panel>header h2{font-size:15px!important}
+.settings-console>.console-panel>header span{color:#6e7d86!important;font-weight:900!important;letter-spacing:.11em}
+.settings-console>.console-panel>header b{padding:5px 8px;border:1px solid #34434c;border-radius:999px;background:#0b1114;color:#87959d}
+.settings-console>.console-panel>header b.healthy{border-color:#32784c;background:#10291a;color:#72e99b}
+.visualizer-direct-console,.visualizer-output-console,.vizbridge-console{border-color:#31503c!important}
+.vizbridge-console{background:linear-gradient(145deg,#14231a,#0e1512 55%,#10171b)!important}
+.vizbridge-console>header h2:after{content:"  · BRIDGE";color:#55e98d;font-size:8px;letter-spacing:.12em}
+.artnet-health-grid>div{min-height:55px;border-radius:7px!important;background:#0a1115!important}
+.settings-actions button{min-height:35px;border-radius:5px!important;font-weight:850}
+.settings-actions .console-primary{border-color:#3e8e59!important;background:linear-gradient(180deg,#245c39,#173b26)!important;color:#b8ffcc!important}
+.software-update-console,.safety-settings,.raw-dmx-console{grid-column:1/-1}
+.raw-dmx-console{opacity:.78}
+.setup-inspector>header{position:sticky;top:0;z-index:2;padding:16px!important;background:#12191e;border-bottom:1px solid #2b363d}
+.setup-inspector>label,.setup-inspector>.inspector-pair,.setup-inspector>.transform-grid,.setup-inspector>.calibration-status,.setup-inspector>button{margin-left:12px!important;margin-right:12px!important}
+@media(max-width:1200px){.setup-console{grid-template-columns:220px minmax(0,1fr) 260px}.settings-console{grid-template-columns:1fr}}
