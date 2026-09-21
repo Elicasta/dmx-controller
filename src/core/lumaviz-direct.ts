@@ -16,6 +16,12 @@ export type LumaVizDirectStatus = {
 
 export type SemanticFixtureState = {
   id: string;
+  name: string;
+  group: string;
+  profileId: string;
+  modeId: string;
+  universe: number;
+  address: number;
   intensity?: number;
   color?: string;
   pan?: number;
@@ -76,6 +82,12 @@ export function semanticFrameFromResolvedOutput(
 
       return {
         id: fixture.id,
+        name: fixture.name,
+        group: fixture.group,
+        profileId: fixture.profileId,
+        modeId: fixture.modeId,
+        universe: fixture.universe ?? 1,
+        address: fixture.address,
         intensity: dimmer,
         color: hex(Math.min(255, red + white), Math.min(255, green + white), Math.min(255, blue + white)),
         pan,
