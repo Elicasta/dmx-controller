@@ -143,3 +143,12 @@ export async function lumaVizDirectStatus(): Promise<LumaVizDirectStatus> {
 export async function sendLumaVizDirectFrame(frame: SemanticFixtureFrame): Promise<void> {
   await invoke('send_lumaviz_fixture_frame', { frame });
 }
+
+
+export async function sendLumaVizStageChange(change: unknown): Promise<void> {
+  await invoke('send_lumaviz_stage_change', { change });
+}
+
+export async function drainLumaVizStageChanges<T = unknown>(): Promise<T[]> {
+  return invoke<T[]>('drain_lumaviz_stage_changes');
+}
