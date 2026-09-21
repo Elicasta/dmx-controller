@@ -1741,3 +1741,46 @@ input[type="text"], input[type="number"], .add-fixture-grid input, .patch-card-b
 .live-looks button{height:83px;min-height:83px;}
 .live-health{grid-row:6;min-height:37px;}
 .live-master{grid-row:1/5;}
+
+
+/* LumaViz connection telemetry */
+.artnet-health-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 7px;
+  margin: 10px 0 12px;
+}
+.artnet-health-grid > div {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+  padding: 9px 10px;
+  border: 1px solid rgba(116, 154, 194, .22);
+  border-radius: 5px;
+  background: rgba(8, 15, 24, .62);
+}
+.artnet-health-grid span {
+  color: var(--muted, #788696);
+  font-size: 9px;
+  font-weight: 800;
+  letter-spacing: .08em;
+}
+.artnet-health-grid strong {
+  overflow: hidden;
+  color: var(--text, #e5edf5);
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.artnet-error {
+  border: 1px solid rgba(224, 91, 91, .34);
+  border-radius: 4px;
+  background: rgba(91, 25, 25, .22);
+  color: #f0a4a4 !important;
+  padding: 8px 10px;
+  font-size: 10px;
+}
+.visualizer-output-console header b.healthy {
+  color: #75e39d;
+  text-shadow: 0 0 12px rgba(82, 218, 132, .32);
+}
