@@ -392,10 +392,37 @@ export function fixtureColorUpdates(
   patch: PatchedFixture,
   rgb: readonly [number, number, number]
 ): DmxUpdate[] {
-  const updates = (['red', 'green', 'blue'] as const)
-    .map((parameter, index) => fixtureParameterUpdate(patch, parameter, rgb[index]))
-    .filter((update): update is DmxUpdate => Boolean(update));
-  return updates;
+  const mode = findMode(patch);
+  if (!mode) return [];
+
+  const supported = new Set(mode.channels.map((channel) => channel.parameter).filter(Boolean));
+  let [red, green, blue] = rgb.map(clampDmx) as [number, number, number];
+  let white = 0;
+  let amber = 0;
+
+  // Resolve an RGB request into emitters the selected fixture mode actually owns.
+  // Neutral RGB content can use a dedicated white emitter without changing the requested hue.
+  if (supported.has('white')) {
+    white = Math.min(red, green, blue);
+    red -= white;
+    green -= white;
+    blue -= white;
+  }
+
+  // Amber supplements warm red/green mixtures only when the fixture exposes an amber emitter.
+  if (supported.has('amber')) {
+    amber = Math.min(red, green);
+    const amberShare = Math.round(amber * 0.5);
+    red -= amberShare;
+    green -= Math.round(amberShare * 0.45);
+    amber = amberShare;
+  }
+
+  const values: Partial<Record<FixtureParameter, number>> = { red, green, blue, white, amber };
+  // UV is not inferred from visible RGB. It remains an explicit fixture attribute.
+  return mode.channels
+    .filter((channel) => channel.parameter && values[channel.parameter] !== undefined)
+    .map((channel) => [patch.address + channel.offset, clampDmx(values[channel.parameter!]!)] as DmxUpdate);
 }
 
 export function isPatchedFixture(value: unknown): value is PatchedFixture {
