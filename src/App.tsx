@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ChangeEvent, type PointerEvent as ReactPointerEvent } from 'react';
-import { lumaVizDirectStatus, semanticFrameFromResolvedOutput, sendLumaVizDirectFrame, startLumaVizDirect, type LumaVizDirectStatus } from './core/lumaviz-direct';
+import { drainLumaVizStageChanges, lumaVizDirectStatus, semanticFrameFromResolvedOutput, sendLumaVizDirectFrame, sendLumaVizStageChange, startLumaVizDirect, type LumaVizDirectStatus } from './core/lumaviz-direct';
 import { invoke } from '@tauri-apps/api/core';
 import {
   applyUniverseUpdates,
@@ -2354,8 +2354,39 @@ export default function App() {
         ? patchRef.current.find((fixture) => fixture.id === drag.id)?.name ?? 'Fixture'
         : stageElements.find((element) => element.id === drag.id)?.label ?? 'Stage object';
       setMessage(`${itemName} moved in ${stageView} view. Its physical coordinates are saved with the show.`);
+      if (drag.kind === 'fixture') {
+        const fixture = patchRef.current.find((item) => item.id === drag.id);
+        if (fixture) {
+          const index = patchRef.current.findIndex((item) => item.id === drag.id);
+          const after = fixtureTransform(fixture, Math.max(0, index), patchRef.current.length, stageSettings.dimensions);
+          void sendLumaVizStageChange({
+            id: `lumarig-${Date.now()}-${fixture.id}`,
+            entityId: fixture.id,
+            entityKind: 'fixture',
+            category: 'fixturePosition',
+            source: 'lumarig',
+            baseRevision: 0,
+            createdAt: new Date().toISOString(),
+            summary: `${fixture.name} position / rotation`,
+            before: drag.origin,
+            after: { position: after.position, rotation: after.rotation },
+            status: 'applied'
+          }).catch(() => undefined);
+        }
+      }
     }
   }
+
+  useEffect(() => {
+    if (!directStatus.listening) return;
+    const timer = window.setInterval(() => {
+      void drainLumaVizStageChanges<StageChange>().then((changes) => {
+        if (!changes.length) return;
+        setStageSyncChanges((current) => [...changes, ...current].slice(0, 100));
+      }).catch(() => undefined);
+    }, 250);
+    return () => window.clearInterval(timer);
+  }, [directStatus.listening]);
 
   function renderEffectButton(effect: EffectPreset, compact = false) {
     const className = `${compact ? 'show-fx-button' : 'fx-card'} ${activeEffect === effect.id ? 'active' : ''} ${effect.momentary ? 'momentary' : ''}`;
