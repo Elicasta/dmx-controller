@@ -1982,3 +1982,51 @@ body { overflow: hidden; }
   .setup-console, .program-console { grid-template-columns: 190px minmax(460px,1fr) 250px; }
   .connection-pill { min-width: 92px; font-size: 8px; }
 }
+
+
+/* v3 persistent operator controls */
+.system-health-strip { display:flex; align-self:stretch; border-left:1px solid #1f252c; }
+.system-health-strip button { display:flex; align-items:center; gap:7px; min-width:82px; padding:0 9px; border-radius:0; border-right:1px solid #1f252c; background:transparent; }
+.system-health-strip button i { width:6px; height:6px; border-radius:50%; background:#525b65; box-shadow:0 0 0 3px rgba(82,91,101,.08); }
+.system-health-strip button.healthy i { background:#64e78d; box-shadow:0 0 9px rgba(100,231,141,.65); }
+.system-health-strip span { display:grid; gap:1px; text-align:left; }
+.system-health-strip small { color:#7d8894; font-size:6px; font-weight:800; letter-spacing:.8px; }
+.system-health-strip strong { color:#a9b3bd; font-size:7px; letter-spacing:.35px; }
+.system-health-strip button.healthy strong { color:#8de6a9; }
+.header-master { display:grid; min-width:54px; text-align:center; line-height:1.05; }
+.header-master small { color:#6e7984; font-size:6px; letter-spacing:.7px; }
+.header-master strong { color:#f0f3f6; font-size:11px; }
+.persistent-control-surface {
+  position:fixed;
+  z-index:210;
+  right:0;
+  bottom:30px;
+  left:0;
+  min-height:112px;
+  border-top:1px solid #2a3139;
+  background:rgba(12,15,19,.985);
+  box-shadow:0 -12px 35px rgba(0,0,0,.34);
+  backdrop-filter:blur(18px);
+}
+.workspace-setup .console-workspace,
+.workspace-program .console-workspace { padding-bottom:112px; }
+.surface-tabs { display:flex; align-items:center; min-height:36px; padding:0 9px; border-bottom:1px solid #222930; }
+.surface-tabs button { height:28px; padding:0 12px; border-radius:4px; background:transparent; color:#77838f; font-size:7px; font-weight:850; letter-spacing:.6px; }
+.surface-tabs button.active { color:#e9edf1; background:#20262d; box-shadow:inset 0 0 0 1px #3b4652; }
+.surface-tabs button:first-child.active { color:#d8cfff; background:#292244; box-shadow:inset 0 0 0 1px #6c58d9; }
+.surface-tabs > span { margin-left:auto; margin-right:8px; color:#65717d; font-size:7px; font-weight:800; letter-spacing:.7px; }
+.surface-tabs .surface-mode { padding:0 9px; }
+.surface-tabs .surface-mode.active { color:#bcb1ff; border-color:#6954d7; background:#1e1932; }
+.surface-controls { display:grid; grid-template-columns:minmax(260px,1fr) minmax(220px,.7fr) auto; align-items:center; gap:20px; min-height:75px; padding:8px 12px; }
+.surface-controls label { display:grid; grid-template-columns:78px 1fr; align-items:center; gap:10px; }
+.surface-controls label span { color:#88939f; font-size:7px; font-weight:850; letter-spacing:.7px; }
+.surface-controls input[type=range] { width:100%; }
+.surface-quick { display:flex; align-items:stretch; gap:5px; height:52px; }
+.surface-quick button { min-width:58px; border:1px solid #303842; background:#151a20; color:#9ca7b2; font-size:8px; font-weight:850; }
+.surface-quick .surface-go { min-width:110px; display:grid; place-content:center; gap:2px; border-color:#4abf74; background:#12301e; color:#7af0a0; font-size:15px; }
+.surface-go small { max-width:100px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; color:#9abda5; font-size:6px; }
+@media (max-width:1350px) {
+  .system-health-strip button { min-width:62px; padding:0 6px; }
+  .system-health-strip small { display:none; }
+  .surface-controls { grid-template-columns:1fr .7fr auto; gap:10px; }
+}
