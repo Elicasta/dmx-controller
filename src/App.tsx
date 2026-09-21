@@ -122,6 +122,7 @@ type Workspace = 'setup' | 'program' | 'show' | 'live';
 const WORKSPACE_LABELS: Record<Workspace, string> = { setup: 'CREATE', program: 'PROGRAM', show: 'SHOW', live: 'LIVE' };
 type SetupView = 'fixtures' | 'groups' | 'patch' | 'stage' | 'settings';
 type ProgramMode = 'stage' | 'faders' | 'groups';
+type ControlSurfaceMode = 'encoders' | 'faders' | 'xy' | 'palettes';
 type ShowMode = 'cues' | 'tracks' | 'library';
 type LiveBank = 'fixtures' | 'groups';
 
@@ -2654,6 +2655,13 @@ export default function App() {
         : '';
   const inspectedFixture = patch.find((fixture) => fixture.selected) ?? stageFixture;
   const selectedCompatibleColors = compatibleColorFixtures(selectedFixtureTargets);
+  const [controlSurfaceMode, setControlSurfaceMode] = useState<ControlSurfaceMode>('encoders');
+
+  const systemHealth = [
+    { label: 'DMX', value: dmxStatus.connected ? 'ONLINE' : 'VIRTUAL', healthy: dmxStatus.connected, action: () => { setWorkspace('setup'); setSetupView('settings'); } },
+    { label: 'LUMAVIZ', value: directStatus.clients > 0 ? 'CONNECTED' : directStatus.listening ? 'READY' : 'OFFLINE', healthy: directStatus.clients > 0, action: () => { setWorkspace('setup'); setSetupView('settings'); } },
+    { label: 'MIDI', value: midiStatus.connected ? 'CONNECTED' : 'OFFLINE', healthy: midiStatus.connected, action: () => { setWorkspace('setup'); setSetupView('settings'); } },
+  ];
 
   return (
     <main className={`console-app workspace-${workspace} ${dmxStatus.blackout ? 'blackout-is-active' : ''}`}>
@@ -2661,9 +2669,10 @@ export default function App() {
         <div className="console-brand"><span className="brand-mark">◆</span><div><small>SHOW</small><input aria-label="Current show name" value={showFile.name} onChange={(event) => setShowFile((current) => ({ ...current, name: event.target.value }))} /></div></div>
         <nav className="console-workspace-tabs" aria-label="Workspace">{(['setup', 'program', 'show', 'live'] as Workspace[]).map((item) => <button key={item} className={workspace === item ? 'active' : ''} onClick={() => setWorkspace(item)}>{WORKSPACE_LABELS[item]}</button>)}</nav>
         <div className="console-header-status">
+          <div className="system-health-strip">{systemHealth.map((item) => <button key={item.label} className={item.healthy ? 'healthy' : ''} onClick={item.action}><i /><span><small>{item.label}</small><strong>{item.value}</strong></span></button>)}</div>
           <button className="tempo-pill" onClick={tapTempo}><strong>{tempoSource === 'midi' && midiBpm ? midiBpm : effectBpm} BPM</strong><small>{tempoSource === 'midi' ? 'MIDI CLOCK' : 'TAP'}</small></button>
-          <button className={`connection-pill ${dmxStatus.connected ? 'online' : ''}`} onClick={() => { setWorkspace('setup'); setSetupView('settings'); }}><i />{dmxStatus.connected ? 'DMX Connected' : 'Virtual Output'}</button>
-          <button className={`console-blackout ${dmxStatus.blackout ? 'active' : ''}`} onClick={toggleBlackout}>{dmxStatus.blackout ? 'RELEASE BLACKOUT' : 'BLACKOUT'}</button>
+          <div className="header-master"><small>MASTER</small><strong>{globalMaster}%</strong></div>
+          <button className={`console-blackout ${dmxStatus.blackout ? 'active' : ''}`} onClick={toggleBlackout}>{dmxStatus.blackout ? 'RELEASE' : 'BLACKOUT'}</button>
         </div>
       </header>
 
@@ -2796,6 +2805,14 @@ export default function App() {
         <footer className="live-health"><span className={dmxStatus.connected ? 'healthy' : ''}>● {dmxStatus.connected ? 'DMX ONLINE' : 'VIRTUAL OUTPUT'}</span><span className={midiStatus.connected ? 'healthy' : ''}>● MIDI {midiStatus.connected ? 'CONNECTED' : 'OFFLINE'}</span><span>{tempoSource === 'midi' ? 'MIDI CLOCK' : 'INTERNAL'} · {tempoSource === 'midi' && midiBpm ? midiBpm : effectBpm} BPM</span><span>{formatShowTime(externalSongPositionMs || showTrackPositionMs)}</span></footer>
       </section>}
 
+      {(workspace === 'setup' || workspace === 'program') && <section className="persistent-control-surface">
+        <div className="surface-tabs"><button className="active">INTENSITY</button><button>COLOR</button><button>POSITION</button><button>BEAM</button><button>GOBO</button><button>FX</button><button>SPEED</button><span>{selectedFixtureTargets.length ? `${selectedFixtureTargets.length} SELECTED` : 'NO SELECTION'}</span>{(['encoders','faders','xy','palettes'] as ControlSurfaceMode[]).map((mode) => <button key={mode} className={controlSurfaceMode === mode ? 'surface-mode active' : 'surface-mode'} onClick={() => setControlSurfaceMode(mode)}>{mode.toUpperCase()}</button>)}</div>
+        <div className="surface-controls">
+          <label><span>DIMMER</span><input type="range" min="0" max="100" value={selectedFixtureTargets.length === 1 ? fixtureIntensityPercent(universe, selectedFixtureTargets[0]) : 0} disabled={!selectedFixtureTargets.length} onChange={(event) => selectedFixtureTargets.forEach((fixture) => void setFixtureAttribute(fixture, 'dimmer', percentToDmx(Number(event.target.value))))} /></label>
+          <label><span>GRAND MASTER</span><input type="range" min="0" max={settings.masterLimit} value={globalMaster} onChange={(event) => applyGlobalMaster(Number(event.target.value))} /></label>
+          <div className="surface-quick"><button onClick={() => setWorkspace('show')}>CUES</button><button onClick={goPreviousCue}>PREV</button><button className="surface-go" onClick={goNextCue} disabled={!nextCue}>GO <small>{nextCue?.name ?? 'END'}</small></button><button onClick={() => setWorkspace('live')}>LIVE</button></div>
+        </div>
+      </section>}
       <footer className="console-footer"><span>{dmxStatus.last_error || midiStatus.last_error || message}</span><b>{patch.length} fixtures · {showFile.cues.length} cues · {showFile.recordings?.length ?? 0} takes · 40 Hz output{isFading ? ' · Fading' : ''}</b></footer>
     </main>
   );
