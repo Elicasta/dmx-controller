@@ -17,8 +17,8 @@ const ARTNET_HEADER: &[u8; 8] = b"Art-Net\0";
 const OP_DMX: u16 = 0x5000;
 const PROTOCOL_VERSION: u16 = 14;
 const MAX_ARTNET_UNIVERSE: u16 = 32_768;
-const LUMAVIZ_PROBE: &[u8] = b"LUMARIG-LUMAVIZ-PROBE-v1";
-const LUMAVIZ_ACK: &[u8] = b"LUMAVIZ-LUMARIG-ACK-v1";
+const LUMAVIZ_PROBE: &[u8] = b"LUMARIG-PING";
+const LUMAVIZ_ACK: &[u8] = b"LUMAVIZ-ACK";
 
 pub struct ArtNetEngine {
     socket: Mutex<Option<UdpSocket>>,
