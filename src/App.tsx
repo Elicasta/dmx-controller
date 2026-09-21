@@ -2382,7 +2382,7 @@ export default function App() {
     const timer = window.setInterval(() => {
       void drainLumaVizStageChanges<StageChange>().then((changes) => {
         if (!changes.length) return;
-        setStageSyncChanges((current) => [...changes, ...current].slice(0, 100));
+        setStageSyncChanges((current) => [...changes.map((change) => ({ ...change, status: 'pending' as const })), ...current].slice(0, 100));
       }).catch(() => undefined);
     }, 250);
     return () => window.clearInterval(timer);
@@ -2693,9 +2693,44 @@ export default function App() {
   const [controlSurfaceMode, setControlSurfaceMode] = useState<ControlSurfaceMode>('encoders');
   const [stageSyncPolicy, setStageSyncPolicy] = useState<StageSyncPolicy>(DEFAULT_STAGE_SYNC_POLICY);
   const [stageSyncChanges, setStageSyncChanges] = useState<StageChange[]>([]);
+  const [stageRevision, setStageRevision] = useState(1);
+  const [stageSyncTab, setStageSyncTab] = useState<'sync' | 'history'>('sync');
   const pendingStageChanges = stageSyncChanges.filter((change) => change.status === 'pending');
   const setStageSyncMode = (mode: StageSyncMode) => setStageSyncPolicy((current) => ({ ...current, mode }));
-  const resolveStageChange = (id: string, status: 'approved' | 'rejected') => setStageSyncChanges((current) => current.map((change) => change.id === id ? { ...change, status } : change));
+  const resolveStageChange = (id: string, status: 'approved' | 'rejected') => {
+    const change = stageSyncChanges.find((item) => item.id === id);
+    if (!change) return;
+    if (status === 'approved' && change.entityKind === 'fixture' && change.category === 'fixturePosition') {
+      const after = change.after as { position?: Vec3; rotation?: { x: number; y: number; z: number } } | null;
+      if (after?.position) {
+        setPatch((current) => current.map((fixture, index) => {
+          if (fixture.id !== change.entityId) return fixture;
+          const existing = fixtureTransform(fixture, index, current.length, stageSettings.dimensions);
+          return { ...fixture, transform: { position: { ...after.position! }, rotation: after.rotation ? { ...after.rotation } : existing.rotation } };
+        }));
+        setStageRevision((revision) => revision + 1);
+      }
+    }
+    setStageSyncChanges((current) => current.map((item) => item.id === id ? { ...item, status } : item));
+    setMessage(status === 'approved' ? `Applied Stage Sync change: ${change.summary}.` : `Rejected Stage Sync change: ${change.summary}.`);
+  };
+
+  const revertStageChange = (id: string) => {
+    const change = stageSyncChanges.find((item) => item.id === id);
+    if (!change || change.entityKind !== 'fixture' || change.category !== 'fixturePosition') return;
+    const before = change.before as { position?: Vec3; rotation?: { x: number; y: number; z: number } } | Vec3 | null;
+    const position = before && 'position' in before && before.position ? before.position : before as Vec3 | null;
+    if (!position || typeof position.x !== 'number') return;
+    setPatch((current) => current.map((fixture, index) => {
+      if (fixture.id !== change.entityId) return fixture;
+      const existing = fixtureTransform(fixture, index, current.length, stageSettings.dimensions);
+      const rotation = before && 'rotation' in before && before.rotation ? before.rotation : existing.rotation;
+      return { ...fixture, transform: { position: { ...position }, rotation: { ...rotation } } };
+    }));
+    setStageRevision((revision) => revision + 1);
+    setStageSyncChanges((current) => current.map((item) => item.id === id ? { ...item, status: 'reverted' } : item));
+    setMessage(`Reverted Stage Sync change: ${change.summary}.`);
+  };
 
   const systemHealth = [
     { label: 'DMX', value: dmxStatus.connected ? 'ONLINE' : 'VIRTUAL', healthy: dmxStatus.connected, action: () => { setWorkspace('setup'); setSetupView('settings'); } },
@@ -2798,7 +2833,7 @@ export default function App() {
             <div className="inspector-pair"><label><span>Mounting</span><select value={inspectedFixture.mounting ?? 'hanging'} onChange={(event) => savePatchedFixture({ ...inspectedFixture, mounting: event.target.value as PatchedFixture['mounting'] })}><option value="hanging">Hanging</option><option value="floor">Floor</option><option value="wall">Wall</option><option value="custom">Custom</option></select></label><label><span>Orientation</span><select value={inspectedFixture.orientation ?? 'normal'} onChange={(event) => savePatchedFixture({ ...inspectedFixture, orientation: event.target.value as PatchedFixture['orientation'] })}><option value="normal">Normal</option><option value="inverted">Inverted</option><option value="rotated90">Rotated 90°</option><option value="rotated180">Rotated 180°</option><option value="custom">Custom</option></select></label></div>
             <div className="transform-grid">{(['x', 'y', 'z'] as const).map((axis) => <label key={axis}><span>{axis.toUpperCase()}</span><input type="number" step="0.1" value={Number(activeStageTransform.position[axis].toFixed(2))} onChange={(event) => updateStageFixtureTransform('position', axis, Number(event.target.value))} /></label>)}{(['yaw', 'pitch', 'roll'] as const).map((axis) => <label key={axis}><span>{axis}</span><input type="number" step="1" value={Number(activeStageTransform.rotation[axis].toFixed(1))} onChange={(event) => updateStageFixtureTransform('rotation', axis, Number(event.target.value))} /></label>)}</div>
             <div className="calibration-status"><span>CALIBRATION</span><strong>{inspectedFixture.calibration?.status ?? 'uncalibrated'}</strong><small>{Math.round((inspectedFixture.calibration?.confidence ?? 0) * 100)}% confidence</small></div>
-            <section className="inspector-stage-sync"><header><span>STAGE SYNC</span><strong>{stageSyncPolicy.mode.toUpperCase()}</strong></header><div className="sync-mode-row">{(['locked','review','live'] as StageSyncMode[]).map((mode) => <button key={mode} className={stageSyncPolicy.mode === mode ? 'active' : ''} onClick={() => setStageSyncMode(mode)}>{mode.toUpperCase()}</button>)}</div><small>{pendingStageChanges.length ? `${pendingStageChanges.length} incoming change${pendingStageChanges.length === 1 ? '' : 's'} waiting for review` : 'No incoming stage changes'}</small>{pendingStageChanges.slice(0,2).map((change) => <article key={change.id}><b>{change.source === 'lumaviz' ? 'LumaViz' : 'LumaRig'} changed {change.summary}</b><span>Base revision {change.baseRevision}</span><div><button onClick={() => resolveStageChange(change.id,'rejected')}>Reject</button><button className="console-primary" onClick={() => resolveStageChange(change.id,'approved')}>Accept</button></div></article>)}</section>
+            <section className="inspector-stage-sync"><header><span>STAGE SYNC</span><strong>REV {stageRevision} · {stageSyncPolicy.mode.toUpperCase()}</strong></header><div className="sync-inspector-tabs"><button className={stageSyncTab === 'sync' ? 'active' : ''} onClick={() => setStageSyncTab('sync')}>REVIEW</button><button className={stageSyncTab === 'history' ? 'active' : ''} onClick={() => setStageSyncTab('history')}>HISTORY</button></div>{stageSyncTab === 'sync' ? <><div className="sync-mode-row">{(['locked','review','live'] as StageSyncMode[]).map((mode) => <button key={mode} className={stageSyncPolicy.mode === mode ? 'active' : ''} onClick={() => setStageSyncMode(mode)}>{mode.toUpperCase()}</button>)}</div><small>{pendingStageChanges.length ? `${pendingStageChanges.length} incoming change${pendingStageChanges.length === 1 ? '' : 's'} waiting for review` : 'No incoming stage changes'}</small>{pendingStageChanges.slice(0,4).map((change) => <article key={change.id}><b>{change.source === 'lumaviz' ? 'LumaViz' : 'LumaRig'} · {change.summary}</b><span>Base rev {change.baseRevision} → current rev {stageRevision}</span><details><summary>Compare</summary><pre>{JSON.stringify({ before: change.before, after: change.after }, null, 2)}</pre></details><div><button onClick={() => resolveStageChange(change.id,'rejected')}>Reject</button><button className="console-primary" onClick={() => resolveStageChange(change.id,'approved')}>Accept</button></div></article>)}</> : <div className="stage-sync-history">{stageSyncChanges.filter((change) => change.status !== 'pending').slice(0,8).map((change) => <article key={change.id}><b>{change.summary}</b><span>{change.source === 'lumaviz' ? 'LumaViz' : 'LumaRig'} · {change.status.toUpperCase()} · {new Date(change.createdAt).toLocaleTimeString()}</span>{change.status === 'approved' && change.category === 'fixturePosition' && <button onClick={() => revertStageChange(change.id)}>Revert</button>}</article>)}{!stageSyncChanges.some((change) => change.status !== 'pending') && <small>No Stage Sync history yet.</small>}</div>}</section>
             <button onClick={() => setCalibrationOpen((value) => !value)}>{calibrationOpen ? 'Close Calibration' : 'Calibrate Position'}</button>{calibrationOpen && <div className="calibration-mini"><button onClick={homeActiveFixture}>Send Home</button><button onClick={captureCalibrationObservation}>Capture Target</button><button onClick={solveActiveFixtureCalibration}>Solve</button><button onClick={resetActiveFixtureCalibration}>Reset</button></div>}
           </> : <div className="empty-inspector"><strong>No selection</strong><span>Select a fixture or stage object to inspect it.</span></div>}
         </aside>
