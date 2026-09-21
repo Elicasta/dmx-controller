@@ -17,6 +17,7 @@ tauri = { version = "2", features = [] }
 tauri-plugin-updater = "2.11.0"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+tungstenite = "0.27"
 # Vendored libusb keeps the app independent from a Homebrew runtime dependency.
 rusb = { version = "0.9", features = ["vendored"] }
 midir = "0.10"
