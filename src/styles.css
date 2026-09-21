@@ -2136,3 +2136,6 @@ body { overflow: hidden; }
 .setup-console .console-center { background:radial-gradient(circle at 50% 38%,rgba(31,37,45,.26),transparent 44%),#0a0d11; }
 .setup-console .dominant-stage { border-color:#29323b; box-shadow:0 12px 34px rgba(0,0,0,.24); }
 .setup-console .stage-bottom-tools { border-top-color:#252d35; background:linear-gradient(180deg,#0d1115,#0a0d10); }
+
+.inspector-sync-jump { width:100%; display:grid; grid-template-columns:1fr auto; gap:2px 8px; text-align:left; padding:8px 9px; border:1px solid #303844; background:#10151a; }
+.inspector-sync-jump span { color:#6f7a85; font-size:6px; font-weight:900; letter-spacing:.8px; }.inspector-sync-jump strong { color:#b9aeff; font-size:7px; }.inspector-sync-jump small { grid-column:1 / -1; color:#68737d; font-size:6px; }
