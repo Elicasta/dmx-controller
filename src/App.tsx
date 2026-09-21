@@ -116,7 +116,7 @@ import { ShowRuntime, type RuntimeDispatchResult } from './core/show-runtime';
 import { projectStagePoint, unprojectStagePoint, type StagePoint2D, type StageView } from './core/stage-projection';
 import { arrangeTargetPoints, buildStageTargets, type TargetArrangement, type TargetPoint } from './core/targets';
 import { RemoteRelay, type RelayCommandEnvelope, type RemoteRelayConfig, type RemoteRelayStatus } from './core/remote-relay';
-import { DEFAULT_STAGE_SYNC_POLICY, type StageChange, type StageSyncPolicy } from './core/stage-sync';
+import { canAutoApplyDangerousChange, decideIncomingChange, hasRevisionConflict, DEFAULT_STAGE_SYNC_POLICY, type StageChange, type StageSyncPolicy } from './core/stage-sync';
 import type { StageSyncMode } from './core/stage-model';
 
 type Workspace = 'setup' | 'program' | 'show' | 'live';
@@ -2382,11 +2382,29 @@ export default function App() {
     const timer = window.setInterval(() => {
       void drainLumaVizStageChanges<StageChange>().then((changes) => {
         if (!changes.length) return;
-        setStageSyncChanges((current) => [...changes.map((change) => ({ ...change, status: 'pending' as const })), ...current].slice(0, 100));
+        const normalized = changes.map((change) => ({ ...change, status: 'pending' as const }));
+        normalized.forEach((change) => {
+          const conflict = hasRevisionConflict(stageRevision, change);
+          const decision = decideIncomingChange(stageSyncPolicy, change);
+          const safeLiveApply = decision === 'apply' && !conflict && !canAutoApplyDangerousChange(stageSyncPolicy, change.category);
+          if (safeLiveApply && change.entityKind === 'fixture' && change.category === 'fixturePosition') {
+            const after = change.after as { position?: Vec3; rotation?: { x: number; y: number; z: number } } | null;
+            if (after?.position) {
+              setPatch((current) => current.map((fixture, index) => {
+                if (fixture.id !== change.entityId) return fixture;
+                const existing = fixtureTransform(fixture, index, current.length, stageSettings.dimensions);
+                return { ...fixture, transform: { position: { ...after.position! }, rotation: after.rotation ? { ...after.rotation } : existing.rotation } };
+              }));
+              setStageRevision((revision) => revision + 1);
+              change.status = 'applied';
+            }
+          }
+        });
+        setStageSyncChanges((current) => [...normalized, ...current].slice(0, 100));
       }).catch(() => undefined);
     }, 250);
     return () => window.clearInterval(timer);
-  }, [directStatus.listening]);
+  }, [directStatus.listening, stageRevision, stageSyncPolicy]);
 
   function renderEffectButton(effect: EffectPreset, compact = false) {
     const className = `${compact ? 'show-fx-button' : 'fx-card'} ${activeEffect === effect.id ? 'active' : ''} ${effect.momentary ? 'momentary' : ''}`;
