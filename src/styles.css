@@ -1784,3 +1784,15 @@ input[type="text"], input[type="number"], .add-fixture-grid input, .patch-card-b
   color: #75e39d;
   text-shadow: 0 0 12px rgba(82, 218, 132, .32);
 }
+
+/* v0.5 refactor shell: visual architecture only; runtime/output wiring is unchanged. */
+.lumarig-brand{gap:14px;min-width:310px}
+.lumarig-brand .brand-mark{font-size:28px;transform:rotate(0deg);color:#55e98d}
+.lumarig-brand>div{display:grid;grid-template-columns:auto auto;align-items:center;gap:16px}
+.lumarig-brand strong{font-size:24px;letter-spacing:-.03em;color:#f4f7f8}
+.lumarig-brand small{font-size:10px;line-height:1.25;color:#82909a;letter-spacing:.02em}
+.console-workspace-tabs button{min-width:140px;font-size:13px;letter-spacing:.04em}
+.console-workspace-tabs button.active{background:linear-gradient(180deg,rgba(85,233,141,.12),rgba(85,233,141,.035));box-shadow:inset 0 -2px #55e98d,0 8px 24px rgba(0,0,0,.16)}
+.setup-subtabs{grid-template-columns:repeat(4,minmax(0,1fr))}
+.setup-subtabs button{min-height:48px;font-size:13px}
+.setup-subtabs button.active{border-color:#55e98d;background:linear-gradient(180deg,rgba(85,233,141,.1),rgba(85,233,141,.025));box-shadow:inset 0 -2px #55e98d}
