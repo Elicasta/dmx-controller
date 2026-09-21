@@ -16,6 +16,7 @@ describe('LumaRig Direct semantic encoder', () => {
     expect(result.sequence).toBe(42);
     expect(result.showId).toBe('Sunday');
     expect(result.fixtures[0].id).toBe('par-1');
+    expect(result.fixtures[0]).toMatchObject({ universe: 1, address: 1, profileId: 'generic-rgbw-par', modeId: '5ch-drgbw' });
     expect(result.fixtures[0].intensity).toBeCloseTo(128 / 255);
     expect(result.fixtures[0].color).toBe('#ff4010');
   });
