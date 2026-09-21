@@ -1784,3 +1784,201 @@ input[type="text"], input[type="number"], .add-fixture-grid input, .patch-card-b
   color: #75e39d;
   text-shadow: 0 0 12px rgba(82, 218, 132, .32);
 }
+
+
+/* LumaRig Pro Workspace Shell v3 */
+:root {
+  --lr-shell: #090b0e;
+  --lr-panel: #101419;
+  --lr-panel-2: #151a20;
+  --lr-line: #252c34;
+  --lr-line-strong: #343d47;
+  --lr-text: #e8edf2;
+  --lr-muted: #7f8a96;
+  --lr-accent: #72e59a;
+  --lr-danger: #ff6573;
+}
+body { overflow: hidden; }
+.console-app {
+  width: 100vw;
+  height: 100vh;
+  min-height: 720px;
+  overflow: hidden;
+  background: var(--lr-shell);
+  color: var(--lr-text);
+}
+.console-header {
+  position: relative;
+  z-index: 220;
+  display: grid;
+  grid-template-columns: minmax(230px, 1fr) auto minmax(360px, 1fr);
+  align-items: center;
+  height: 58px;
+  padding: 0 12px;
+  border-bottom: 1px solid var(--lr-line);
+  background: rgba(10,13,16,.98);
+  box-shadow: 0 8px 24px rgba(0,0,0,.22);
+}
+.console-brand { min-width: 0; }
+.console-brand > div { min-width: 0; }
+.console-brand small { font-size: 7px; letter-spacing: 1.4px; color: #596573; }
+.console-brand input {
+  width: min(310px, 26vw);
+  height: 24px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: #e9edf2;
+  font-size: 12px;
+  font-weight: 760;
+}
+.brand-mark { opacity: .72; transform: scale(.7); }
+.console-workspace-tabs {
+  align-self: stretch;
+  display: flex;
+  gap: 0;
+  padding: 0 6px;
+  border-left: 1px solid #1d232a;
+  border-right: 1px solid #1d232a;
+}
+.console-workspace-tabs button {
+  position: relative;
+  min-width: 94px;
+  height: 100%;
+  border-radius: 0;
+  background: transparent;
+  color: #6f7a86;
+  font-size: 9px;
+  font-weight: 850;
+  letter-spacing: 1.15px;
+}
+.console-workspace-tabs button:hover { color: #dce2e8; background: #11161b; }
+.console-workspace-tabs button.active { color: #f5f7f9; background: #151a20; }
+.console-workspace-tabs button.active::after {
+  content: "";
+  position: absolute;
+  right: 18px; bottom: 0; left: 18px;
+  height: 2px;
+  background: var(--lr-accent);
+}
+.console-header-status { justify-self: end; display: flex; align-items: center; gap: 6px; }
+.tempo-pill, .connection-pill, .console-blackout { height: 34px; border-radius: 6px; }
+.tempo-pill { min-width: 84px; }
+.connection-pill { min-width: 112px; }
+.console-blackout { min-width: 105px; }
+.console-workspace,
+.console-workspace-wide,
+.show-console,
+.live-console {
+  height: calc(100vh - 88px);
+  margin: 0 !important;
+  border-radius: 0 !important;
+  overflow: auto;
+}
+.setup-console, .program-console {
+  display: grid;
+  grid-template-columns: 224px minmax(520px, 1fr) 286px;
+  grid-template-rows: 38px minmax(0,1fr);
+  gap: 0;
+}
+.setup-subtabs, .program-subtabs {
+  grid-column: 1 / -1;
+  position: sticky;
+  top: 0;
+  z-index: 80;
+}
+.workspace-subtabs {
+  min-height: 38px;
+  padding: 0 8px;
+  border-bottom: 1px solid var(--lr-line);
+  background: #0d1115;
+}
+.workspace-subtabs button {
+  height: 38px;
+  padding: 0 15px;
+  border-radius: 0;
+  border-bottom: 2px solid transparent;
+  background: transparent;
+  color: #707c88;
+  font-size: 8px;
+  font-weight: 850;
+  letter-spacing: .8px;
+  text-transform: uppercase;
+}
+.workspace-subtabs button:hover { color: #dfe5eb; background: #13181e; }
+.workspace-subtabs button.active { color: #fff; border-bottom-color: var(--lr-accent); background: #151a20; }
+.fixture-browser {
+  grid-column: 1;
+  grid-row: 2;
+  min-width: 0;
+  height: 100%;
+  overflow: auto;
+  border-right: 1px solid var(--lr-line);
+  background: #0d1115;
+}
+.setup-center, .program-center {
+  grid-column: 2;
+  grid-row: 2;
+  min-width: 0;
+  height: 100%;
+  overflow: auto;
+  background: #0b0e12;
+}
+.setup-inspector, .effects-panel {
+  grid-column: 3;
+  grid-row: 2;
+  min-width: 0;
+  height: 100%;
+  overflow: auto;
+  border-left: 1px solid var(--lr-line);
+  background: #0f1318;
+}
+.console-panel, .setup-scroll-area > section, .group-assignment-view {
+  border-color: var(--lr-line) !important;
+  border-radius: 8px !important;
+  box-shadow: none !important;
+}
+.dominant-stage, .program-stage {
+  min-height: 520px;
+  border-radius: 0 !important;
+  border: 0 !important;
+  background: #080b0e;
+}
+.stage-console-toolbar {
+  position: sticky;
+  top: 0;
+  z-index: 60;
+  min-height: 42px;
+  border-bottom: 1px solid var(--lr-line);
+  background: rgba(14,18,23,.96);
+  backdrop-filter: blur(14px);
+}
+.stage-console-toolbar button { height: 29px; border-radius: 5px; }
+.console-footer {
+  position: fixed;
+  z-index: 250;
+  right: 0; bottom: 0; left: 0;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  height: 30px;
+  padding: 0 12px;
+  border-top: 1px solid var(--lr-line);
+  background: #0b0e12;
+  color: #77828e;
+  font-size: 8px;
+}
+.console-footer span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.console-footer b { flex: 0 0 auto; margin-left: 16px; color: #909aa5; font-size: 8px; }
+.show-console { padding: 0 10px 38px; }
+.show-subtabs { position: sticky; top: 0; z-index: 90; margin: 0 -10px 10px; }
+.show-cue-layout { min-height: calc(100vh - 145px); }
+.live-console { padding: 12px 14px 42px; }
+.live-cue-hero { margin-top: 0; }
+.blackout-banner, .console-recording-bar { z-index: 300; }
+@media (max-width: 1180px) {
+  .console-header { grid-template-columns: minmax(180px,1fr) auto minmax(280px,1fr); }
+  .console-workspace-tabs button { min-width: 76px; }
+  .setup-console, .program-console { grid-template-columns: 190px minmax(460px,1fr) 250px; }
+  .connection-pill { min-width: 92px; font-size: 8px; }
+}
