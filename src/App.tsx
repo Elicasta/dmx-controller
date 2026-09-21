@@ -2411,7 +2411,9 @@ export default function App() {
     return (
       <div className={`multi-stage physical-stage stage-view-${stageView} stage-mode-${stageMode}`}>
         <div className="stage-view-toolbar" role="group" aria-label="Stage view">
-          {(['perspective', 'top', 'front', 'side'] as StageView[]).map((view) => <button key={view} className={stageView === view ? 'active' : ''} onClick={() => setStageView(view)}>{view}</button>)}
+          <span className="stage-representation-label">{stageView === 'perspective' ? 'RIG' : 'PLAN'} <small>SPATIAL GUIDE</small></span>
+          {(['perspective', 'top', 'front', 'side'] as StageView[]).map((view) => <button key={view} className={stageView === view ? 'active' : ''} onClick={() => setStageView(view)}>{view === 'perspective' ? 'Rig' : view}</button>)}
+          <span className="stage-fallback-badge">{directStatus.clients > 0 ? 'LUMAVIZ LINKED' : 'LOCAL GUIDE ACTIVE'}</span>
         </div>
         <svg className="stage-geometry-svg" viewBox="0 0 1000 560" aria-label={`${stageView} physical stage view`}>
           <defs>
@@ -2488,7 +2490,7 @@ export default function App() {
           const projected = projectStagePoint(geometry.beam.origin, stageSettings.dimensions, stageView);
           return <div className={`stage-light physical-fixture ${stageFixture?.id === fixture.id && interactive ? 'editing' : ''} ${fixture.selected ? 'selected' : ''}`} key={fixture.id} style={{ left: `${projected.x / 10}%`, top: `${projected.y / 5.6}%`, zIndex: 40 }}><button className="stage-unit stage-unit-button" style={{ borderColor: fixture.labelColor ?? '#505b68' }} aria-label={`${stageMode === 'move' ? 'Drag' : 'Select'} ${fixture.name} on stage`} onPointerDown={(event) => { if (interactive) beginStageDrag(event, 'fixture', fixture.id, fixtureTransform(fixture, index, patch.length, stageSettings.dimensions).position); }} onPointerMove={(event) => { if (interactive) moveStageDrag(event); }} onPointerUp={(event) => { if (interactive) endStageDrag(event); }} onPointerCancel={(event) => { if (interactive) endStageDrag(event); }} onClick={(event) => { if (interactive) selectFixtureFromConsole(fixture.id, event.metaKey || event.ctrlKey || event.shiftKey); }} /><span className="stage-light-label" style={{ borderColor: fixture.labelColor ?? '#3a444f', color: fixture.labelColor ?? '#c9d0d8' }}>{fixture.name}{geometry.movementCapable ? ` · ${Math.round(geometry.movement.pan)}°/${Math.round(geometry.movement.tilt)}°` : ''}</span></div>;
         })}
-        <div className="stage-coordinate-key">X stage left/right · Y floor/ceiling · Z downstage/upstage · meters internally</div>
+        <div className="stage-coordinate-key"><b>{stageView === 'perspective' ? 'RIG' : 'PLAN'}</b> · X stage left/right · Y floor/ceiling · Z downstage/upstage · meters internally · representative beams use live fixture output</div>
       </div>
     );
   }
