@@ -85,6 +85,7 @@ pub fn run() {
             set_blackout,
             dmx_status,
             output::artnet::send_artnet_frame,
+            output::artnet::probe_lumaviz,
             list_midi_inputs,
             connect_midi,
             disconnect_midi,
