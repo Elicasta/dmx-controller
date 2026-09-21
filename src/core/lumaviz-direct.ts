@@ -24,6 +24,14 @@ export type SemanticFixtureState = {
   address: number;
   intensity?: number;
   color?: string;
+  emitters?: {
+    red: number;
+    green: number;
+    blue: number;
+    white: number;
+    amber: number;
+    uv: number;
+  };
   pan?: number;
   tilt?: number;
   beamAngle?: number;
@@ -68,6 +76,8 @@ export function semanticFrameFromResolvedOutput(
       const green = has('green') ? readFixtureParameter(frame, fixture, 'green') : 255;
       const blue = has('blue') ? readFixtureParameter(frame, fixture, 'blue') : 255;
       const white = has('white') ? readFixtureParameter(frame, fixture, 'white') : 0;
+      const amber = has('amber') ? readFixtureParameter(frame, fixture, 'amber') : 0;
+      const uv = has('uv') ? readFixtureParameter(frame, fixture, 'uv') : 0;
       const pan = has('pan') && profile?.movement
         ? movementDegrees(normalized(frame, fixture, 'pan'), profile.movement.panRangeDegrees)
         : undefined;
@@ -89,7 +99,15 @@ export function semanticFrameFromResolvedOutput(
         universe: fixture.universe ?? 1,
         address: fixture.address,
         intensity: dimmer,
-        color: hex(Math.min(255, red + white), Math.min(255, green + white), Math.min(255, blue + white)),
+        color: hex(red, green, blue),
+        emitters: {
+          red: red / 255,
+          green: green / 255,
+          blue: blue / 255,
+          white: white / 255,
+          amber: amber / 255,
+          uv: uv / 255
+        },
         pan,
         tilt,
         beamAngle: zoom,
