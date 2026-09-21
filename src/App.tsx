@@ -9,7 +9,7 @@ import {
   VISIBLE_CHANNELS,
   type DmxUpdate
 } from './lib/dmx';
-import { EFFECT_PRESETS, renderEffect, type EffectId, type EffectPreset } from './lib/effects';
+import { EFFECT_PRESETS, EFFECT_SHAPES, effectWaveValue, renderEffect, renderCustomEffect, type CustomEffect, type EffectId, type EffectParameter, type EffectPreset, type EffectWaveform } from './lib/effects';
 import {
   DEFAULT_PATCH,
   FIXTURE_LIBRARY,
@@ -123,7 +123,7 @@ type Workspace = 'setup' | 'program' | 'show' | 'live';
 
 const WORKSPACE_LABELS: Record<Workspace, string> = { setup: 'CREATE', program: 'PROGRAM', show: 'SHOW', live: 'LIVE' };
 type SetupView = 'fixtures' | 'groups' | 'patch' | 'stage' | 'settings';
-type ProgramMode = 'stage' | 'faders' | 'groups';
+type ProgramMode = 'stage' | 'faders' | 'groups' | 'fx';
 type ControlSurfaceMode = 'encoders' | 'faders' | 'xy' | 'palettes';
 type ControlSurfaceTab = 'intensity' | 'color' | 'position' | 'beam' | 'gobo' | 'fx' | 'speed';
 type InspectorTab = 'inspector' | 'history' | 'sync';
@@ -2415,6 +2415,44 @@ export default function App() {
     return <label key={parameter} className={controlSurfaceMode === 'encoders' ? 'surface-encoder' : ''}><span>{label}</span>{controlSurfaceMode === 'encoders' ? <div className="encoder-dial" style={{ '--encoder-value': `${supported ? value / 255 * 270 : 0}deg` } as React.CSSProperties}><b>{supported ? value : '—'}</b></div> : <input type="range" min="0" max="255" disabled={!supported} value={value} onChange={(event) => selectedFixtureTargets.forEach((fixture) => void setFixtureAttribute(fixture, parameter, Number(event.target.value)))} />}{controlSurfaceMode === 'encoders' && <input className="encoder-hit" aria-label={label} type="range" min="0" max="255" disabled={!supported} value={value} onChange={(event) => selectedFixtureTargets.forEach((fixture) => void setFixtureAttribute(fixture, parameter, Number(event.target.value)))} />}</label>;
   }
 
+  function fxGraphPoints(waveform: EffectWaveform, depth = 100, offset = 0) {
+    return Array.from({ length: 65 }, (_, index) => {
+      const x = index / 64;
+      const y = Math.max(0, Math.min(1, offset / 100 + effectWaveValue(waveform, x) * depth / 100));
+      return `${(x * 600).toFixed(1)},${(120 - y * 100).toFixed(1)}`;
+    }).join(' ');
+  }
+
+  function loadFactoryFx(effect: EffectPreset) {
+    const shape = EFFECT_SHAPES[effect.id];
+    setSelectedFxBankId(effect.id);
+    setFxEditor({ id: `factory-${effect.id}`, name: effect.name, parameter: shape.parameter, waveform: shape.waveform, bpm: effect.defaultBpm, depth: 100, phaseSpread: shape.phaseSpread, offset: 0 });
+  }
+
+  function saveCustomFx() {
+    const saved = { ...fxEditor, id: fxEditor.id.startsWith('custom-') && fxEditor.id !== 'custom-preview' ? fxEditor.id : `custom-${Date.now().toString(36)}` };
+    setCustomEffects((current) => [...current.filter((effect) => effect.id !== saved.id), saved]);
+    setFxEditor(saved);
+    setSelectedFxBankId(saved.id);
+    setMessage(`${saved.name} saved to the FX bank.`);
+  }
+
+  function runCustomFx(effect: CustomEffect, targetIds?: readonly string[]) {
+    stopEffect(false);
+    const targets = targetIds?.length ? new Set(targetIds) : null;
+    const effectFixtures = patchRef.current.map((fixture) => ({ ...fixture, selected: targets ? targets.has(fixture.id) : fixture.selected }));
+    if (!effectFixtures.some((fixture) => fixture.selected)) return setMessage('Select fixtures or a group before running the custom FX.');
+    effectBaseUniverseRef.current = [...universeRef.current];
+    const startedAt = performance.now();
+    const tick = (now: number) => {
+      const updates = renderCustomEffect(effect, effectFixtures, now - startedAt);
+      void commitUniverse(applyUniverseUpdates(effectBaseUniverseRef.current, updates), 'fx');
+      effectAnimationRef.current = requestAnimationFrame(tick);
+    };
+    effectAnimationRef.current = requestAnimationFrame(tick);
+    setMessage(`${effect.name} running on selected lights.`);
+  }
+
   function renderEffectButton(effect: EffectPreset, compact = false) {
     const className = `${compact ? 'show-fx-button' : 'fx-card'} ${activeEffect === effect.id ? 'active' : ''} ${effect.momentary ? 'momentary' : ''}`;
     if (!effect.momentary) {
@@ -2720,6 +2758,9 @@ export default function App() {
   const [controlSurfaceMode, setControlSurfaceMode] = useState<ControlSurfaceMode>('encoders');
   const [controlSurfaceTab, setControlSurfaceTab] = useState<ControlSurfaceTab>('intensity');
   const [inspectorTab, setInspectorTab] = useState<InspectorTab>('inspector');
+  const [customEffects, setCustomEffects] = useState<CustomEffect[]>([]);
+  const [fxEditor, setFxEditor] = useState<CustomEffect>({ id: 'custom-preview', name: 'New FX', parameter: 'dimmer', waveform: 'sine', bpm: 100, depth: 100, phaseSpread: 0, offset: 0 });
+  const [selectedFxBankId, setSelectedFxBankId] = useState<string>('pulse');
   const [stageSyncPolicy, setStageSyncPolicy] = useState<StageSyncPolicy>(DEFAULT_STAGE_SYNC_POLICY);
   const [stageSyncChanges, setStageSyncChanges] = useState<StageChange[]>([]);
   const [stageRevision, setStageRevision] = useState(1);
@@ -2901,12 +2942,17 @@ export default function App() {
       {workspace === 'program' && <section className="console-workspace program-console">
         <FixtureBrowser patch={patch} groups={fixtureGroups} search={fixtureSearch} onSearchChange={setFixtureSearch} onSelectAll={selectAllFixtures} onClearSelection={clearFixtureSelection} onSelectFixture={selectFixtureFromConsole} onSelectGroup={selectFixtureGroup} selectedGroupId={selectedGroupId} />
         <div className="program-center console-center">
-          <header className="program-workbench-header"><div><span>PROGRAMMING WORKBENCH</span><strong>{selectedGroup ? selectedGroup.name : selectedFixtureTargets.length === 1 ? selectedFixtureTargets[0].name : selectedFixtureTargets.length ? `${selectedFixtureTargets.length} Fixtures` : 'No Selection'}</strong></div><nav>{([['stage','RIG'],['faders','FIXTURES'],['groups','GROUPS']] as Array<[ProgramMode,string]>).map(([id,label]) => <button key={id} className={programMode === id ? 'active' : ''} onClick={() => setProgramMode(id)}>{label}</button>)}</nav><div className="program-workbench-status"><small>{activeEffect ? `FX · ${activeEffect.toUpperCase()}` : 'FX READY'}</small><b>{effectBpm} BPM</b></div></header>
+          <header className="program-workbench-header"><div><span>PROGRAMMING WORKBENCH</span><strong>{selectedGroup ? selectedGroup.name : selectedFixtureTargets.length === 1 ? selectedFixtureTargets[0].name : selectedFixtureTargets.length ? `${selectedFixtureTargets.length} Fixtures` : 'No Selection'}</strong></div><nav>{([['stage','RIG'],['faders','FIXTURES'],['groups','GROUPS'],['fx','FX EDITOR']] as Array<[ProgramMode,string]>).map(([id,label]) => <button key={id} className={programMode === id ? 'active' : ''} onClick={() => setProgramMode(id)}>{label}</button>)}</nav><div className="program-workbench-status"><small>{activeEffect ? `FX · ${activeEffect.toUpperCase()}` : 'FX READY'}</small><b>{effectBpm} BPM</b></div></header>
           {programMode !== 'stage' && <ColorDeck title={programMode === 'groups' ? 'GROUP COLOR' : 'GLOBAL COLOR'} subtitle={programMode === 'groups' ? selectedGroup?.name ?? 'Select a group' : selectedFixtureTargets.length ? `${selectedFixtureTargets.length} selected fixture${selectedFixtureTargets.length === 1 ? '' : 's'}` : 'Select fixtures before applying color'} color={globalColor} disabled={programMode === 'groups' ? !selectedGroup || compatibleColorFixtures(selectedGroupFixtures).length === 0 : selectedCompatibleColors.length === 0} presets={consoleColorPresets} onChange={(color) => programMode === 'groups' && selectedGroup ? applyGroupColor(selectedGroup, color) : applyGlobalColor(color)} />}
           {programMode === 'faders' && <section className="fader-bank"><header><span>FIXTURE FADERS</span><strong>Fixture-level brightness · semantic dimmer</strong></header><div>{patch.map((fixture) => <VerticalFader key={fixture.id} id={fixture.id} name={fixture.name} subtitle={fixtureBrowserSubtitle(fixture)} color={fixture.labelColor ?? '#55e98d'} value={fixtureIntensityPercent(universe, fixture)} selected={fixture.selected} onChange={(value) => void setFixtureAttribute(fixture, 'dimmer', percentToDmx(value))} onSelect={() => selectFixtureFromConsole(fixture.id, true)} onFx={() => selectFixtureFromConsole(fixture.id)} />)}</div></section>}
           {programMode === 'groups' && <section className="fader-bank"><header><span>GROUP MASTERS</span><strong>Non-destructive output multipliers</strong></header><div>{fixtureGroups.map((group) => { const members = fixturesInGroup(patch, group); return <VerticalFader key={group.id} id={group.id} name={group.name} subtitle={`${members.length} fixtures`} color={group.labelColor} value={Math.round(groupMasters[group.id] ?? group.masterDefault)} selected={selectedGroupId === group.id} onChange={(value) => applyGroupMaster(group, value)} onSelect={() => selectFixtureGroup(group.id)} onFx={() => selectFixtureGroup(group.id)} quickAction={{ label: 'Chase', onPress: () => startEffect('chase', members.map((fixture) => fixture.id)) }} />; })}</div></section>}
           {programMode === 'stage' && <><div className="stage-console-toolbar"><div role="toolbar">{STAGE_DESIGNER_MODES.map((mode) => <button key={mode.id} className={stageMode === mode.id ? 'active' : ''} onClick={() => setStageMode(mode.id)}>{mode.label}</button>)}</div><span>{selectedFixtureTargets.length} selected</span></div><div className="program-stage">{renderStagePreview(true)}</div></>}
-          <LooksStrip looks={allLooks} onApply={runLook} onSave={saveCurrentLook} />
+          {programMode === 'fx' && <div className="fx-editor-workspace">
+            <section className="fx-graph-panel"><header><div><span>FX SHAPE</span><strong>{fxEditor.name}</strong></div><button onClick={saveCustomFx}>SAVE TO BANK</button></header><svg viewBox="0 0 600 140" role="img" aria-label={`${fxEditor.waveform} effect waveform`}><g className="fx-grid">{[0,100,200,300,400,500,600].map((x) => <line key={`x${x}`} x1={x} y1="10" x2={x} y2="130" />)}{[20,45,70,95,120].map((y) => <line key={`y${y}`} x1="0" y1={y} x2="600" y2={y} />)}</g><polyline className="fx-wave-line" points={fxGraphPoints(fxEditor.waveform,fxEditor.depth,fxEditor.offset)} /></svg><footer><span>0°</span><span>90°</span><span>180°</span><span>270°</span><span>360°</span></footer></section>
+            <section className="fx-editor-controls"><label><span>NAME</span><input value={fxEditor.name} onChange={(event) => setFxEditor((current) => ({...current,name:event.target.value}))} /></label><label><span>PARAMETER</span><select value={fxEditor.parameter} onChange={(event) => setFxEditor((current) => ({...current,parameter:event.target.value as EffectParameter}))}>{(['dimmer','pan','tilt','uv'] as EffectParameter[]).map((parameter) => <option key={parameter} value={parameter}>{parameter.toUpperCase()}</option>)}</select></label><label><span>SHAPE</span><select value={fxEditor.waveform} onChange={(event) => setFxEditor((current) => ({...current,waveform:event.target.value as EffectWaveform}))}>{(['sine','triangle','square','saw','reverse-saw','step'] as EffectWaveform[]).map((wave) => <option key={wave} value={wave}>{wave.toUpperCase()}</option>)}</select></label><label><span>BPM · {fxEditor.bpm}</span><input type="range" min="20" max="240" value={fxEditor.bpm} onChange={(event) => setFxEditor((current) => ({...current,bpm:Number(event.target.value)}))} /></label><label><span>DEPTH · {fxEditor.depth}%</span><input type="range" min="0" max="100" value={fxEditor.depth} onChange={(event) => setFxEditor((current) => ({...current,depth:Number(event.target.value)}))} /></label><label><span>PHASE SPREAD · {fxEditor.phaseSpread}%</span><input type="range" min="0" max="100" value={fxEditor.phaseSpread} onChange={(event) => setFxEditor((current) => ({...current,phaseSpread:Number(event.target.value)}))} /></label><label><span>BASE · {fxEditor.offset}%</span><input type="range" min="0" max="100" value={fxEditor.offset} onChange={(event) => setFxEditor((current) => ({...current,offset:Number(event.target.value)}))} /></label><button className="console-primary" onClick={() => runCustomFx(fxEditor,programEffectFixtures.map((fixture) => fixture.id))}>PREVIEW FX</button></section>
+            <section className="fx-bank"><header><span>FX BANK</span><small>Factory + custom effects</small></header><div>{EFFECT_PRESETS.map((effect) => <button key={effect.id} className={selectedFxBankId === effect.id ? 'active' : ''} onClick={() => loadFactoryFx(effect)}><i className={`fx-icon fx-${effect.id}`} /><strong>{effect.name}</strong><small>{EFFECT_SHAPES[effect.id].waveform} · {effect.defaultBpm} bpm</small></button>)}{customEffects.map((effect) => <button key={effect.id} className={selectedFxBankId === effect.id ? 'active custom' : 'custom'} onClick={() => {setSelectedFxBankId(effect.id);setFxEditor(effect);}} onDoubleClick={() => runCustomFx(effect,programEffectFixtures.map((fixture) => fixture.id))}><i>∿</i><strong>{effect.name}</strong><small>{effect.waveform} · {effect.bpm} bpm</small></button>)}</div></section>
+          </div>}
+          {programMode !== 'fx' && <LooksStrip looks={allLooks} onApply={runLook} onSave={saveCurrentLook} />}
         </div>
         <aside className="console-inspector program-inspector"><header><span>{programMode === 'groups' ? 'GROUP INSPECTOR' : 'PROGRAM INSPECTOR'}</span><strong>{programEffectName}</strong><small>{programEffectFixtures.length} fixture{programEffectFixtures.length === 1 ? '' : 's'} targeted</small></header>{programMode === 'groups' && selectedGroup ? <><label><span>Master</span><input type="range" min="0" max="100" value={Math.round(groupMasters[selectedGroup.id] ?? selectedGroup.masterDefault)} onChange={(event) => applyGroupMaster(selectedGroup,Number(event.target.value))} /></label><label className="inspector-toggle"><span>FX Enabled</span><input type="checkbox" checked={selectedGroup.fxEnabled} onChange={(event) => updateFixtureGroup(selectedGroup.id,{ fxEnabled:event.target.checked })} /></label></> : inspectedFixture ? <><div className="program-fixture-summary"><i style={{ background: inspectedFixture.labelColor ?? '#55e98d' }} /><span><strong>{findProfile(inspectedFixture.profileId)?.model ?? inspectedFixture.name}</strong><small>U{inspectedFixture.universe ?? 1} · {addressLabel(inspectedFixture.address)}</small></span></div><button onClick={() => { setWorkspace('setup'); setSetupView('stage'); setInspectorTab('inspector'); }}>Open Spatial Inspector</button></> : <div className="empty-inspector"><strong>Select a fixture or group</strong><span>The inspector follows your programming target.</span></div>}<EffectsPanel title="FX" targetName={programEffectName} fixtures={programEffectFixtures} activeEffect={activeEffect} bpm={effectBpm} depth={effectDepth} disabled={programMode === 'groups' && !selectedGroup?.fxEnabled} onBpmChange={(value) => { setEffectBpm(value); effectBpmRef.current = value; setTempoSource('manual'); }} onDepthChange={(value) => { setEffectDepth(value); effectDepthRef.current = value; }} onStart={(effect) => toggleEffect(effect, programEffectFixtures.map((fixture) => fixture.id))} onPress={(effect) => startMomentaryEffect(effect, programEffectFixtures.map((fixture) => fixture.id))} onRelease={releaseMomentaryEffect} onStop={() => stopEffect()} /></aside>
       </section>}
