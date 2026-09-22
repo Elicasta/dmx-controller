@@ -2748,7 +2748,7 @@ export default function App() {
         const capabilities = [...new Set(mode?.channels.map((channel) => channel.parameter).filter((parameter): parameter is FixtureParameter => Boolean(parameter)) ?? [])];
         const attributes = Object.fromEntries(capabilities.map((parameter) => [
           parameter,
-          readFixtureParameter(outputUniverse, fixture, parameter) / 255
+          readFixtureParameter(universe, fixture, parameter) / 255
         ]));
         return {
           id: fixture.id,
