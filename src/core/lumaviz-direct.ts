@@ -143,3 +143,25 @@ export async function lumaVizDirectStatus(): Promise<LumaVizDirectStatus> {
 export async function sendLumaVizDirectFrame(frame: SemanticFixtureFrame): Promise<void> {
   await invoke('send_lumaviz_fixture_frame', { frame });
 }
+
+export type SharedShowPatchMutation = {
+  type: 'shared-show.patch.update';
+  revision: number;
+  source: 'lumaviz' | 'lumarig';
+  showId?: string;
+  fixture: {
+    id: string; name: string; profileId: string; modeId: string;
+    universe: number; address: number; group?: string;
+    position?: { x:number; y:number; z:number };
+    rotation?: { x:number; y:number; z:number };
+  };
+};
+
+export async function pollLumaVizDirectMessages(): Promise<unknown[]> {
+  const messages = await invoke<string[]>('poll_lumaviz_direct_messages');
+  return messages.flatMap((message) => { try { return [JSON.parse(message)]; } catch { return []; } });
+}
+
+export async function sendLumaVizDirectMessage(message: unknown): Promise<void> {
+  await invoke('send_lumaviz_direct_message', { payload: JSON.stringify(message) });
+}
