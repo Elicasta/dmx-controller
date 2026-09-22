@@ -1714,13 +1714,15 @@ export default function App() {
       goCue: (cueId) => {
         const cue = cueId ? showFile.cues.find((item) => item.id === cueId) : nextCue;
         if (!cue) throw new Error('No LumaRig cue is available.');
-        fadeToUniverse(cue.name, cue.universe, cue.fadeMs, 'remote');
+        const target = cue.universe?.length === 512 ? [...cue.universe] : applyUniverseUpdates(universeRef.current, lookUpdates(cue.values, selectedFixtures(patch)));
+        fadeToUniverse(cue.name, target, cue.fadeMs, 'remote');
         setActiveCueId(cue.id);
       },
       fireScene: (sceneId) => {
         const cue = showFile.cues.find((item) => item.id === sceneId);
         if (!cue) throw new Error('LumaRig scene was not found.');
-        fadeToUniverse(cue.name, cue.universe, cue.fadeMs, 'remote');
+        const target = cue.universe?.length === 512 ? [...cue.universe] : applyUniverseUpdates(universeRef.current, lookUpdates(cue.values, selectedFixtures(patch)));
+        fadeToUniverse(cue.name, target, cue.fadeMs, 'remote');
         setActiveCueId(cue.id);
       },
       startEffect: (effectId) => {
