@@ -2333,9 +2333,13 @@ export default function App() {
         setCalibrationOpen(false);
         return;
       }
-      if (event.code === 'Space' && !typing && (workspace === 'live' || (workspace === 'show' && showMode === 'cues'))) {
+      const performanceContext = workspace === 'live' || (workspace === 'show' && showMode === 'cues');
+      if (!typing && performanceContext && (event.code === 'Space' || event.key === 'ArrowRight')) {
         event.preventDefault();
         goNextCue();
+      } else if (!typing && performanceContext && event.key === 'ArrowLeft') {
+        event.preventDefault();
+        goPreviousCue();
       }
     };
     window.addEventListener('keydown', handleKeyDown);
@@ -2788,6 +2792,11 @@ export default function App() {
         const group = fixtureGroups.find((item) => item.name === command.groupName);
         if (!group) throw new Error('That fixture group is not available.');
         applyGroupMaster(group, command.value * 100);
+      } else if (type === 'fixture.flash.set' && Array.isArray(command.fixtureIds)) {
+        const fixtureIds = command.fixtureIds.filter((id): id is string => typeof id === 'string');
+        if (!fixtureIds.length) throw new Error('Flash requires at least one fixture.');
+        if (Boolean(command.active)) startMomentaryEffect('bump', fixtureIds);
+        else releaseMomentaryEffect('bump');
       } else if (['fixture.select', 'fixture.attribute', 'fixture.color', 'fixture.position', 'fixture.target', 'group.color'].includes(type)) {
         await dispatchControl(command as ControlCommand, 'surface');
       } else {
@@ -2804,11 +2813,15 @@ export default function App() {
   function remoteStateSnapshot() {
     const bpm = tempoSource === 'midi' && midiBpm ? midiBpm : effectBpm;
     return {
+      protocolVersion: 2,
+      appName: 'LumaRig',
+      appVersion,
+      buildChannel: 'operator-v3',
       revision: runtimeRef.current?.snapshot.revision ?? 0,
       showName: showFile.name,
       stage: {
         view: stageView,
-        mode: stageView,
+        mode: stageMode,
         objectCount: stageElements.length,
         selectedObjectId: selectedStageElementId,
         dimensions: { ...stageSettings.dimensions },
@@ -2826,6 +2839,7 @@ export default function App() {
       master: globalMaster / 100,
       blackout: dmxStatus.blackout,
       bpm,
+      fxDepth: effectDepth / 100,
       tempoSource: tempoSource === 'midi' ? 'MIDI Clock' : 'Internal',
       outputHealthy: !dmxStatus.last_error,
       dmxConnected: dmxStatus.connected,
@@ -2845,6 +2859,10 @@ export default function App() {
           labelColor: fixture.labelColor ?? '#55f29a',
           intensity: values.dimmer / 255,
           color: rgbToHex(values.red, values.green, values.blue),
+          attributes: Object.fromEntries(
+            [...new Set(mode?.channels.map((channel) => channel.parameter).filter((parameter): parameter is FixtureParameter => Boolean(parameter)) ?? [])]
+              .map((parameter) => [parameter, readFixtureParameter(outputUniverse, fixture, parameter) / 255])
+          ),
           capabilities: [...new Set(mode?.channels.map((channel) => channel.parameter).filter((parameter): parameter is FixtureParameter => Boolean(parameter)) ?? [])],
           stagePosition: { ...geometry.beam.origin },
           beamDirection: { ...geometry.beam.direction },
@@ -2854,7 +2872,7 @@ export default function App() {
           movementCapable: geometry.movementCapable
         };
       }),
-      groups: fixtureGroups.map((group) => ({ id: group.id, name: group.name, labelColor: group.labelColor, fixtureIds: [...group.fixtureOrder] })),
+      groups: fixtureGroups.map((group) => ({ id: group.id, name: group.name, labelColor: group.labelColor, fixtureIds: [...group.fixtureOrder], master: (groupMasters[group.id] ?? group.masterDefault) / 100 })),
       looks: [...STARTER_LOOKS, ...savedLooks].map((look) => ({ id: look.id, name: look.name, color: lookSwatch(look.values) })),
       effects: EFFECT_PRESETS.map((effect) => ({ id: effect.id, name: effect.name, momentary: Boolean(effect.momentary), active: activeEffect === effect.id })),
       recordings: (showFile.recordings ?? []).map((recording) => ({ id: recording.id, name: recording.name, durationMs: recording.durationMs }))
@@ -2870,7 +2888,7 @@ export default function App() {
       remotePublishTimerRef.current = null;
       remoteSnapshotHandlerRef.current?.();
     }, 120);
-  }, [remoteRelayStatus, showFile, activeCueId, globalMaster, dmxStatus, effectBpm, tempoSource, midiBpm, midiStatus, midiClockSeen, externalTransportRunning, externalSongPositionMs, showRecordingActive, showRecordingElapsedMs, activeEffect, patch, outputUniverse, fixtureGroups, savedLooks, stageView, stageElements, selectedStageElementId, stageSettings]);
+  }, [remoteRelayStatus, showFile, activeCueId, globalMaster, dmxStatus, effectBpm, effectDepth, tempoSource, midiBpm, midiStatus, midiClockSeen, externalTransportRunning, externalSongPositionMs, showRecordingActive, showRecordingElapsedMs, activeEffect, patch, outputUniverse, fixtureGroups, groupMasters, savedLooks, stageView, stageMode, stageElements, selectedStageElementId, stageSettings, appVersion]);
 
   const consoleColorPresets = COLOR_PRESETS.map((preset) => ({
     name: preset.name,
