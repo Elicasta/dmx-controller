@@ -554,6 +554,7 @@ export default function App() {
   const settingsRef = useRef(settings);
   const [artNetTelemetry, setArtNetTelemetry] = useState({ framesSent: 0, lastError: "" });
   const [directStatus, setDirectStatus] = useState<LumaVizDirectStatus>({ listening: false, port: 9460, clients: 0, framesSent: 0 });
+  const [lumaVizPreview, setLumaVizPreview] = useState<{ dataUrl: string; timestamp: number; view?: string } | null>(null);
   const [studioBridgeStatus, setStudioBridgeStatus] = useState<StudioBridgeStatus>({ listening: false, port: 47777, connectedClients: 0 });
   useEffect(() => {
     const refresh = () => {
@@ -574,6 +575,17 @@ export default function App() {
       void pollLumaVizDirectMessages().then((messages) => {
         for (const message of messages) {
           if (!message || typeof message !== 'object') continue;
+          if ((message as { type?: string }).type === 'preview-frame') {
+            const frame = message as { dataUrl?: unknown; timestamp?: unknown; view?: unknown };
+            if (typeof frame.dataUrl === 'string' && frame.dataUrl.startsWith('data:image/')) {
+              setLumaVizPreview({
+                dataUrl: frame.dataUrl,
+                timestamp: typeof frame.timestamp === 'number' ? frame.timestamp : Date.now(),
+                view: typeof frame.view === 'string' ? frame.view : undefined
+              });
+            }
+            continue;
+          }
           if (isSharedShowActivation(message)) {
             sharedShowRevisionRef.current = Math.max(sharedShowRevisionRef.current, message.revision);
             const match = showLibrary.find((item) => item.id === message.showId);
@@ -3063,6 +3075,10 @@ export default function App() {
     }, 120);
   }, [remoteRelayStatus, showFile, activeCueId, globalMaster, dmxStatus, effectBpm, effectDepth, tempoSource, midiBpm, midiStatus, midiClockSeen, externalTransportRunning, externalSongPositionMs, showRecordingActive, showRecordingElapsedMs, activeEffect, patch, outputUniverse, fixtureGroups, groupMasters, savedLooks, stageView, stageMode, stageElements, selectedStageElementId, stageSettings, appVersion]);
 
+  const liveLumaVizPreview = directStatus.clients > 0 && lumaVizPreview && Date.now() - lumaVizPreview.timestamp < 1600
+    ? lumaVizPreview
+    : null;
+
   const consoleColorPresets = COLOR_PRESETS.map((preset) => ({
     name: preset.name,
     color: rgbToHex(preset.rgb[0], preset.rgb[1], preset.rgb[2])
@@ -3268,7 +3284,7 @@ export default function App() {
         {showMode === 'cues' && <div className="show-cue-layout">
           <aside className="cue-list-console"><header><span>CUE LIST</span><button onClick={captureCue}>＋ Capture</button></header>{showFile.cues.length ? showFile.cues.map((cue,index) => <article className={activeCueId === cue.id ? 'active' : ''} key={cue.id}><button className="cue-line" onClick={() => runCue(cue)}><b>{String(cue.number).padStart(2,'0')}</b><i style={{background:lookSwatch(cue.values)}}/><span><strong>{cue.name}</strong><small>{cue.fadeMs ? `${cue.fadeMs/1000}s fade` : 'Snap'}{cue.followMs ? ` · follow ${cue.followMs/1000}s` : ''}</small></span></button><div><button disabled={index===0} onClick={() => setShowFile((current)=>({...current,cues:moveCue(current.cues,cue.id,-1)}))}>↑</button><button disabled={index===showFile.cues.length-1} onClick={() => setShowFile((current)=>({...current,cues:moveCue(current.cues,cue.id,1)}))}>↓</button><button onClick={() => deleteCue(cue.id)}>×</button></div></article>) : <div className="empty-cues"><strong>No cues yet</strong><span>Build a look in CREATE, then capture it here.</span><button onClick={() => setWorkspace('create')}>Open CREATE</button></div>}</aside>
 
-          <main className="cue-preview-console"><header><span>{directStatus.clients > 0 ? 'LUMAVIZ LIVE PREVIEW' : 'STAGE / CUE PREVIEW'}</span><b>{activeCue?.name ?? 'Live output'}</b></header><div className={`show-viz-preview ${directStatus.clients > 0 ? 'linked' : ''}`}>{renderStagePreview()}</div><div className="cue-preview-meta"><span>CURRENT<strong>{activeCue ? `${activeCue.number}. ${activeCue.name}` : 'Ready'}</strong></span><span>NEXT<strong>{nextCue ? `${nextCue.number}. ${nextCue.name}` : 'End of show'}</strong></span></div></main>
+          <main className="cue-preview-console"><header><span>{directStatus.clients > 0 ? 'LUMAVIZ LIVE PREVIEW' : 'STAGE / CUE PREVIEW'}</span><b>{activeCue?.name ?? 'Live output'}</b></header><div className={`show-viz-preview ${liveLumaVizPreview ? 'linked external-feed' : directStatus.clients > 0 ? 'linked' : ''}`}>{liveLumaVizPreview ? <img src={liveLumaVizPreview.dataUrl} alt={`LumaViz ${liveLumaVizPreview.view ?? 'live'} preview`} /> : renderStagePreview()}</div><div className="cue-preview-meta"><span>CURRENT<strong>{activeCue ? `${activeCue.number}. ${activeCue.name}` : 'Ready'}</strong></span><span>NEXT<strong>{nextCue ? `${nextCue.number}. ${nextCue.name}` : 'End of show'}</strong></span></div></main>
 
           <aside className="cue-inspector-console"><header><span>CUE INSPECTOR</span><strong>{activeCue?.name ?? 'New cue'}</strong></header>{activeCue ? <><label><span>Cue Name</span><input value={activeCue.name} onChange={(event)=>updateCueProperties(activeCue.id,{name:event.target.value})}/></label><label><span>Cue Color</span><input type="color" value={activeCue.color ?? '#55e98d'} onChange={(event)=>updateCueProperties(activeCue.id,{color:event.target.value})}/></label><label><span>Description</span><textarea value={activeCue.description ?? ''} onChange={(event)=>updateCueProperties(activeCue.id,{description:event.target.value})}/></label><div className="inspector-pair"><label><span>Fade In ms</span><input type="number" min="0" value={activeCue.fadeMs} onChange={(event)=>updateCueProperties(activeCue.id,{fadeMs:Number(event.target.value)})}/></label><label><span>Fade Out ms</span><input type="number" min="0" value={activeCue.fadeOutMs ?? activeCue.fadeMs} onChange={(event)=>updateCueProperties(activeCue.id,{fadeOutMs:Number(event.target.value)})}/></label></div><div className="inspector-pair"><label><span>Delay ms</span><input type="number" min="0" value={activeCue.delayMs ?? 0} onChange={(event)=>updateCueProperties(activeCue.id,{delayMs:Number(event.target.value)})}/></label><label><span>Follow ms</span><input type="number" min="0" value={activeCue.followMs ?? 0} onChange={(event)=>updateCueProperties(activeCue.id,{followMs:Number(event.target.value)})}/></label></div><label><span>Linked Effect</span><select value={activeCue.linkedEffectId ?? ''} onChange={(event)=>updateCueProperties(activeCue.id,{linkedEffectId:event.target.value})}><option value="">None</option>{EFFECT_PRESETS.map((effect)=><option key={effect.id} value={effect.id}>{effect.name}</option>)}</select></label><label><span>Track / Audio Note</span><input value={activeCue.trackName ?? ''} onChange={(event)=>updateCueProperties(activeCue.id,{trackName:event.target.value})}/></label><button className="console-primary" onClick={()=>updateCue(activeCue.id)}>Update Look From Output</button></> : <><label><span>New Cue Name</span><input value={cueName} placeholder={`Cue ${showFile.cues.length+1}`} onChange={(event)=>setCueName(event.target.value)}/></label><label><span>Fade In</span><select value={cueFadeMs} onChange={(event)=>setCueFadeMs(Number(event.target.value))}>{FADE_TIMES.map((time)=><option key={time} value={time}>{time===0?'Snap':`${time/1000}s`}</option>)}</select></label><button className="console-primary" onClick={captureCue}>Capture Current Look</button></>}<label><span>Show Notes</span><textarea value={showFile.notes ?? ''} placeholder="Set list, transitions, safety notes…" onChange={(event)=>setShowFile((current)=>({...current,notes:event.target.value}))}/></label></aside>
 
@@ -3339,7 +3355,7 @@ export default function App() {
 
           <aside className="live-master-rack">
             <section className="live-master-card"><header><span>GRAND MASTER</span><strong>{globalMaster}%</strong></header><input className="live-master-slider" type="range" min="0" max={settings.masterLimit} value={globalMaster} onChange={(event)=>applyGlobalMaster(Number(event.target.value))}/><div>{[0,25,50,75,100].map((value)=><button key={value} className={globalMaster===value?'active':''} onClick={()=>applyGlobalMaster(value)}>{value}</button>)}</div></section>
-            <section className="live-viz-monitor"><header><span>LUMAVIZ</span><b className={directStatus.clients>0?'healthy':''}>{directStatus.clients>0?'LIVE FEED':'LOCAL PREVIEW'}</b></header><div className="live-viz-stage">{renderStagePreview()}</div></section>
+            <section className="live-viz-monitor"><header><span>LUMAVIZ</span><b className={directStatus.clients>0?'healthy':''}>{liveLumaVizPreview ? 'LIVE FEED' : directStatus.clients>0 ? 'LINKED · LOCAL FALLBACK' : 'LOCAL PREVIEW'}</b></header><div className={`live-viz-stage ${liveLumaVizPreview ? 'external-feed' : ''}`}>{liveLumaVizPreview ? <img src={liveLumaVizPreview.dataUrl} alt={`LumaViz ${liveLumaVizPreview.view ?? 'live'} preview`} /> : renderStagePreview()}</div></section>
             <section className="live-tempo-card"><span>TEMPO</span><button onClick={tapTempo}><strong>{tempoSource==='midi'&&midiBpm?midiBpm:effectBpm}</strong><small>BPM · TAP</small></button><label>DEPTH <input type="range" min="0" max="100" value={effectDepth} onChange={(event)=>{const value=Number(event.target.value);setEffectDepth(value);effectDepthRef.current=value;}}/></label></section>
           </aside>
         </div>}
