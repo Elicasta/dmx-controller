@@ -1,5 +1,3 @@
-import type { StageSettings } from '../types/show';
-
 export interface SharedLocationPreset {
   id:string; name:string; version:number; estimated:boolean;
   dimensions:{roomWidth:number;roomDepth:number;ceilingHeight:number;stageWidth:number;stageDepth:number;stageHeight:number;screenWidth:number;screenHeight:number;screenBottom:number;drapeWidth:number;drapeHeight:number};
@@ -8,6 +6,6 @@ export interface SharedLocationPreset {
 }
 export const CORNERSTONE_LOCATION_ID='cornerstone-main-sanctuary';
 export const ROSEN_SIGNATURE_2_AD26_LOCATION_ID='rosen-signature-2-ad26';
-export function locationStagePatch(location:SharedLocationPreset):Partial<StageSettings>{
-  return { dimensions: { width:location.dimensions.roomWidth, depth:location.dimensions.roomDepth, height:location.dimensions.ceilingHeight } } as Partial<StageSettings>;
+export function locationStageDimensions(location:SharedLocationPreset){
+  return { width:location.dimensions.roomWidth, depth:location.dimensions.roomDepth, height:location.dimensions.ceilingHeight };
 }
