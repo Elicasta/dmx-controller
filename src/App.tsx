@@ -127,7 +127,10 @@ type ShowProjectSnapshot = {
   id: string;
   name: string;
   savedAt: string;
-  status: 'draft' | 'show';
+  status: 'template' | 'draft' | 'show';
+  templateId?: string;
+  revision?: number;
+  lastEditor?: 'lumarig' | 'lumaviz';
   show: ShowFile;
   patch: PatchedFixture[];
   stageElements: StageElement[];
@@ -1216,7 +1219,7 @@ export default function App() {
     if (activeCueId === id) setActiveCueId(null);
   }
 
-  function saveShowProject(status: 'draft' | 'show' = 'show') {
+  function saveShowProject(status: 'template' | 'draft' | 'show' = 'show') {
     const cleanName = showFile.name.trim() || 'Untitled Show';
     const existing = showLibrary.find((item) => item.name.toLowerCase() === cleanName.toLowerCase() && item.status === status);
     const snapshot: ShowProjectSnapshot = {
@@ -1224,6 +1227,9 @@ export default function App() {
       name: cleanName,
       savedAt: new Date().toISOString(),
       status,
+      templateId: status === 'template' ? undefined : showLibrary.find((item) => item.status === 'template')?.id,
+      revision: sharedShowRevisionRef.current,
+      lastEditor: 'lumarig',
       show: sanitizeShow({ ...showFile, name: cleanName }),
       patch: patch.map((fixture, index) => migratePatchedFixture(fixture, index, patch.length, stageSettings.dimensions)),
       stageElements: stageElements.map((element) => migrateStageElement(element, stageSettings.dimensions)),
@@ -1231,7 +1237,7 @@ export default function App() {
       looks: [...savedLooks]
     };
     setShowLibrary((current) => [snapshot, ...current.filter((item) => item.id !== snapshot.id)].slice(0, 40));
-    setMessage(`${cleanName} saved to the show library as ${status === 'draft' ? 'a draft' : 'a show'}.`);
+    setMessage(`${cleanName} saved to the show library as ${status === 'template' ? 'a template' : status === 'draft' ? 'a draft' : 'a service show'}.`);
   }
 
   function loadShowProject(snapshot: ShowProjectSnapshot) {
@@ -2829,8 +2835,8 @@ export default function App() {
           <section className="console-panel recorded-takes-console"><header><div><span>LIGHTING TAKES</span><h2>{showFile.recordings?.length ?? 0} saved</h2></div></header>{showFile.recordings?.map((recording) => <article key={recording.id}><span><strong>{recording.name}</strong><small>{formatShowTime(recording.durationMs)} · {recording.frames.length} changes</small></span><button onClick={() => playingRecordingId === recording.id ? stopRecordedShowPlayback() : playShowRecording(recording)}>{playingRecordingId === recording.id ? 'Stop' : 'Play'}</button><button onClick={() => deleteShowRecording(recording)}>Delete</button></article>)}</section>
           <section className="console-panel external-track-console"><header><div><span>EXTERNAL TRACK SYNC</span><h2>Ableton / Logic / MIDI</h2></div><b className={externalTransportRunning ? 'healthy' : ''}>{externalTransportRunning ? 'Following' : externalTrack.armed ? 'Armed' : 'Off'}</b></header><label><span>Song Name</span><input value={externalTrack.songName} onChange={(event) => updateExternalTrack({ songName: event.target.value })} /></label><label><span>Lighting Take</span><select value={externalTrack.recordingId} onChange={(event) => assignExternalRecording(event.target.value)}><option value="">Choose take</option>{showFile.recordings?.map((recording) => <option key={recording.id} value={recording.id}>{recording.name}</option>)}</select></label><div className="inspector-pair"><label><span>BPM</span><input type="number" value={externalTrack.bpm} onChange={(event) => updateExternalTrack({ bpm: Number(event.target.value) })} /></label><label><span>Advance ms</span><input type="number" value={externalTrack.lightingOffsetMs} onChange={(event) => updateExternalTrack({ lightingOffsetMs: Number(event.target.value) })} /></label></div><button className={externalTrack.armed ? 'danger-button' : 'console-primary'} onClick={toggleExternalTrackArm}>{externalTrack.armed ? 'Disarm External Sync' : 'Arm External Sync'}</button><button onClick={() => { setWorkspace('setup'); setSetupView('settings'); }}>MIDI Connection Settings</button></section>
         </div> : <div className="show-library-console">
-          <header><div><span>SHOW LIBRARY</span><h2>{showFile.name}</h2><small>Save complete show projects including cues, patch, stage design, groups and looks.</small></div><div><button onClick={newShowProject}>＋ New Show</button><button onClick={() => saveShowProject('draft')}>Save Draft</button><button className="console-primary" onClick={() => saveShowProject('show')}>Save Current Show</button></div></header>
-          <div className="show-library-grid">{showLibrary.length ? showLibrary.map((item) => <article key={item.id}><div><span className={item.status}>{item.status.toUpperCase()}</span><strong>{item.name}</strong><small>{new Date(item.savedAt).toLocaleString()} · {item.show.cues.length} cues · {item.patch.length} fixtures</small></div><div><button onClick={() => loadShowProject(item)}>Load</button><button className="danger-button" onClick={() => deleteShowProject(item.id)}>Delete</button></div></article>) : <div className="empty-show-library"><strong>No saved shows yet</strong><span>Save the current show or a draft. Your working show continues to autosave separately.</span></div>}</div>
+          <header><div><span>SHOW LIBRARY</span><h2>{showFile.name}</h2><small>Shared templates define the rig. Service shows inherit the template and add cues, tracks, looks and show-specific changes.</small></div><div><button onClick={newShowProject}>＋ New Show</button><button onClick={() => saveShowProject('template')}>Save Template</button><button onClick={() => saveShowProject('draft')}>Save Draft</button><button className="console-primary" onClick={() => saveShowProject('show')}>Save Service Show</button></div></header>
+          <div className="show-library-grid">{showLibrary.length ? showLibrary.map((item) => <article key={item.id}><div><span className={item.status}>{item.status.toUpperCase()}</span><strong>{item.name}</strong><small>{new Date(item.savedAt).toLocaleString()} · R{item.revision ?? 1} · {item.lastEditor ?? 'lumarig'} · {item.show.cues.length} cues · {item.patch.length} fixtures</small></div><div><button onClick={() => loadShowProject(item)}>Load</button><button className="danger-button" onClick={() => deleteShowProject(item.id)}>Delete</button></div></article>) : <div className="empty-show-library"><strong>No saved shows yet</strong><span>Save the current show or a draft. Your working show continues to autosave separately.</span></div>}</div>
         </div>}
       </section>}
 
