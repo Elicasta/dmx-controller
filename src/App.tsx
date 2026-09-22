@@ -632,6 +632,8 @@ export default function App() {
   const remoteCommandHandlerRef = useRef<((envelope: RelayCommandEnvelope) => void) | null>(null);
   const remoteSnapshotHandlerRef = useRef<(() => void) | null>(null);
   const remotePublishTimerRef = useRef<number | null>(null);
+  const remoteFlashLeaseRef = useRef<Map<string, number>>(new Map());
+  const remoteEffectLeaseRef = useRef<Map<string, number>>(new Map());
   if (!remoteRelayRef.current) remoteRelayRef.current = new RemoteRelay();
   const [message, setMessage] = useState('Control station ready. Connect DMX when you want physical output.');
   const [appVersion, setAppVersion] = useState('0.2.0');
@@ -2112,6 +2114,8 @@ export default function App() {
   }
 
   async function disconnectRemoteRelay() {
+    clearAllRemoteEffectLeases();
+    clearAllRemoteFlashLeases(true);
     await remoteRelayRef.current?.disconnect();
     setRemoteRelayStatus('disconnected');
     setMessage('Remote relay disconnected. Local lighting output continues unchanged.');
@@ -2721,6 +2725,59 @@ export default function App() {
     );
   }
 
+  function remoteFlashLeaseKey(fixtureIds: readonly string[]) {
+    return [...fixtureIds].sort().join('|');
+  }
+
+  function clearRemoteFlashLease(fixtureIds: readonly string[]) {
+    const key = remoteFlashLeaseKey(fixtureIds);
+    const timer = remoteFlashLeaseRef.current.get(key);
+    if (timer !== undefined) window.clearTimeout(timer);
+    remoteFlashLeaseRef.current.delete(key);
+  }
+
+  function armRemoteFlashLease(fixtureIds: readonly string[]) {
+    const ids = [...fixtureIds];
+    clearRemoteFlashLease(ids);
+    const key = remoteFlashLeaseKey(ids);
+    const timer = window.setTimeout(() => {
+      remoteFlashLeaseRef.current.delete(key);
+      void dispatchControl({ type: 'fixture.flash.set', fixtureIds: ids, active: false }, 'surface');
+    }, 1600);
+    remoteFlashLeaseRef.current.set(key, timer);
+  }
+
+  function clearRemoteEffectLease(effectId: string) {
+    const timer = remoteEffectLeaseRef.current.get(effectId);
+    if (timer !== undefined) window.clearTimeout(timer);
+    remoteEffectLeaseRef.current.delete(effectId);
+  }
+
+  function armRemoteEffectLease(effectId: EffectId) {
+    clearRemoteEffectLease(effectId);
+    const timer = window.setTimeout(() => {
+      remoteEffectLeaseRef.current.delete(effectId);
+      releaseMomentaryEffect(effectId);
+    }, 1600);
+    remoteEffectLeaseRef.current.set(effectId, timer);
+  }
+
+  function clearAllRemoteEffectLeases() {
+    for (const timer of remoteEffectLeaseRef.current.values()) window.clearTimeout(timer);
+    remoteEffectLeaseRef.current.clear();
+  }
+
+  function clearAllRemoteFlashLeases(release = false) {
+    for (const [key, timer] of remoteFlashLeaseRef.current.entries()) {
+      window.clearTimeout(timer);
+      if (release) {
+        const fixtureIds = key.split('|').filter(Boolean);
+        if (fixtureIds.length) void dispatchControl({ type: 'fixture.flash.set', fixtureIds, active: false }, 'surface');
+      }
+    }
+    remoteFlashLeaseRef.current.clear();
+  }
+
   async function executeRemoteRelayCommand(envelope: RelayCommandEnvelope) {
     const command = envelope.command as Record<string, unknown>;
     const type = typeof command.type === 'string' ? command.type : '';
@@ -2742,9 +2799,12 @@ export default function App() {
         const effect = EFFECT_PRESETS.find((item) => item.id === command.effectId && item.momentary);
         if (!effect) throw new Error('That effect is not a HOLD control.');
         startMomentaryEffect(effect.id);
+        armRemoteEffectLease(effect.id);
       } else if (type === 'effect.release' && typeof command.effectId === 'string') {
+        clearRemoteEffectLease(command.effectId);
         releaseMomentaryEffect(command.effectId as EffectId);
       } else if (type === 'effect.stop') {
+        clearAllRemoteEffectLeases();
         stopEffect();
       } else if (type === 'look.apply' && typeof command.lookId === 'string') {
         const look = [...STARTER_LOOKS, ...savedLooks].find((item) => item.id === command.lookId);
@@ -2786,11 +2846,12 @@ export default function App() {
         const group = fixtureGroups.find((item) => item.name === command.groupName);
         if (!group) throw new Error('That fixture group is not available.');
         applyGroupMaster(group, command.value * 100);
-      } else if (type === 'fixture.flash.set' && Array.isArray(command.fixtureIds)) {
-        const fixtureIds = command.fixtureIds.filter((id): id is string => typeof id === 'string');
-        if (!fixtureIds.length) throw new Error('Flash requires at least one fixture.');
-        if (Boolean(command.active)) startMomentaryEffect('bump', fixtureIds);
-        else releaseMomentaryEffect('bump');
+      } else if (type === 'fixture.flash.set') {
+        const fixtureIds = Array.isArray(command.fixtureIds) ? command.fixtureIds.filter((id): id is string => typeof id === 'string') : [];
+        if (!fixtureIds.length || typeof command.active !== 'boolean') throw new Error('Invalid fixture flash command.');
+        await dispatchControl({ type: 'fixture.flash.set', fixtureIds, active: command.active }, 'surface');
+        if (command.active) armRemoteFlashLease(fixtureIds);
+        else clearRemoteFlashLease(fixtureIds);
       } else if (['fixture.select', 'fixture.attribute', 'fixture.color', 'fixture.position', 'fixture.target', 'group.color'].includes(type)) {
         await dispatchControl(command as ControlCommand, 'surface');
       } else {
