@@ -558,7 +558,7 @@ export default function App() {
       });
     }, 150);
     return () => window.clearInterval(timer);
-  }, [stageSettings.dimensions]);
+  }, []);
 
   useEffect(() => {
     if (!directStatus.clients) return;
