@@ -514,7 +514,7 @@ function FixturePatchEditor({ fixture, onSave, onRemove, onToggleSelected, onTog
 }
 
 export default function App() {
-  const [workspace, setWorkspace] = useState<Workspace>(() => initialConsoleValue('workspace', ['setup', 'program', 'show', 'live'], 'program'));
+  const [workspace, setWorkspace] = useState<Workspace>(() => initialConsoleValue('workspace', ['build', 'create', 'show', 'live'], 'create'));
   const [setupView, setSetupView] = useState<SetupView>(() => initialConsoleValue('setup', ['fixtures', 'groups', 'patch', 'stage', 'settings'], 'stage'));
   const [programMode, setProgramMode] = useState<ProgramMode>(() => initialConsoleValue('program', ['stage', 'faders', 'groups'], 'faders'));
   const [showMode, setShowMode] = useState<ShowMode>(() => initialConsoleValue('show', ['cues', 'tracks'], 'cues'));
@@ -3015,17 +3015,43 @@ export default function App() {
         </div>}
       </section>}
 
-      {workspace === 'live' && <section className="live-console">
-        <div className="live-cue-hero"><span><small>CURRENT CUE</small><strong>{activeCue?.name ?? 'Ready'}</strong><em>{activeCue ? `Cue ${activeCue.number}` : 'No cue running'}</em></span><button className="live-go" onClick={goNextCue} disabled={!nextCue}>GO<small>{nextCue?.name ?? 'End of show'}</small></button><span><small>NEXT CUE</small><strong>{nextCue?.name ?? 'End of show'}</strong><em>{nextCue ? `Cue ${nextCue.number}` : '—'}</em></span></div>
-        <div className="live-nav-buttons"><button onClick={goPreviousCue}>← PREVIOUS</button><button onClick={goNextCue} disabled={!nextCue}>NEXT →</button></div>
-        <section className="live-section live-fx"><header><span>PERFORMANCE FX</span>{activeEffect && <button onClick={() => stopEffect()}>Stop FX</button>}</header><div>{EFFECT_PRESETS.filter((effect) => ['bump', 'blinder', 'strobe', 'pulse', 'sweep', 'lightning', 'finale'].includes(effect.id) && effectSupportedByFixtures(effect.id, selectedFixtureTargets)).map((effect) => renderEffectButton(effect, true))}</div></section>
-        <section className="live-section live-control-bank">
-          <header><span>LIVE CONTROL</span><div className="live-control-actions">{liveBank === 'fixtures' && <><small>{patch.filter((fixture) => fixture.selected).length} selected</small><button onClick={selectAllFixtures}>All</button><button onClick={clearFixtureSelection}>Clear</button></>}<div className="live-bank-tabs"><button className={liveBank === 'fixtures' ? 'active' : ''} onClick={() => setLiveBank('fixtures')}>FIXTURES</button><button className={liveBank === 'groups' ? 'active' : ''} onClick={() => setLiveBank('groups')}>GROUPS</button></div></div></header>
-          {liveBank === 'fixtures' ? <div className="live-fader-row">{patch.map((fixture) => <VerticalFader key={fixture.id} id={`live-${fixture.id}`} name={fixture.name} subtitle={fixtureBrowserSubtitle(fixture)} color={fixture.labelColor ?? '#55e98d'} value={fixtureIntensityPercent(universe, fixture)} selected={fixture.selected} onChange={(value) => void setFixtureAttribute(fixture, 'dimmer', percentToDmx(value))} onSelect={() => selectFixtureFromConsole(fixture.id, true)} onFx={() => selectFixtureFromConsole(fixture.id)} />)}</div> : <div className="live-fader-row">{fixtureGroups.map((group) => { const members = fixturesInGroup(patch, group); return <VerticalFader key={group.id} id={`live-${group.id}`} name={group.name} subtitle={`${members.length} fixtures`} color={group.labelColor} value={Math.round(groupMasters[group.id] ?? group.masterDefault)} selected={selectedGroupId === group.id} onChange={(value) => applyGroupMaster(group, value)} onSelect={() => selectFixtureGroup(group.id)} onFx={() => selectFixtureGroup(group.id)} quickAction={{ label: 'Chase', onPress: () => toggleEffect('chase', members.map((fixture) => fixture.id)) }} />; })}</div>}
-        </section>
-        <section className="live-section live-looks"><header><span>LOOKS</span><small>{selectedFixtureTargets.length} fixture{selectedFixtureTargets.length === 1 ? '' : 's'} targeted</small></header><div>{allLooks.slice(0, 8).map((look) => <button key={look.id} onClick={() => runLook(look)}><i style={{ background: lookSwatch(look.values) }} /><strong>{look.name}</strong></button>)}</div></section>
-        <section className="live-master"><header><span>GRAND MASTER</span><strong>{globalMaster}%</strong></header><input type="range" min="0" max={settings.masterLimit} value={globalMaster} onChange={(event) => applyGlobalMaster(Number(event.target.value))} /><div>{[0, 25, 50, 75, 100].map((value) => <button key={value} onClick={() => applyGlobalMaster(value)}>{value}%</button>)}</div></section>
-        <footer className="live-health"><span className={dmxStatus.connected ? 'healthy' : ''}>● {dmxStatus.connected ? 'DMX ONLINE' : 'VIRTUAL OUTPUT'}</span><span className={midiStatus.connected ? 'healthy' : ''}>● MIDI {midiStatus.connected ? 'CONNECTED' : 'OFFLINE'}</span><span>{tempoSource === 'midi' ? 'MIDI CLOCK' : 'INTERNAL'} · {tempoSource === 'midi' && midiBpm ? midiBpm : effectBpm} BPM</span><span>{formatShowTime(externalSongPositionMs || showTrackPositionMs)}</span></footer>
+      {workspace === 'live' && <section className="live-console live-console-v3">
+        <header className="live-command-bar">
+          <div className="live-show-state"><small>LIVE PERFORMANCE</small><strong>{showFile.name}</strong><span>{activeEffect ? `FX · ${EFFECT_PRESETS.find((item) => item.id === activeEffect)?.name ?? activeEffect}` : 'PROGRAM OUTPUT'}</span></div>
+          <div className="live-cue-deck">
+            <button className="live-back" onClick={goPreviousCue}>BACK</button>
+            <div className="live-cue-card current"><small>CURRENT</small><strong>{activeCue?.name ?? 'Ready'}</strong><span>{activeCue ? `Cue ${activeCue.number}` : 'No cue running'}</span></div>
+            <button className="live-go-v3" onClick={goNextCue} disabled={!nextCue}><b>GO</b><small>{nextCue?.name ?? 'END'}</small></button>
+            <div className="live-cue-card next"><small>NEXT</small><strong>{nextCue?.name ?? 'End of show'}</strong><span>{nextCue ? `Cue ${nextCue.number}` : '—'}</span></div>
+          </div>
+          <button className={`live-blackout-v3 ${dmxStatus.blackout ? 'active' : ''}`} onClick={toggleBlackout}>{dmxStatus.blackout ? 'RELEASE' : 'BLACKOUT'}</button>
+        </header>
+
+        <div className="live-operator-grid">
+          <aside className="live-executor-rail">
+            <header><span>EXECUTORS</span><small>LOOKS</small></header>
+            <div className="executor-grid">{allLooks.slice(0, 12).map((look, index) => <button key={look.id} className="executor-key" onClick={() => runLook(look)}><i style={{ background: lookSwatch(look.values) }} /><small>{String(index + 1).padStart(2, '0')}</small><strong>{look.name}</strong></button>)}</div>
+            <header><span>PERFORMANCE FX</span><button onClick={() => stopEffect()}>STOP FX</button></header>
+            <div className="executor-grid fx-executors">{EFFECT_PRESETS.filter((effect) => ['bump', 'blinder', 'strobe', 'pulse', 'sweep', 'lightning', 'finale', 'chase'].includes(effect.id) && effectSupportedByFixtures(effect.id, selectedFixtureTargets)).slice(0, 8).map((effect) => renderEffectButton(effect, true))}</div>
+          </aside>
+
+          <main className="live-playback-surface">
+            <div className="live-surface-toolbar">
+              <div><strong>PLAYBACK SURFACE</strong><small>{liveBank === 'fixtures' ? `${patch.length} FIXTURES` : `${fixtureGroups.length} GROUPS`}</small></div>
+              <div className="live-bank-tabs"><button className={liveBank === 'fixtures' ? 'active' : ''} onClick={() => setLiveBank('fixtures')}>FIXTURES</button><button className={liveBank === 'groups' ? 'active' : ''} onClick={() => setLiveBank('groups')}>GROUPS</button></div>
+              <div className="live-select-tools">{liveBank === 'fixtures' && <><button onClick={selectAllFixtures}>ALL</button><button onClick={clearFixtureSelection}>CLEAR</button></>}</div>
+            </div>
+            <div className="live-fader-deck">{liveBank === 'fixtures' ? patch.map((fixture) => <VerticalFader key={fixture.id} id={`live-${fixture.id}`} name={fixture.name} subtitle={fixtureBrowserSubtitle(fixture)} color={fixture.labelColor ?? '#55e98d'} value={fixtureIntensityPercent(universe, fixture)} selected={fixture.selected} onChange={(value) => void setFixtureAttribute(fixture, 'dimmer', percentToDmx(value))} onSelect={() => selectFixtureFromConsole(fixture.id, true)} onFx={() => selectFixtureFromConsole(fixture.id)} />) : fixtureGroups.map((group) => { const members = fixturesInGroup(patch, group); return <VerticalFader key={group.id} id={`live-${group.id}`} name={group.name} subtitle={`${members.length} fixtures`} color={group.labelColor} value={Math.round(groupMasters[group.id] ?? group.masterDefault)} selected={selectedGroupId === group.id} onChange={(value) => applyGroupMaster(group, value)} onSelect={() => selectFixtureGroup(group.id)} onFx={() => selectFixtureGroup(group.id)} quickAction={{ label: 'Chase', onPress: () => toggleEffect('chase', members.map((fixture) => fixture.id)) }} />; })}</div>
+          </main>
+
+          <aside className="live-master-rack">
+            <section className="live-master-card"><header><span>GRAND MASTER</span><strong>{globalMaster}%</strong></header><input className="live-master-slider" type="range" min="0" max={settings.masterLimit} value={globalMaster} onChange={(event) => applyGlobalMaster(Number(event.target.value))} /><div>{[0,25,50,75,100].map((value) => <button key={value} className={globalMaster === value ? 'active' : ''} onClick={() => applyGlobalMaster(value)}>{value}</button>)}</div></section>
+            <section className="live-viz-monitor"><header><span>LUMAVIZ</span><b className={directStatus.clients > 0 ? 'healthy' : ''}>{directStatus.clients > 0 ? 'LIVE' : 'LOCAL'}</b></header><div className="live-viz-stage">{renderStagePreview()}</div></section>
+            <section className="live-tempo-card"><span>TEMPO</span><button onClick={tapTempo}><strong>{tempoSource === 'midi' && midiBpm ? midiBpm : effectBpm}</strong><small>BPM · TAP</small></button><label>DEPTH <input type="range" min="0" max="100" value={effectDepth} onChange={(event) => { const value=Number(event.target.value); setEffectDepth(value); effectDepthRef.current=value; }} /></label></section>
+          </aside>
+        </div>
+
+        <footer className="live-system-strip"><span className={dmxStatus.connected ? 'healthy' : ''}>● DMX {dmxStatus.connected ? 'ONLINE' : 'VIRTUAL'}</span><span className={directStatus.clients > 0 ? 'healthy' : ''}>● VIZ {directStatus.clients > 0 ? 'LINKED' : 'WAITING'}</span><span className={studioBridgeStatus.connectedClients > 0 ? 'healthy' : ''}>● STUDIO {studioBridgeStatus.connectedClients > 0 ? 'LINKED' : 'WAITING'}</span><span className={midiStatus.connected ? 'healthy' : ''}>● MIDI {midiStatus.connected ? 'ONLINE' : 'OFF'}</span><b>{formatShowTime(externalSongPositionMs || showTrackPositionMs)}</b></footer>
       </section>}
 
       <footer className="console-footer"><span>{dmxStatus.last_error || midiStatus.last_error || message}</span><b>{patch.length} fixtures · {showFile.cues.length} cues · {showFile.recordings?.length ?? 0} takes · 40 Hz output{isFading ? ' · Fading' : ''}</b></footer>
