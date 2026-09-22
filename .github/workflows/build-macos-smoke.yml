@@ -3,6 +3,7 @@ name: Build macOS Smoke
 on:
   push:
     branches:
+      - main
       - build/artnet-smoke
 
 permissions:
@@ -65,7 +66,7 @@ jobs:
       - name: Upload LumaRig Art-Net test build
         uses: actions/upload-artifact@v4
         with:
-          name: LumaRig-ArtNet-macOS-universal
+          name: LumaRig-macOS-universal
           if-no-files-found: error
           path: |
             src-tauri/target/universal-apple-darwin/release/bundle/dmg/*.dmg
