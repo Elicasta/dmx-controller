@@ -23,6 +23,7 @@ export type ControlCommand =
   | { type: 'fixture.select'; fixtureIds: string[]; mode: 'replace' | 'add' | 'remove' | 'toggle' }
   | { type: 'fixture.attribute'; fixtureIds: string[]; parameter: FixtureParameter; value: number }
   | { type: 'fixture.color'; fixtureIds: string[]; color: { red: number; green: number; blue: number } }
+  | { type: 'fixture.flash.set'; fixtureIds: string[]; active: boolean }
   | { type: 'fixture.position'; positions: Array<{ fixtureId: string; panNormalized: number; tiltNormalized: number }> }
   | { type: 'fixture.target'; fixtureIds: string[]; target: Vec3; arrangement?: TargetArrangement; spreadMeters?: number }
   | { type: 'group.color'; groupName: string; color: { red: number; green: number; blue: number } }
