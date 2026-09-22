@@ -535,6 +535,16 @@ export default function App() {
   const [showFile, setShowFile] = useState<ShowFile>(loadShowFile);
   const [showLibrary, setShowLibrary] = useState<ShowProjectSnapshot[]>(loadShowLibrary);
   const [liveBank, setLiveBank] = useState<LiveBank>('fixtures');
+  const [liveView, setLiveView] = useState<LiveView>('performance');
+  const [liveExecutorBank, setLiveExecutorBank] = useState(0);
+  const [liveProgrammerOpen, setLiveProgrammerOpen] = useState(false);
+  const [livePaletteFamily, setLivePaletteFamily] = useState<'groups'|'intensity'|'position'|'color'|'beam'|'fx'>('groups');
+  const [controlSurfaceMode, setControlSurfaceMode] = useState<ControlSurfaceMode>('encoders');
+  const [controlSurfaceTab, setControlSurfaceTab] = useState<ControlSurfaceTab>('intensity');
+  const [inspectorTab, setInspectorTab] = useState<InspectorTab>('inspector');
+  const [customEffects, setCustomEffects] = useState<CustomEffect[]>([]);
+  const [fxEditor, setFxEditor] = useState<CustomEffect>({ id: 'custom-preview', name: 'New FX', parameter: 'dimmer', waveform: 'sine', bpm: 100, depth: 100, phaseSpread: 0, offset: 0 });
+  const [selectedFxBankId, setSelectedFxBankId] = useState<string>('pulse');
   const [settings, setSettings] = useState<AppSettings>(loadSettings);
   const settingsRef = useRef(settings);
   const [artNetTelemetry, setArtNetTelemetry] = useState({ framesSent: 0, lastError: "" });
