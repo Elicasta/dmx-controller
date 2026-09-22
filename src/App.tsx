@@ -3134,6 +3134,9 @@ export default function App() {
           selectedGroupId={selectedGroupId}
           assignmentIds={setupView === 'groups' ? assignmentIds : undefined}
           onToggleAssignment={setupView === 'groups' ? (fixtureId) => setAssignmentIds((current) => current.includes(fixtureId) ? current.filter((id) => id !== fixtureId) : [...current, fixtureId]) : undefined}
+          scenery={stageElements.map((element) => ({ id: element.id, label: element.label, type: element.type, color: element.color }))}
+          selectedSceneryId={selectedStageElementId}
+          onSelectScenery={(id) => { setSelectedStageElementId(id); clearFixtureSelection(); setSetupView('stage'); setStageMode('select'); }}
         />
 
         <div className="setup-center console-center">
@@ -3208,11 +3211,47 @@ export default function App() {
           {programMode === 'stage' && <div className="programmer-v3">
             <div className="programmer-stage-head"><div><span>PROGRAMMER</span><strong>{selectedFixtureTargets.length ? `${selectedFixtureTargets.length} fixture${selectedFixtureTargets.length === 1 ? '' : 's'} selected` : 'Select fixtures or a group'}</strong></div><div className="programmer-target-actions"><button onClick={selectAllFixtures}>ALL</button><button onClick={clearFixtureSelection}>CLEAR</button></div></div>
             <div className="programmer-stage">{renderStagePreview(true)}</div>
-            <div className="programmer-attribute-deck">
-              <section className="attribute-module intensity-module"><header><span>INTENSITY</span><strong>{selectedFixtureTargets.length ? 'SELECTED' : '—'}</strong></header><div className="attribute-faders">{selectedFixtureTargets.slice(0,8).map((fixture) => <VerticalFader key={fixture.id} id={`program-${fixture.id}`} name={fixture.name} subtitle={fixtureBrowserSubtitle(fixture)} color={fixture.labelColor ?? '#55e98d'} value={fixtureIntensityPercent(universe, fixture)} selected={fixture.selected} onChange={(value) => void setFixtureAttribute(fixture, 'dimmer', percentToDmx(value))} onSelect={() => selectFixtureFromConsole(fixture.id, true)} onFx={() => setProgramMode('fx')} />)}</div></section>
+            <div className="programmer-attribute-deck programmer-attribute-deck-v4">
+              <section className="attribute-module intensity-module">
+                <header><span>INTENSITY</span><strong>{selectedFixtureTargets.length ? 'SELECTED' : '—'}</strong></header>
+                <div className="attribute-faders">{selectedFixtureTargets.slice(0,8).map((fixture) => <VerticalFader key={fixture.id} id={`program-${fixture.id}`} name={fixture.name} subtitle={fixtureBrowserSubtitle(fixture)} color={fixture.labelColor ?? '#55e98d'} value={fixtureIntensityPercent(universe, fixture)} selected={fixture.selected} onChange={(value) => void setFixtureAttribute(fixture, 'dimmer', percentToDmx(value))} onSelect={() => selectFixtureFromConsole(fixture.id, true)} onFx={() => setProgramMode('fx')} />)}</div>
+              </section>
+
               <ColorDeck title="COLOR" subtitle={selectedFixtureTargets.length ? `${selectedFixtureTargets.length} selected` : 'Select fixtures'} color={globalColor} disabled={selectedCompatibleColors.length === 0} presets={consoleColorPresets} onChange={applyGlobalColor} />
-              <section className="attribute-module position-module"><header><span>POSITION</span><strong>{selectedMovingFixtures.length} MOVERS</strong></header><div className="position-actions">{showFile.positionPalettes?.slice(0,6).map((palette) => <button key={palette.id} onClick={() => void runPositionPalette(palette)}>{palette.name}</button>)}<button onClick={savePositionPalette}>＋ SAVE</button></div><div className="position-shortcuts"><button onClick={() => setStageMode('aim')}>AIM</button><button onClick={() => setStageMode('move')}>MOVE</button><button onClick={() => setStageMode('rotate')}>ROTATE</button></div></section>
-              <section className="attribute-module beam-module"><header><span>BEAM / GOBO</span><strong>SEMANTIC</strong></header><div className="beam-controls"><button onClick={() => toggleEffect('strobe', selectedFixtureTargets.map((fixture) => fixture.id))}>STROBE</button><button onClick={() => toggleEffect('pulse', selectedFixtureTargets.map((fixture) => fixture.id))}>PULSE</button><button onClick={() => setProgramMode('fx')}>OPEN FX</button></div></section>
+
+              <section className="attribute-module position-module">
+                <header><span>POSITION</span><strong>{selectedMovingFixtures.length} MOVERS</strong></header>
+                <div className="position-actions">{showFile.positionPalettes?.slice(0,4).map((palette) => <button key={palette.id} onClick={() => void runPositionPalette(palette)}>{palette.name}</button>)}<button onClick={savePositionPalette}>＋ SAVE</button></div>
+                <div className="position-shortcuts"><button onClick={() => { setWorkspace('build'); setSetupView('stage'); setStageMode('aim'); }}>AIM</button><button onClick={() => { setWorkspace('build'); setSetupView('stage'); setStageMode('move'); }}>MOVE</button><button onClick={() => { setWorkspace('build'); setSetupView('stage'); setStageMode('rotate'); }}>ROTATE</button></div>
+              </section>
+
+              <section className="attribute-module beam-module">
+                <header><span>BEAM</span><strong>OPTICS</strong></header>
+                <div className="semantic-button-grid">
+                  <button disabled={!selectedFixtureTargets.some((fixture) => parameterChannel(fixture,'zoom'))} onClick={() => selectedFixtureTargets.forEach((fixture) => parameterChannel(fixture,'zoom') && void setFixtureAttribute(fixture,'zoom',55))}>TIGHT</button>
+                  <button disabled={!selectedFixtureTargets.some((fixture) => parameterChannel(fixture,'zoom'))} onClick={() => selectedFixtureTargets.forEach((fixture) => parameterChannel(fixture,'zoom') && void setFixtureAttribute(fixture,'zoom',225))}>WIDE</button>
+                  <button disabled={!selectedFixtureTargets.some((fixture) => parameterChannel(fixture,'focus'))} onClick={() => selectedFixtureTargets.forEach((fixture) => parameterChannel(fixture,'focus') && void setFixtureAttribute(fixture,'focus',190))}>FOCUS</button>
+                  <button disabled={!selectedFixtureTargets.some((fixture) => parameterChannel(fixture,'prism'))} onClick={() => selectedFixtureTargets.forEach((fixture) => parameterChannel(fixture,'prism') && void setFixtureAttribute(fixture,'prism',255))}>PRISM</button>
+                </div>
+              </section>
+
+              <section className="attribute-module gobo-module">
+                <header><span>GOBO</span><strong>WHEEL</strong></header>
+                <div className="semantic-button-grid gobo-buttons">
+                  {[0,64,128,192].map((value,index) => <button key={value} disabled={!selectedFixtureTargets.some((fixture) => parameterChannel(fixture,'gobo'))} className={index===0 ? 'open' : ''} onClick={() => selectedFixtureTargets.forEach((fixture) => parameterChannel(fixture,'gobo') && void setFixtureAttribute(fixture,'gobo',value))}>{index===0 ? 'OPEN' : `G${index}`}</button>)}
+                  <button className="wide" disabled={!selectedFixtureTargets.some((fixture) => parameterChannel(fixture,'goboRotate'))} onClick={() => selectedFixtureTargets.forEach((fixture) => parameterChannel(fixture,'goboRotate') && void setFixtureAttribute(fixture,'goboRotate',190))}>ROTATE</button>
+                </div>
+              </section>
+
+              <section className="attribute-module fx-module">
+                <header><span>FX</span><strong>{liveEffectLabel || 'READY'}</strong></header>
+                <div className="semantic-button-grid">
+                  <button disabled={!effectSupportedByFixtures('pulse',selectedFixtureTargets)} className={activeEffect==='pulse'?'active':''} onClick={() => toggleEffect('pulse',selectedFixtureTargets.map((fixture)=>fixture.id))}>PULSE</button>
+                  <button disabled={!effectSupportedByFixtures('chase',selectedFixtureTargets)} className={activeEffect==='chase'?'active':''} onClick={() => toggleEffect('chase',selectedFixtureTargets.map((fixture)=>fixture.id))}>CHASE</button>
+                  <button disabled={!effectSupportedByFixtures('strobe',selectedFixtureTargets)} className={activeEffect==='strobe'?'active':''} onClick={() => toggleEffect('strobe',selectedFixtureTargets.map((fixture)=>fixture.id))}>STROBE</button>
+                  <button className="wide open-fx" onClick={() => setProgramMode('fx')}>OPEN FX EDITOR</button>
+                </div>
+              </section>
             </div>
             <LooksStrip looks={allLooks} onApply={runLook} onSave={saveCurrentLook} />
           </div>}
