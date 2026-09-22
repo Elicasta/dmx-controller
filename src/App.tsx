@@ -3195,7 +3195,60 @@ export default function App() {
 
           {programMode === 'looks' && <div className="create-focus-view"><header><div><span>LOOKS</span><h2>Reusable lighting looks</h2></div><button className="console-primary" onClick={saveCurrentLook}>＋ Save Current Look</button></header><LooksStrip looks={allLooks} onApply={runLook} onSave={saveCurrentLook} /></div>}
 
-          {programMode === 'fx' && <div className="create-focus-view fx-workbench"><header><div><span>FX WORKBENCH</span><h2>{programEffectName || 'Choose a fixture or group'}</h2></div><b>{activeEffect ? `RUNNING · ${activeEffect.toUpperCase()}` : 'READY'}</b></header><div className="fx-graph-stage"><div className="fx-wave-grid"><i/><i/><i/><i/><i/><span className={activeEffect ? 'running' : ''} /></div><div className="fx-readouts"><span><small>SPEED</small><strong>{effectBpm} BPM</strong></span><span><small>DEPTH</small><strong>{effectDepth}%</strong></span><span><small>TARGETS</small><strong>{programEffectFixtures.length}</strong></span></div></div><EffectsPanel title="FX BANK" targetName={programEffectName} fixtures={programEffectFixtures} activeEffect={activeEffect} bpm={effectBpm} depth={effectDepth} disabled={false} onBpmChange={(value) => { setEffectBpm(value); effectBpmRef.current = value; setTempoSource('manual'); }} onDepthChange={(value) => { setEffectDepth(value); effectDepthRef.current = value; }} onStart={(effect) => toggleEffect(effect, programEffectFixtures.map((fixture) => fixture.id))} onPress={(effect) => startMomentaryEffect(effect, programEffectFixtures.map((fixture) => fixture.id))} onRelease={releaseMomentaryEffect} onStop={() => stopEffect()} /></div>}
+          {programMode === 'fx' && <div className="create-focus-view fx-workbench fx-workbench-v4">
+            <header>
+              <div><span>FX WORKBENCH</span><h2>{programEffectName || 'Choose fixtures or a group'}</h2></div>
+              <b className={activeEffect || activeCustomEffectId ? 'healthy' : ''}>{activeCustomEffectId ? `CUSTOM · ${customEffects.find((effect) => effect.id === activeCustomEffectId)?.name ?? fxEditor.name}` : activeEffect ? `FACTORY · ${EFFECT_PRESETS.find((effect) => effect.id === activeEffect)?.name ?? activeEffect}` : 'READY'}</b>
+            </header>
+
+            <div className="fx-editor-layout">
+              <section className="fx-graph-editor">
+                <header><span>WAVEFORM</span><strong>{fxEditor.waveform.toUpperCase()} · {fxEditor.parameter.toUpperCase()}</strong></header>
+                <div className="fx-graph-canvas">
+                  <svg viewBox="0 0 600 120" preserveAspectRatio="none" aria-label="FX waveform preview">
+                    <defs><pattern id="fx-grid-v4" width="75" height="30" patternUnits="userSpaceOnUse"><path d="M 75 0 L 0 0 0 30" fill="none" stroke="rgba(115,132,142,.18)" strokeWidth="1"/></pattern></defs>
+                    <rect width="600" height="120" fill="url(#fx-grid-v4)"/>
+                    <line x1="0" y1="110" x2="600" y2="110" stroke="rgba(115,132,142,.28)" strokeWidth="1"/>
+                    <polyline className={activeCustomEffectId === fxEditor.id ? 'running' : ''} points={fxGraphPoints(fxEditor.waveform, fxEditor.depth, fxEditor.offset)} fill="none" strokeWidth="3" vectorEffect="non-scaling-stroke"/>
+                  </svg>
+                </div>
+                <div className="fx-editor-readouts">
+                  <span><small>BPM</small><strong>{fxEditor.bpm}</strong></span>
+                  <span><small>DEPTH</small><strong>{fxEditor.depth}%</strong></span>
+                  <span><small>PHASE</small><strong>{fxEditor.phaseSpread}%</strong></span>
+                  <span><small>BASE</small><strong>{fxEditor.offset}%</strong></span>
+                  <span><small>TARGETS</small><strong>{programEffectFixtures.length}</strong></span>
+                </div>
+              </section>
+
+              <section className="fx-editor-controls">
+                <header><span>FX PARAMETERS</span><small>Graphical generator</small></header>
+                <label><span>Name</span><input value={fxEditor.name} onChange={(event) => setFxEditor((current) => ({ ...current, name: event.target.value }))}/></label>
+                <div className="inspector-pair">
+                  <label><span>Parameter</span><select value={fxEditor.parameter} onChange={(event) => setFxEditor((current) => ({ ...current, parameter: event.target.value as EffectParameter }))}><option value="dimmer">Dimmer</option><option value="pan">Pan</option><option value="tilt">Tilt</option><option value="uv">UV</option></select></label>
+                  <label><span>Waveform</span><select value={fxEditor.waveform} onChange={(event) => setFxEditor((current) => ({ ...current, waveform: event.target.value as EffectWaveform }))}><option value="sine">Sine</option><option value="triangle">Triangle</option><option value="square">Square</option><option value="saw">Saw</option><option value="reverse-saw">Reverse Saw</option><option value="step">Step</option></select></label>
+                </div>
+                <label><span>Speed · {fxEditor.bpm} BPM</span><input type="range" min="20" max="300" value={fxEditor.bpm} onChange={(event) => setFxEditor((current) => ({ ...current, bpm: Number(event.target.value) }))}/></label>
+                <label><span>Depth · {fxEditor.depth}%</span><input type="range" min="0" max="100" value={fxEditor.depth} onChange={(event) => setFxEditor((current) => ({ ...current, depth: Number(event.target.value) }))}/></label>
+                <label><span>Phase Spread · {fxEditor.phaseSpread}%</span><input type="range" min="0" max="100" value={fxEditor.phaseSpread} onChange={(event) => setFxEditor((current) => ({ ...current, phaseSpread: Number(event.target.value) }))}/></label>
+                <label><span>Base · {fxEditor.offset}%</span><input type="range" min="0" max="100" value={fxEditor.offset} onChange={(event) => setFxEditor((current) => ({ ...current, offset: Number(event.target.value) }))}/></label>
+                <div className="fx-editor-actions">
+                  <button className={activeCustomEffectId === fxEditor.id ? 'danger-button' : 'console-primary'} disabled={!programEffectFixtures.length} onClick={() => runCustomFx(fxEditor, programEffectFixtures.map((fixture) => fixture.id))}>{activeCustomEffectId === fxEditor.id ? 'STOP FX' : 'RUN FX'}</button>
+                  <button onClick={saveCustomFx}>SAVE TO BANK</button>
+                  {(activeEffect || activeCustomEffectId) && <button onClick={() => stopEffect()}>STOP ALL</button>}
+                </div>
+              </section>
+            </div>
+
+            <section className="fx-bank-v4">
+              <header><div><span>FX BANK</span><strong>Factory + saved custom effects</strong></div><small>{EFFECT_PRESETS.length + customEffects.length} effects</small></header>
+              <div className="fx-bank-grid">
+                {EFFECT_PRESETS.map((effect) => <button key={effect.id} className={`${selectedFxBankId === effect.id ? 'selected' : ''} ${activeEffect === effect.id ? 'running' : ''}`} onClick={() => loadFactoryFx(effect)} onDoubleClick={() => toggleEffect(effect.id, programEffectFixtures.map((fixture) => fixture.id))}><i className={`fx-icon fx-${effect.id}`}/><span><strong>{effect.name}</strong><small>{EFFECT_SHAPES[effect.id].waveform} · {effect.defaultBpm} BPM</small></span><b>{activeEffect === effect.id ? 'LIVE' : 'FACTORY'}</b></button>)}
+                {customEffects.map((effect) => <article key={effect.id} className={`${selectedFxBankId === effect.id ? 'selected' : ''} ${activeCustomEffectId === effect.id ? 'running' : ''}`}><button className="fx-bank-load" onClick={() => { setSelectedFxBankId(effect.id); setFxEditor(effect); }} onDoubleClick={() => runCustomFx(effect, programEffectFixtures.map((fixture) => fixture.id))}><i>∿</i><span><strong>{effect.name}</strong><small>{effect.waveform} · {effect.bpm} BPM</small></span><b>{activeCustomEffectId === effect.id ? 'LIVE' : 'CUSTOM'}</b></button><button className="fx-bank-delete" aria-label={`Delete ${effect.name}`} onClick={() => deleteCustomFx(effect.id)}>×</button></article>)}
+              </div>
+              <footer><span>Single click loads an effect into the graph. Double-click a bank item to run it immediately.</span><button onClick={() => { setFxEditor({ id: 'custom-preview', name: 'New FX', parameter: 'dimmer', waveform: 'sine', bpm: 100, depth: 100, phaseSpread: 0, offset: 0 }); setSelectedFxBankId('custom-preview'); }}>＋ NEW FX</button></footer>
+            </section>
+          </div>}
 
           {programMode === 'colors' && <div className="create-focus-view"><header><div><span>COLOR PALETTES</span><h2>Fixture-aware color programming</h2></div></header><ColorDeck title="SELECTED COLOR" subtitle={selectedFixtureTargets.length ? `${selectedFixtureTargets.length} selected fixtures` : 'Select fixtures'} color={globalColor} disabled={selectedCompatibleColors.length === 0} presets={consoleColorPresets} onChange={applyGlobalColor} /><section className="palette-library-v3"><header><span>QUICK PALETTES</span><small>Applies to selected compatible fixtures</small></header><div>{consoleColorPresets.map((preset) => <button key={preset.name} disabled={selectedCompatibleColors.length === 0} onClick={() => applyGlobalColor(preset.color)}><i style={{background:preset.color}}/><strong>{preset.name}</strong><small>{preset.color.toUpperCase()}</small></button>)}</div></section></div>}
 
