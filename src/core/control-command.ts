@@ -13,6 +13,7 @@ export type ControlSource =
   | 'sync'
   | 'audio'
   | 'surface'
+  | 'remote'
   | 'system';
 
 export type ControlCommand =
