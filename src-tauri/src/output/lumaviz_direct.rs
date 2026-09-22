@@ -48,6 +48,7 @@ pub struct DirectStatus {
 struct Shared {
     clients: Vec<WebSocket<TcpStream>>,
     last_error: Option<String>,
+    incoming: Vec<String>,
 }
 
 #[derive(Clone, Default)]
@@ -132,6 +133,32 @@ impl LumaVizDirectEngine {
         Ok(())
     }
 
+    pub fn broadcast_message(&self, payload: String) -> Result<(), String> {
+        if let Ok(mut shared) = self.shared.lock() {
+            shared.clients.retain_mut(|socket| socket.send(Message::Text(payload.clone().into())).is_ok());
+        }
+        Ok(())
+    }
+
+    pub fn poll_incoming(&self) -> Vec<String> {
+        let mut messages = Vec::new();
+        if let Ok(mut shared) = self.shared.lock() {
+            let mut received = Vec::new();
+            shared.clients.retain_mut(|socket| loop {
+                match socket.read() {
+                    Ok(Message::Text(text)) => { received.push(text.to_string()); continue; }
+                    Ok(Message::Close(_)) => return false,
+                    Ok(_) => continue,
+                    Err(tungstenite::Error::Io(error)) if error.kind() == std::io::ErrorKind::WouldBlock => return true,
+                    Err(_) => return false,
+                }
+            });
+            shared.incoming.extend(received);
+            messages.append(&mut shared.incoming);
+        }
+        messages
+    }
+
     pub fn status(&self) -> DirectStatus {
         let (clients, last_error) = self.shared.lock()
             .map(|shared| (shared.clients.len() as u64, shared.last_error.clone()))
@@ -178,6 +205,19 @@ pub fn send_lumaviz_fixture_frame(
     frame: DirectFixtureFrame,
 ) -> Result<(), String> {
     engine.broadcast(frame)
+}
+
+#[tauri::command]
+pub fn poll_lumaviz_direct_messages(engine: tauri::State<'_, LumaVizDirectEngine>) -> Vec<String> {
+    engine.poll_incoming()
+}
+
+#[tauri::command]
+pub fn send_lumaviz_direct_message(
+    engine: tauri::State<'_, LumaVizDirectEngine>,
+    payload: String,
+) -> Result<(), String> {
+    engine.broadcast_message(payload)
 }
 
 #[cfg(test)]
