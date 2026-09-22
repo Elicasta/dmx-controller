@@ -7,6 +7,7 @@ export interface SharedLocationPreset {
   cameras:Array<{id:string;name:string;position:{x:number;y:number;z:number};target:{x:number;y:number;z:number}}>;
 }
 export const CORNERSTONE_LOCATION_ID='cornerstone-main-sanctuary';
+export const ROSEN_SIGNATURE_2_AD26_LOCATION_ID='rosen-signature-2-ad26';
 export function locationStagePatch(location:SharedLocationPreset):Partial<StageSettings>{
   return { dimensions: { width:location.dimensions.roomWidth, depth:location.dimensions.roomDepth, height:location.dimensions.ceilingHeight } } as Partial<StageSettings>;
 }
