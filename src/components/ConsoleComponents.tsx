@@ -22,6 +22,9 @@ type FixtureBrowserProps = {
   selectedGroupId?: string | null;
   assignmentIds?: readonly string[];
   onToggleAssignment?: (fixtureId: string) => void;
+  scenery?: ReadonlyArray<{ id: string; label: string; type: string; color: string }>;
+  selectedSceneryId?: string | null;
+  onSelectScenery?: (id: string) => void;
 };
 
 export const FixtureBrowser = memo(function FixtureBrowser({
@@ -35,7 +38,10 @@ export const FixtureBrowser = memo(function FixtureBrowser({
   onSelectGroup,
   selectedGroupId,
   assignmentIds,
-  onToggleAssignment
+  onToggleAssignment,
+  scenery = [],
+  selectedSceneryId,
+  onSelectScenery
 }: FixtureBrowserProps) {
   const [collapsed, setCollapsed] = useState<Record<string, boolean>>({});
   const query = search.trim().toLowerCase();
@@ -77,6 +83,10 @@ export const FixtureBrowser = memo(function FixtureBrowser({
       {(unassigned.length > 0 || groups.length === 0) && <section className="browser-group">
         <div className="browser-group-title"><button className="browser-collapse">⌄</button><button className="browser-group-select"><i className="unassigned" /><strong>Unassigned</strong><b>{unassigned.length}</b></button></div>
         <div className="browser-fixtures">{unassigned.map((fixture) => <button key={fixture.id} className={`${fixture.selected ? 'active' : ''} no-checkbox`} onClick={(event) => onSelectFixture(fixture.id, event.metaKey || event.ctrlKey || event.shiftKey)}><i style={{ background: fixture.labelColor ?? '#64748b' }} /><span><strong>{fixture.name}</strong><small>{fixtureFootprintLabel(fixture)}</small></span></button>)}</div>
+      </section>}
+      {scenery.length > 0 && <section className="browser-group browser-scenery">
+        <div className="browser-group-title"><button className="browser-collapse" aria-hidden="true">⌄</button><button className="browser-group-select" type="button"><i className="scenery-dot" /><strong>Scenery</strong><b>{scenery.length}</b></button></div>
+        <div className="browser-fixtures">{scenery.map((item) => <button key={item.id} className={`${selectedSceneryId === item.id ? 'active' : ''} no-checkbox`} onClick={() => onSelectScenery?.(item.id)}><i style={{ background: item.color }} /><span><strong>{item.label}</strong><small>{item.type.replace(/-/g, ' ')}</small></span></button>)}</div>
       </section>}
     </div>
   </aside>;
