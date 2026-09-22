@@ -61,6 +61,7 @@ export class ShowRuntime {
   private lastCommand: ControlCommandEnvelope | null = null;
   private sourceTrace = new Map<string, AttributeSourceTrace>();
   private groupMasters = new Map<string, number>();
+  private flashFixtureIds = new Set<string>();
 
   constructor(initial?: { frame?: readonly number[]; patch?: readonly PatchedFixture[] }) {
     if (initial?.frame) {
@@ -137,6 +138,11 @@ export class ShowRuntime {
         command.color.blue
       ]));
       nextBase = applyUniverseUpdates(previousBase, updates);
+    } else if (command.type === 'fixture.flash.set') {
+      for (const fixtureId of command.fixtureIds) {
+        if (command.active) this.flashFixtureIds.add(fixtureId);
+        else this.flashFixtureIds.delete(fixtureId);
+      }
     } else if (command.type === 'fixture.position') {
       const positions = new Map(command.positions.map((position) => [position.fixtureId, position]));
       const updates = this.patch
@@ -229,7 +235,8 @@ export class ShowRuntime {
         const dimmer = parameterChannel(fixture, 'dimmer');
         if (!dimmer) return;
         const groupMaster = this.groupMasters.get(fixture.group) ?? 1;
-        next[dimmer - 1] = clampDmx((base[dimmer - 1] ?? 0) * groupMaster * this.master);
+        const sourceDimmer = this.flashFixtureIds.has(fixture.id) ? 255 : (base[dimmer - 1] ?? 0);
+        next[dimmer - 1] = clampDmx(sourceDimmer * groupMaster * this.master);
       });
     return next;
   }
