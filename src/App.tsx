@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ChangeEvent, type PointerEvent as ReactPointerEvent } from 'react';
-import { lumaVizDirectStatus, semanticFrameFromResolvedOutput, sendLumaVizDirectFrame, startLumaVizDirect, type LumaVizDirectStatus } from './core/lumaviz-direct';
+import { lumaVizDirectStatus, pollLumaVizDirectMessages, semanticFrameFromResolvedOutput, sendLumaVizDirectFrame, sendLumaVizDirectMessage, startLumaVizDirect, type LumaVizDirectStatus, type SharedShowPatchMutation } from './core/lumaviz-direct';
 import { invoke } from '@tauri-apps/api/core';
 import {
   applyUniverseUpdates,
@@ -522,7 +522,60 @@ export default function App() {
   const settingsRef = useRef(settings);
   const [artNetTelemetry, setArtNetTelemetry] = useState({ framesSent: 0, lastError: "" });
   const [directStatus, setDirectStatus] = useState<LumaVizDirectStatus>({ listening: false, port: 9460, clients: 0, framesSent: 0 });
+  const sharedShowRevisionRef = useRef(1);
   const directSequenceRef = useRef(0);
+  useEffect(() => {
+    const timer = window.setInterval(() => {
+      void pollLumaVizDirectMessages().then((messages) => {
+        for (const message of messages) {
+          if (!message || typeof message !== 'object' || (message as { type?: string }).type !== 'shared-show.patch.update') continue;
+          const mutation = message as SharedShowPatchMutation;
+          if (mutation.source !== 'lumaviz') continue;
+          setPatch((current) => {
+            const index = current.findIndex((fixture) => fixture.id === mutation.fixture.id);
+            if (index < 0) return current;
+            const existing = current[index];
+            const candidate = migratePatchedFixture({
+              ...existing,
+              name: mutation.fixture.name || existing.name,
+              profileId: mutation.fixture.profileId,
+              modeId: mutation.fixture.modeId,
+              universe: mutation.fixture.universe,
+              address: mutation.fixture.address,
+              group: mutation.fixture.group ?? existing.group,
+              transform: mutation.fixture.position && mutation.fixture.rotation ? {
+                position: mutation.fixture.position,
+                rotation: { yaw: mutation.fixture.rotation.y, pitch: mutation.fixture.rotation.x, roll: mutation.fixture.rotation.z }
+              } : existing.transform
+            }, index, current.length, stageSettings.dimensions);
+            const error = validatePatch(candidate, current);
+            if (error) { setMessage(`LumaViz patch rejected: ${error}`); return current; }
+            sharedShowRevisionRef.current = Math.max(sharedShowRevisionRef.current + 1, mutation.revision + 1);
+            setMessage(`${candidate.name} updated from LumaViz · shared revision ${sharedShowRevisionRef.current}.`);
+            return current.map((fixture) => fixture.id === candidate.id ? candidate : fixture);
+          });
+        }
+      });
+    }, 150);
+    return () => window.clearInterval(timer);
+  }, [stageSettings.dimensions]);
+
+  useEffect(() => {
+    if (!directStatus.clients) return;
+    void sendLumaVizDirectMessage({
+      type: 'shared-show.snapshot',
+      revision: sharedShowRevisionRef.current,
+      source: 'lumarig',
+      show: { id: showFile.name, name: showFile.name },
+      patch: patch.map((fixture) => ({
+        id: fixture.id, name: fixture.name, profileId: fixture.profileId, modeId: fixture.modeId,
+        universe: fixture.universe ?? 1, address: fixture.address, group: fixture.group,
+        transform: fixture.transform
+      })),
+      library: showLibrary.map((item) => ({ id: item.id, name: item.name, savedAt: item.savedAt, status: item.status }))
+    });
+  }, [patch, showFile.name, showLibrary, directStatus.clients]);
+
   const [remoteRelayConfig, setRemoteRelayConfig] = useState<RemoteRelayConfig>(loadRemoteRelayConfig);
   const [remoteRelayStatus, setRemoteRelayStatus] = useState<RemoteRelayStatus>('disconnected');
   const [remoteRelayError, setRemoteRelayError] = useState('');
