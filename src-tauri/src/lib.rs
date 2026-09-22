@@ -89,6 +89,8 @@ pub fn run() {
             output::lumaviz_direct::start_lumaviz_direct,
             output::lumaviz_direct::lumaviz_direct_status,
             output::lumaviz_direct::send_lumaviz_fixture_frame,
+            output::lumaviz_direct::poll_lumaviz_direct_messages,
+            output::lumaviz_direct::send_lumaviz_direct_message,
             list_midi_inputs,
             connect_midi,
             disconnect_midi,
