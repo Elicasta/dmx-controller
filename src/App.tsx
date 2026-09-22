@@ -10,7 +10,7 @@ import {
   VISIBLE_CHANNELS,
   type DmxUpdate
 } from './lib/dmx';
-import { EFFECT_PRESETS, renderEffect, type EffectId, type EffectPreset } from './lib/effects';
+import { EFFECT_PRESETS, EFFECT_SHAPES, effectWaveValue, renderEffect, renderCustomEffect, type CustomEffect, type EffectId, type EffectParameter, type EffectPreset, type EffectWaveform } from './lib/effects';
 import {
   DEFAULT_PATCH,
   FIXTURE_LIBRARY,
@@ -121,10 +121,15 @@ import { StudioBridgeDispatcher } from './core/studio-bridge-dispatcher';
 import type { StudioBridgeCommand, StudioSongIdentity } from './core/studio-bridge-protocol';
 
 type Workspace = 'setup' | 'program' | 'show' | 'live';
+const WORKSPACE_LABELS: Record<Workspace, string> = { setup: 'CREATE', program: 'PROGRAM', show: 'SHOW', live: 'LIVE' };
 type SetupView = 'fixtures' | 'groups' | 'patch' | 'stage' | 'settings';
-type ProgramMode = 'stage' | 'faders' | 'groups';
+type ProgramMode = 'stage' | 'faders' | 'groups' | 'fx';
+type ControlSurfaceMode = 'encoders' | 'faders' | 'xy' | 'palettes';
+type ControlSurfaceTab = 'intensity' | 'color' | 'position' | 'beam' | 'gobo' | 'fx' | 'speed';
+type InspectorTab = 'inspector' | 'history' | 'sync';
 type ShowMode = 'cues' | 'tracks' | 'library';
 type LiveBank = 'fixtures' | 'groups';
+type LiveView = 'performance' | 'fixtures' | 'groups' | 'masters' | 'shortcuts';
 
 type ShowProjectSnapshot = {
   id: string;
@@ -515,7 +520,7 @@ function FixturePatchEditor({ fixture, onSave, onRemove, onToggleSelected, onTog
 export default function App() {
   const [workspace, setWorkspace] = useState<Workspace>(() => initialConsoleValue('workspace', ['setup', 'program', 'show', 'live'], 'program'));
   const [setupView, setSetupView] = useState<SetupView>(() => initialConsoleValue('setup', ['fixtures', 'groups', 'patch', 'stage', 'settings'], 'stage'));
-  const [programMode, setProgramMode] = useState<ProgramMode>(() => initialConsoleValue('program', ['stage', 'faders', 'groups'], 'faders'));
+  const [programMode, setProgramMode] = useState<ProgramMode>(() => initialConsoleValue('program', ['stage', 'faders', 'groups', 'fx'], 'faders'));
   const [showMode, setShowMode] = useState<ShowMode>(() => initialConsoleValue('show', ['cues', 'tracks'], 'cues'));
   const [fixtureSearch, setFixtureSearch] = useState('');
   const [selectedGroupId, setSelectedGroupId] = useState<string | null>(null);
@@ -530,6 +535,16 @@ export default function App() {
   const [showFile, setShowFile] = useState<ShowFile>(loadShowFile);
   const [showLibrary, setShowLibrary] = useState<ShowProjectSnapshot[]>(loadShowLibrary);
   const [liveBank, setLiveBank] = useState<LiveBank>('fixtures');
+  const [liveView, setLiveView] = useState<LiveView>('performance');
+  const [liveExecutorBank, setLiveExecutorBank] = useState(0);
+  const [liveProgrammerOpen, setLiveProgrammerOpen] = useState(false);
+  const [livePaletteFamily, setLivePaletteFamily] = useState<'groups'|'intensity'|'position'|'color'|'beam'|'fx'>('groups');
+  const [controlSurfaceMode, setControlSurfaceMode] = useState<ControlSurfaceMode>('encoders');
+  const [controlSurfaceTab, setControlSurfaceTab] = useState<ControlSurfaceTab>('intensity');
+  const [inspectorTab, setInspectorTab] = useState<InspectorTab>('inspector');
+  const [customEffects, setCustomEffects] = useState<CustomEffect[]>([]);
+  const [fxEditor, setFxEditor] = useState<CustomEffect>({ id: 'custom-preview', name: 'New FX', parameter: 'dimmer', waveform: 'sine', bpm: 100, depth: 100, phaseSpread: 0, offset: 0 });
+  const [selectedFxBankId, setSelectedFxBankId] = useState<string>('pulse');
   const [settings, setSettings] = useState<AppSettings>(loadSettings);
   const settingsRef = useRef(settings);
   const [artNetTelemetry, setArtNetTelemetry] = useState({ framesSent: 0, lastError: "" });
@@ -1706,13 +1721,13 @@ export default function App() {
       goCue: (cueId) => {
         const cue = cueId ? showFile.cues.find((item) => item.id === cueId) : nextCue;
         if (!cue) throw new Error('No LumaRig cue is available.');
-        fadeToUniverse(cue.name, cue.universe, cue.fadeMs, 'remote');
+        fadeToUniverse(cue.name, cue.universe ?? makeUniverse(), cue.fadeMs, 'sync');
         setActiveCueId(cue.id);
       },
       fireScene: (sceneId) => {
         const cue = showFile.cues.find((item) => item.id === sceneId);
         if (!cue) throw new Error('LumaRig scene was not found.');
-        fadeToUniverse(cue.name, cue.universe, cue.fadeMs, 'remote');
+        fadeToUniverse(cue.name, cue.universe ?? makeUniverse(), cue.fadeMs, 'sync');
         setActiveCueId(cue.id);
       },
       startEffect: (effectId) => {
@@ -1738,7 +1753,7 @@ export default function App() {
         playShowRecording(recording, { external: true, positionMs: offsetMs });
       },
       stopRecordingPlayback: () => stopRecordedShowPlayback(false),
-      setBlackout: (enabled) => setBlackoutState(enabled, 'remote'),
+      setBlackout: (enabled) => setBlackoutState(enabled, 'sync'),
       syncTransport: (playing, positionMs, bpm) => {
         setExternalSongPositionMs(positionMs);
         externalSongPositionMsRef.current = positionMs;
@@ -2880,7 +2895,7 @@ export default function App() {
     <main className={`console-app workspace-${workspace} ${dmxStatus.blackout ? 'blackout-is-active' : ''}`}>
       <header className="console-header">
         <div className="console-brand"><span className="brand-mark">◆</span><div><small>SHOW</small><input aria-label="Current show name" value={showFile.name} onChange={(event) => setShowFile((current) => ({ ...current, name: event.target.value }))} /></div></div>
-        <nav className="console-workspace-tabs" aria-label="Workspace">{(['setup', 'program', 'show', 'live'] as Workspace[]).map((item) => <button key={item} className={workspace === item ? 'active' : ''} onClick={() => setWorkspace(item)}>{item.toUpperCase()}</button>)}</nav>
+        <nav className="console-workspace-tabs" aria-label="Workspace">{(['setup', 'program', 'show', 'live'] as Workspace[]).map((item) => <button key={item} className={workspace === item ? 'active' : ''} onClick={() => setWorkspace(item)}>{WORKSPACE_LABELS[item]}</button>)}</nav>
         <div className="console-header-status">
           <button className="tempo-pill" onClick={tapTempo}><strong>{tempoSource === 'midi' && midiBpm ? midiBpm : effectBpm} BPM</strong><small>{tempoSource === 'midi' ? 'MIDI CLOCK' : 'TAP'}</small></button>
           <button className={`connection-pill ${dmxStatus.connected ? 'online' : ''}`} onClick={() => { setWorkspace('setup'); setSetupView('settings'); }}><i />{dmxStatus.connected ? 'DMX Connected' : 'Virtual Output'}</button>
@@ -2978,7 +2993,7 @@ export default function App() {
       {workspace === 'program' && <section className="console-workspace program-console">
         <FixtureBrowser patch={patch} groups={fixtureGroups} search={fixtureSearch} onSearchChange={setFixtureSearch} onSelectAll={selectAllFixtures} onClearSelection={clearFixtureSelection} onSelectFixture={selectFixtureFromConsole} onSelectGroup={selectFixtureGroup} selectedGroupId={selectedGroupId} />
         <div className="program-center console-center">
-          <nav className="workspace-subtabs program-subtabs">{([['stage', 'Stage View'], ['faders', 'Fader Mode'], ['groups', 'Groups']] as Array<[ProgramMode, string]>).map(([id, label]) => <button key={id} className={programMode === id ? 'active' : ''} onClick={() => setProgramMode(id)}>{label}</button>)}</nav>
+          <nav className="workspace-subtabs program-subtabs">{([['stage', 'RIG'], ['faders', 'FIXTURES'], ['groups', 'GROUPS'], ['fx', 'FX EDITOR']] as Array<[ProgramMode, string]>).map(([id, label]) => <button key={id} className={programMode === id ? 'active' : ''} onClick={() => setProgramMode(id)}>{label}</button>)}</nav>
           {programMode !== 'stage' && <ColorDeck title={programMode === 'groups' ? 'GROUP COLOR' : 'GLOBAL COLOR'} subtitle={programMode === 'groups' ? selectedGroup?.name ?? 'Select a group' : selectedFixtureTargets.length ? `${selectedFixtureTargets.length} selected fixture${selectedFixtureTargets.length === 1 ? '' : 's'}` : 'Select fixtures before applying color'} color={globalColor} disabled={programMode === 'groups' ? !selectedGroup || compatibleColorFixtures(selectedGroupFixtures).length === 0 : selectedCompatibleColors.length === 0} presets={consoleColorPresets} onChange={(color) => programMode === 'groups' && selectedGroup ? applyGroupColor(selectedGroup, color) : applyGlobalColor(color)} />}
           {programMode === 'faders' && <section className="fader-bank"><header><span>FIXTURE FADERS</span><strong>Fixture-level brightness · semantic dimmer</strong></header><div>{patch.map((fixture) => <VerticalFader key={fixture.id} id={fixture.id} name={fixture.name} subtitle={fixtureBrowserSubtitle(fixture)} color={fixture.labelColor ?? '#55e98d'} value={fixtureIntensityPercent(universe, fixture)} selected={fixture.selected} onChange={(value) => void setFixtureAttribute(fixture, 'dimmer', percentToDmx(value))} onSelect={() => selectFixtureFromConsole(fixture.id, true)} onFx={() => selectFixtureFromConsole(fixture.id)} />)}</div></section>}
           {programMode === 'groups' && <section className="fader-bank"><header><span>GROUP MASTERS</span><strong>Non-destructive output multipliers</strong></header><div>{fixtureGroups.map((group) => { const members = fixturesInGroup(patch, group); return <VerticalFader key={group.id} id={group.id} name={group.name} subtitle={`${members.length} fixtures`} color={group.labelColor} value={Math.round(groupMasters[group.id] ?? group.masterDefault)} selected={selectedGroupId === group.id} onChange={(value) => applyGroupMaster(group, value)} onSelect={() => selectFixtureGroup(group.id)} onFx={() => selectFixtureGroup(group.id)} quickAction={{ label: 'Chase', onPress: () => startEffect('chase', members.map((fixture) => fixture.id)) }} />; })}</div></section>}

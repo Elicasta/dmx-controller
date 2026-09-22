@@ -165,3 +165,26 @@ export async function pollLumaVizDirectMessages(): Promise<unknown[]> {
 export async function sendLumaVizDirectMessage(message: unknown): Promise<void> {
   await invoke('send_lumaviz_direct_message', { payload: JSON.stringify(message) });
 }
+
+
+export async function sendLumaVizStageChange(change: unknown): Promise<void> {
+  await sendLumaVizDirectMessage({ type: 'stage-change', change });
+}
+
+export async function drainLumaVizStageChanges<T = unknown>(): Promise<T[]> {
+  const messages = await pollLumaVizDirectMessages();
+  return messages.filter((message): message is T => Boolean(message && typeof message === 'object' && (message as {type?:string}).type === 'stage-change'));
+}
+
+export type LumaVizPreviewFrame = {
+  type: 'preview-frame';
+  dataUrl: string;
+  timestamp: number;
+  view?: string;
+};
+
+export async function lumaVizPreviewFrame(): Promise<LumaVizPreviewFrame | null> {
+  const messages = await pollLumaVizDirectMessages();
+  const previews = messages.filter((message): message is LumaVizPreviewFrame => Boolean(message && typeof message === 'object' && (message as {type?:string}).type === 'preview-frame'));
+  return previews.at(-1) ?? null;
+}
