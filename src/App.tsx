@@ -2689,7 +2689,7 @@ export default function App() {
         const group = fixtureGroups.find((item) => item.name === command.groupName);
         if (!group) throw new Error('That fixture group is not available.');
         applyGroupMaster(group, command.value * 100);
-      } else if (['fixture.select', 'fixture.attribute', 'fixture.color', 'fixture.position', 'fixture.target', 'group.color'].includes(type)) {
+      } else if (['fixture.select', 'fixture.attribute', 'fixture.color', 'fixture.flash.set', 'fixture.position', 'fixture.target', 'group.color'].includes(type)) {
         await dispatchControl(command as ControlCommand, 'surface');
       } else {
         throw new Error(`Unsupported remote command: ${type || 'unknown'}`);
@@ -2704,8 +2704,9 @@ export default function App() {
 
   function remoteStateSnapshot() {
     const bpm = tempoSource === 'midi' && midiBpm ? midiBpm : effectBpm;
+    const runtimeSnapshot = runtimeRef.current?.snapshot;
     return {
-      revision: runtimeRef.current?.snapshot.revision ?? 0,
+      revision: runtimeSnapshot?.revision ?? 0,
       showName: showFile.name,
       stage: {
         view: stageView,
@@ -2727,6 +2728,7 @@ export default function App() {
       master: globalMaster / 100,
       blackout: dmxStatus.blackout,
       bpm,
+      fxDepth: effectDepth / 100,
       tempoSource: tempoSource === 'midi' ? 'MIDI Clock' : 'Internal',
       outputHealthy: !dmxStatus.last_error,
       dmxConnected: dmxStatus.connected,
@@ -2739,6 +2741,11 @@ export default function App() {
         const mode = findMode(fixture);
         const values = fixtureValues(outputUniverse, fixture);
         const geometry = fixtureGeometryState(outputUniverse, fixture, index, patch.length, stageSettings.dimensions);
+        const capabilities = [...new Set(mode?.channels.map((channel) => channel.parameter).filter((parameter): parameter is FixtureParameter => Boolean(parameter)) ?? [])];
+        const attributes = Object.fromEntries(capabilities.map((parameter) => [
+          parameter,
+          readFixtureParameter(outputUniverse, fixture, parameter) / 255
+        ]));
         return {
           id: fixture.id,
           name: fixture.name,
@@ -2746,7 +2753,8 @@ export default function App() {
           labelColor: fixture.labelColor ?? '#55f29a',
           intensity: values.dimmer / 255,
           color: rgbToHex(values.red, values.green, values.blue),
-          capabilities: [...new Set(mode?.channels.map((channel) => channel.parameter).filter((parameter): parameter is FixtureParameter => Boolean(parameter)) ?? [])],
+          capabilities,
+          attributes,
           stagePosition: { ...geometry.beam.origin },
           beamDirection: { ...geometry.beam.direction },
           beamAngleDegrees: geometry.beam.angleDegrees,
@@ -2755,7 +2763,13 @@ export default function App() {
           movementCapable: geometry.movementCapable
         };
       }),
-      groups: fixtureGroups.map((group) => ({ id: group.id, name: group.name, labelColor: group.labelColor, fixtureIds: [...group.fixtureOrder] })),
+      groups: fixtureGroups.map((group) => ({
+        id: group.id,
+        name: group.name,
+        labelColor: group.labelColor,
+        fixtureIds: [...group.fixtureOrder],
+        master: runtimeSnapshot?.groupMasters.get(group.name) ?? 1
+      })),
       looks: [...STARTER_LOOKS, ...savedLooks].map((look) => ({ id: look.id, name: look.name, color: lookSwatch(look.values) })),
       effects: EFFECT_PRESETS.map((effect) => ({ id: effect.id, name: effect.name, momentary: Boolean(effect.momentary), active: activeEffect === effect.id })),
       recordings: (showFile.recordings ?? []).map((recording) => ({ id: recording.id, name: recording.name, durationMs: recording.durationMs }))
