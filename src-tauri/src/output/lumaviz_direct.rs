@@ -79,12 +79,13 @@ impl LumaVizDirectEngine {
             match listener.accept() {
                 Ok((stream, _)) => {
                     let _ = stream.set_nonblocking(false);
-                    let mut accepted_path = false;
-                    match accept_hdr(stream, |request: &Request, response: Response| {
-                        accepted_path = request.uri().path() == "/lumaviz";
+                    let accepted_path = Arc::new(AtomicBool::new(false));
+                    let accepted_path_flag = accepted_path.clone();
+                    match accept_hdr(stream, move |request: &Request, response: Response| {
+                        accepted_path_flag.store(request.uri().path() == "/lumaviz", Ordering::SeqCst);
                         Ok(response)
                     }) {
-                        Ok(mut socket) if accepted_path => {
+                        Ok(mut socket) if accepted_path.load(Ordering::SeqCst) => {
                             let _ = socket.get_mut().set_read_timeout(Some(Duration::from_millis(800)));
                             match socket.read() {
                                 Ok(Message::Text(text)) if valid_hello(text.as_str()) => {
