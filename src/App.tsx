@@ -2421,6 +2421,7 @@ export default function App() {
     return <label key={parameter} className={controlSurfaceMode === 'encoders' ? 'surface-encoder' : ''}><span>{label}</span>{controlSurfaceMode === 'encoders' ? <div className="encoder-dial" style={{ '--encoder-value': `${supported ? value / 255 * 270 : 0}deg` } as React.CSSProperties}><b>{supported ? value : '—'}</b></div> : <input type="range" min="0" max="255" disabled={!supported} value={value} onChange={(event) => selectedFixtureTargets.forEach((fixture) => void setFixtureAttribute(fixture, parameter, Number(event.target.value)))} />}{controlSurfaceMode === 'encoders' && <input className="encoder-hit" aria-label={label} type="range" min="0" max="255" disabled={!supported} value={value} onChange={(event) => selectedFixtureTargets.forEach((fixture) => void setFixtureAttribute(fixture, parameter, Number(event.target.value)))} />}</label>;
   }
 
+  const allLooks = [...STARTER_LOOKS, ...savedLooks];
   const liveExecutorItems = useMemo(() => {
     const groupItems = fixtureGroups.map((group) => ({ id: `group-${group.id}`, name: group.name, kind: 'group' as const, group }));
     const lookItems = allLooks.map((look) => ({ id: `look-${look.id}`, name: look.name, kind: 'look' as const, look }));
@@ -2776,7 +2777,6 @@ export default function App() {
     name: preset.name,
     color: rgbToHex(preset.rgb[0], preset.rgb[1], preset.rgb[2])
   }));
-  const allLooks = [...STARTER_LOOKS, ...savedLooks];
   const programEffectFixtures = programMode === 'groups' ? selectedGroupFixtures : selectedFixtureTargets;
   const programEffectName = programMode === 'groups'
     ? selectedGroup?.name ?? ''
