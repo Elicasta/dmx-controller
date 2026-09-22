@@ -534,6 +534,10 @@ export default function App() {
           if (!message || typeof message !== 'object' || (message as { type?: string }).type !== 'shared-show.patch.update') continue;
           const mutation = message as SharedShowPatchMutation;
           if (mutation.source !== 'lumaviz') continue;
+          if (mutation.revision <= sharedShowRevisionRef.current) {
+            void sendLumaVizDirectMessage({ type: 'shared-show.conflict', accepted: false, revision: sharedShowRevisionRef.current, reason: 'stale-revision' });
+            continue;
+          }
           setPatch((current) => {
             const index = current.findIndex((fixture) => fixture.id === mutation.fixture.id);
             if (index < 0) return current;
@@ -553,7 +557,7 @@ export default function App() {
             }, index, current.length, stageSettings.dimensions);
             const error = validatePatch(candidate, current);
             if (error) { setMessage(`LumaViz patch rejected: ${error}`); return current; }
-            sharedShowRevisionRef.current = Math.max(sharedShowRevisionRef.current + 1, mutation.revision + 1);
+            sharedShowRevisionRef.current = mutation.revision;
             setMessage(`${candidate.name} updated from LumaViz · shared revision ${sharedShowRevisionRef.current}.`);
             return current.map((fixture) => fixture.id === candidate.id ? candidate : fixture);
           });
