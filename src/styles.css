@@ -1784,3 +1784,22 @@ input[type="text"], input[type="number"], .add-fixture-grid input, .patch-card-b
   color: #75e39d;
   text-shadow: 0 0 12px rgba(82, 218, 132, .32);
 }
+
+
+/* LumaRig live-console pass */
+:root { --luma-green:#55e98d; --luma-panel:#11151b; --luma-line:#29313a; }
+.console-shell { background:linear-gradient(180deg,#090b0e,#060708); }
+.console-nav button.active,.workspace-tabs button.active,.live-bank-tabs button.active {
+  color:#effff5!important;border-color:#31513e!important;
+  background:linear-gradient(180deg,rgba(85,233,141,.12),rgba(85,233,141,.025))!important;
+  box-shadow:inset 0 -2px var(--luma-green);
+}
+.console-panel,.live-section,.live-master {
+  border-color:var(--luma-line)!important;
+  background:linear-gradient(180deg,rgba(18,23,29,.98),rgba(12,16,20,.98))!important;
+}
+.console-primary,.giant-go,.live-go {
+  background:#1d5d38!important;border-color:#3a8755!important;color:#f0fff5!important;
+}
+.giant-go,.live-go { box-shadow:0 0 28px rgba(85,233,141,.12); }
+.live-fader-row { scrollbar-color:#3a444e #0b0e11; }
