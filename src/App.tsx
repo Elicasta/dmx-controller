@@ -1706,13 +1706,13 @@ export default function App() {
       goCue: (cueId) => {
         const cue = cueId ? showFile.cues.find((item) => item.id === cueId) : nextCue;
         if (!cue) throw new Error('No LumaRig cue is available.');
-        fadeToUniverse(cue.name, cue.universe, cue.fadeMs, 'remote');
+        fadeToUniverse(cue.name, cue.universe ?? makeUniverse(), cue.fadeMs, 'sync');
         setActiveCueId(cue.id);
       },
       fireScene: (sceneId) => {
         const cue = showFile.cues.find((item) => item.id === sceneId);
         if (!cue) throw new Error('LumaRig scene was not found.');
-        fadeToUniverse(cue.name, cue.universe, cue.fadeMs, 'remote');
+        fadeToUniverse(cue.name, cue.universe ?? makeUniverse(), cue.fadeMs, 'sync');
         setActiveCueId(cue.id);
       },
       startEffect: (effectId) => {
@@ -1738,7 +1738,7 @@ export default function App() {
         playShowRecording(recording, { external: true, positionMs: offsetMs });
       },
       stopRecordingPlayback: () => stopRecordedShowPlayback(false),
-      setBlackout: (enabled) => setBlackoutState(enabled, 'remote'),
+      setBlackout: (enabled) => setBlackoutState(enabled, 'sync'),
       syncTransport: (playing, positionMs, bpm) => {
         setExternalSongPositionMs(positionMs);
         externalSongPositionMsRef.current = positionMs;
