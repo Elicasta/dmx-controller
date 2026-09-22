@@ -122,8 +122,8 @@ import { StudioBridgeDispatcher } from './core/studio-bridge-dispatcher';
 import type { StudioBridgeCommand, StudioSongIdentity } from './core/studio-bridge-protocol';
 
 type Workspace = 'build' | 'create' | 'show' | 'live';
-type SetupView = 'fixtures' | 'groups' | 'patch' | 'stage' | 'settings';
-type ProgramMode = 'stage' | 'faders' | 'groups' | 'looks' | 'fx' | 'colors' | 'media' | 'presets';
+type SetupView = 'fixtures' | 'groups' | 'stage' | 'settings';
+type ProgramMode = 'stage' | 'looks' | 'fx' | 'colors' | 'media' | 'presets';
 type ShowMode = 'cues' | 'timeline' | 'tracks' | 'library' | 'sync' | 'recordings';
 type LiveView = 'performance' | 'overrides' | 'groups' | 'masters' | 'shortcuts' | 'settings';
 type LiveBank = 'fixtures' | 'groups';
@@ -516,8 +516,8 @@ function FixturePatchEditor({ fixture, onSave, onRemove, onToggleSelected, onTog
 
 export default function App() {
   const [workspace, setWorkspace] = useState<Workspace>(() => initialConsoleValue('workspace', ['build', 'create', 'show', 'live'], 'create'));
-  const [setupView, setSetupView] = useState<SetupView>(() => initialConsoleValue('setup', ['fixtures', 'groups', 'patch', 'stage', 'settings'], 'stage'));
-  const [programMode, setProgramMode] = useState<ProgramMode>(() => initialConsoleValue('program', ['stage', 'looks', 'fx', 'colors', 'media', 'presets', 'faders', 'groups'], 'stage'));
+  const [setupView, setSetupView] = useState<SetupView>(() => initialConsoleValue('setup', ['fixtures', 'groups', 'stage', 'settings'], 'stage'));
+  const [programMode, setProgramMode] = useState<ProgramMode>(() => initialConsoleValue('program', ['stage', 'looks', 'fx', 'colors', 'media', 'presets'], 'stage'));
   const [showMode, setShowMode] = useState<ShowMode>(() => initialConsoleValue('show', ['cues', 'timeline', 'tracks', 'library', 'sync', 'recordings'], 'cues'));
   const [liveView, setLiveView] = useState<LiveView>(() => initialConsoleValue('live', ['performance', 'overrides', 'groups', 'masters', 'shortcuts', 'settings'], 'performance'));
   const [fixtureSearch, setFixtureSearch] = useState('');
@@ -2395,12 +2395,6 @@ export default function App() {
     setAudioLevel(0);
   }
 
-  const groupedPatch = useMemo(() => {
-    const groups = new Map<string, PatchedFixture[]>();
-    patch.forEach((fixture) => groups.set(fixture.group, [...(groups.get(fixture.group) ?? []), fixture]));
-    return [...groups.entries()];
-  }, [patch]);
-
   function selectFixtureFromConsole(fixtureId: string, additive = false) {
     const fixture = patch.find((item) => item.id === fixtureId);
     if (fixture) {
@@ -2895,14 +2889,12 @@ export default function App() {
     color: rgbToHex(preset.rgb[0], preset.rgb[1], preset.rgb[2])
   }));
   const allLooks = [...STARTER_LOOKS, ...savedLooks];
-  const programEffectFixtures = programMode === 'groups' ? selectedGroupFixtures : selectedFixtureTargets;
-  const programEffectName = programMode === 'groups'
-    ? selectedGroup?.name ?? ''
-    : selectedFixtureTargets.length === 1
-      ? selectedFixtureTargets[0].name
-      : selectedFixtureTargets.length > 1
-        ? `${selectedFixtureTargets.length} selected fixtures`
-        : '';
+  const programEffectFixtures = selectedFixtureTargets;
+  const programEffectName = selectedFixtureTargets.length === 1
+    ? selectedFixtureTargets[0].name
+    : selectedFixtureTargets.length > 1
+      ? `${selectedFixtureTargets.length} selected fixtures`
+      : '';
   const inspectedFixture = patch.find((fixture) => fixture.selected) ?? stageFixture;
   const selectedCompatibleColors = compatibleColorFixtures(selectedFixtureTargets);
 
@@ -2913,7 +2905,7 @@ export default function App() {
         <nav className="console-workspace-tabs" aria-label="Workspace">{(['build', 'create', 'show', 'live'] as Workspace[]).map((item) => <button key={item} className={workspace === item ? 'active' : ''} onClick={() => setWorkspace(item)}>{item.toUpperCase()}</button>)}</nav>
         <div className="console-header-status">
           <button className="tempo-pill" onClick={tapTempo}><strong>{tempoSource === 'midi' && midiBpm ? midiBpm : effectBpm} BPM</strong><small>{tempoSource === 'midi' ? 'MIDI CLOCK' : 'TAP'}</small></button>
-          <button className={`connection-pill ${dmxStatus.connected ? 'online' : ''}`} onClick={() => { setWorkspace('build'); setSetupView('settings'); }}><i />{dmxStatus.connected ? 'DMX Connected' : 'Virtual Output'}</button>
+          <button className={`connection-pill ${dmxStatus.connected ? 'online' : ''}`} onClick={() => { setWorkspace('build'); setSetupView('settings'); }}><i /><span><strong>DMX</strong><small>{dmxStatus.connected ? 'CONNECTED' : 'VIRTUAL'}</small></span></button>
           <button className={`console-blackout ${dmxStatus.blackout ? 'active' : ''}`} onClick={toggleBlackout}>{dmxStatus.blackout ? 'RELEASE BLACKOUT' : 'BLACKOUT'}</button>
         </div>
       </header>
@@ -2959,8 +2951,6 @@ export default function App() {
           </div>}
 
           {setupView === 'groups' && <div className="group-assignment-view"><header><div><span>GROUP ASSIGNMENT</span><h2>Assign Fixtures to Groups</h2><p>Check fixtures on the left, then assign them to a real persisted show group.</p></div><button onClick={createFixtureGroup}>＋ Create Group</button></header><div className="group-card-grid">{fixtureGroups.map((group) => { const members = fixturesInGroup(patch, group); return <article className={`assignment-group-card ${selectedGroupId === group.id ? 'selected' : ''}`} key={group.id} style={{ '--group-color': group.labelColor } as import('react').CSSProperties}><button className="assignment-group-title" onClick={() => setSelectedGroupId(group.id)}><i style={{ background: group.labelColor }} /><span><strong>{group.name}</strong><small>{members.length} fixture{members.length === 1 ? '' : 's'}</small></span><b>•••</b></button><div>{members.map((fixture) => <span className="assigned-fixture" key={fixture.id}><i style={{ background: fixture.labelColor ?? group.labelColor }} /><span><strong>{fixture.name}</strong><small>{addressLabel(fixture.address)}</small></span><button aria-label={`Unassign ${fixture.name}`} onClick={() => unassignFixture(fixture.id)}>×</button></span>)}</div><button className="add-to-group" onClick={() => { setSelectedGroupId(group.id); assignCheckedFixtures(group); }}>＋ Add checked fixtures</button></article>; })}<button className="create-group-card" onClick={createFixtureGroup}><span>＋</span><strong>Create New Group</strong><small>Add an empty group to this show.</small></button></div></div>}
-
-          {setupView === 'patch' && <div className="setup-scroll-area"><section className="patch-summary"><div><strong>Universe 1</strong><span>{patch.length} fixtures · collision validation active</span></div><button onClick={() => setPatch((current) => current.map((fixture) => ({ ...fixture, collapsed: true })))}>Collapse all</button></section><section className="compact-patch-list">{groupedPatch.map(([group, fixtures]) => <div key={group || 'unassigned'}><h3>{group || 'Unassigned'} <span>{fixtures.length}</span></h3>{fixtures.map((fixture) => <FixturePatchEditor key={fixture.id} fixture={fixture} onSave={savePatchedFixture} onRemove={() => removeFixture(fixture)} onToggleSelected={() => selectFixtureFromConsole(fixture.id, true)} onToggleCollapsed={() => setPatch((current) => current.map((item) => item.id === fixture.id ? { ...item, collapsed: !item.collapsed } : item))} />)}</div>)}</section></div>}
 
           {setupView === 'settings' && <div className="setup-scroll-area settings-console">
             <section className="console-panel connection-console"><header><div><span>DMX OUTPUT</span><h2>Anyma uDMX</h2></div><b className={dmxStatus.connected ? 'healthy' : ''}>{dmxStatus.connected ? 'Connected' : 'Virtual only'}</b></header><label><span>USB Interface</span><select value={selectedDevice} onChange={(event) => setSelectedDevice(event.target.value)} disabled={dmxStatus.connected}><option value="">Select uDMX</option>{devices.map((device) => <option key={device.device_key} value={device.device_key}>{deviceLabel(device)}</option>)}</select></label><div className="settings-actions"><button onClick={scanDevices}>Scan USB</button>{dmxStatus.connected ? <button onClick={disconnectDmx}>Disconnect + zero</button> : <button className="console-primary" disabled={!selectedInfo?.likely_udmx || busy} onClick={connectDmx}>Connect uDMX</button>}<button onClick={zeroAll}>Zero all</button></div></section>
@@ -3035,7 +3025,7 @@ export default function App() {
           {programMode === 'presets' && <div className="create-focus-view"><header><div><span>PRESETS</span><h2>Position + look library</h2></div><button onClick={savePositionPalette}>＋ Save Position</button></header><section className="preset-bank-v3"><div><h3>POSITION PALETTES</h3>{showFile.positionPalettes?.length ? showFile.positionPalettes.map((palette) => <button key={palette.id} onClick={() => void runPositionPalette(palette)}><span>{palette.kind}</span><strong>{palette.name}</strong></button>) : <p>No position palettes saved.</p>}</div><div><h3>LOOK PRESETS</h3>{allLooks.map((look) => <button key={look.id} onClick={() => runLook(look)}><i style={{background:lookSwatch(look.values)}}/><strong>{look.name}</strong></button>)}</div></section></div>}
         </div>
 
-        {programMode !== 'fx' && <EffectsPanel title="FX / SELECTED TARGET" targetName={programEffectName} fixtures={programEffectFixtures} activeEffect={activeEffect} bpm={effectBpm} depth={effectDepth} disabled={programMode === 'groups' && !selectedGroup?.fxEnabled} onBpmChange={(value) => { setEffectBpm(value); effectBpmRef.current = value; setTempoSource('manual'); }} onDepthChange={(value) => { setEffectDepth(value); effectDepthRef.current = value; }} onStart={(effect) => toggleEffect(effect, programEffectFixtures.map((fixture) => fixture.id))} onPress={(effect) => startMomentaryEffect(effect, programEffectFixtures.map((fixture) => fixture.id))} onRelease={releaseMomentaryEffect} onStop={() => stopEffect()} />}
+        {programMode !== 'fx' && <EffectsPanel title="FX / SELECTED TARGET" targetName={programEffectName} fixtures={programEffectFixtures} activeEffect={activeEffect} bpm={effectBpm} depth={effectDepth} disabled={false} onBpmChange={(value) => { setEffectBpm(value); effectBpmRef.current = value; setTempoSource('manual'); }} onDepthChange={(value) => { setEffectDepth(value); effectDepthRef.current = value; }} onStart={(effect) => toggleEffect(effect, programEffectFixtures.map((fixture) => fixture.id))} onPress={(effect) => startMomentaryEffect(effect, programEffectFixtures.map((fixture) => fixture.id))} onRelease={releaseMomentaryEffect} onStop={() => stopEffect()} />}
       </section>}
 
       {workspace === 'show' && <section className="show-console console-workspace-wide show-console-v3">
@@ -3150,7 +3140,16 @@ export default function App() {
         <footer className="live-system-strip"><span className={dmxStatus.connected?'healthy':''}>● DMX {dmxStatus.connected?'ONLINE':'VIRTUAL'}</span><span className={directStatus.clients>0?'healthy':''}>● VIZ {directStatus.clients>0?'LINKED':'WAITING'}</span><span className={studioBridgeStatus.connectedClients>0?'healthy':''}>● STUDIO {studioBridgeStatus.connectedClients>0?'LINKED':'WAITING'}</span><span className={midiStatus.connected?'healthy':''}>● MIDI {midiStatus.connected?'ONLINE':'OFF'}</span><span>{activeEffect?`FX ${activeEffect.toUpperCase()}`:'FX IDLE'}</span><b>{formatShowTime(externalSongPositionMs || showTrackPositionMs)}</b></footer>
       </section>}
 
-      <footer className="console-footer"><span>{dmxStatus.last_error || midiStatus.last_error || message}</span><b>{patch.length} fixtures · {showFile.cues.length} cues · {showFile.recordings?.length ?? 0} takes · 40 Hz output{isFading ? ' · Fading' : ''}</b></footer>
+      <footer className="console-footer console-status-strip">
+        <div className="status-connections">
+          <button className={dmxStatus.connected ? 'healthy' : ''} onClick={() => { setWorkspace('build'); setSetupView('settings'); }}><i />DMX <b>{dmxStatus.connected ? 'ONLINE' : 'VIRTUAL'}</b></button>
+          <button className={directStatus.clients > 0 ? 'healthy' : ''} onClick={() => { setWorkspace('build'); setSetupView('settings'); }}><i />LUMAVIZ <b>{directStatus.clients > 0 ? 'LINKED' : 'READY'}</b></button>
+          <button className={studioBridgeStatus.connectedClients > 0 ? 'healthy' : ''} onClick={() => { setWorkspace('show'); setShowMode('sync'); }}><i />STUDIO <b>{studioBridgeStatus.connectedClients > 0 ? 'LINKED' : 'READY'}</b></button>
+          <button className={midiStatus.connected ? 'healthy' : ''} onClick={() => { setWorkspace('build'); setSetupView('settings'); }}><i />MIDI <b>{midiStatus.connected ? 'ONLINE' : 'OFF'}</b></button>
+        </div>
+        <span className="status-message">{dmxStatus.last_error || midiStatus.last_error || message}</span>
+        <div className="status-show-readout"><span>U1</span><span>40 HZ</span><span>{patch.length} FXT</span><span>{showFile.cues.length} CUES</span>{isFading && <span className="attention">FADING</span>}<b>{formatShowTime(externalSongPositionMs || showTrackPositionMs)}</b></div>
+      </footer>
     </main>
   );
 
