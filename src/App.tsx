@@ -352,7 +352,7 @@ function loadShowLibrary(): ShowProjectSnapshot[] {
       return typeof candidate.id === 'string'
         && typeof candidate.name === 'string'
         && typeof candidate.savedAt === 'string'
-        && (candidate.status === 'draft' || candidate.status === 'show')
+        && (candidate.status === 'template' || candidate.status === 'draft' || candidate.status === 'show')
         && Boolean(candidate.show && isShowFile(candidate.show))
         && Array.isArray(candidate.patch)
         && candidate.patch.every(isPatchedFixture)
