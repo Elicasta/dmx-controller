@@ -10,7 +10,7 @@ import {
   VISIBLE_CHANNELS,
   type DmxUpdate
 } from './lib/dmx';
-import { EFFECT_PRESETS, renderEffect, type EffectId, type EffectPreset } from './lib/effects';
+import { EFFECT_PRESETS, EFFECT_SHAPES, effectWaveValue, renderEffect, renderCustomEffect, type CustomEffect, type EffectId, type EffectParameter, type EffectPreset, type EffectWaveform } from './lib/effects';
 import {
   DEFAULT_PATCH,
   FIXTURE_LIBRARY,
@@ -121,10 +121,15 @@ import { StudioBridgeDispatcher } from './core/studio-bridge-dispatcher';
 import type { StudioBridgeCommand, StudioSongIdentity } from './core/studio-bridge-protocol';
 
 type Workspace = 'setup' | 'program' | 'show' | 'live';
+const WORKSPACE_LABELS: Record<Workspace, string> = { setup: 'CREATE', program: 'PROGRAM', show: 'SHOW', live: 'LIVE' };
 type SetupView = 'fixtures' | 'groups' | 'patch' | 'stage' | 'settings';
-type ProgramMode = 'stage' | 'faders' | 'groups';
+type ProgramMode = 'stage' | 'faders' | 'groups' | 'fx';
+type ControlSurfaceMode = 'encoders' | 'faders' | 'xy' | 'palettes';
+type ControlSurfaceTab = 'intensity' | 'color' | 'position' | 'beam' | 'gobo' | 'fx' | 'speed';
+type InspectorTab = 'inspector' | 'history' | 'sync';
 type ShowMode = 'cues' | 'tracks' | 'library';
 type LiveBank = 'fixtures' | 'groups';
+type LiveView = 'performance' | 'fixtures' | 'groups' | 'masters' | 'shortcuts';
 
 type ShowProjectSnapshot = {
   id: string;
@@ -515,7 +520,7 @@ function FixturePatchEditor({ fixture, onSave, onRemove, onToggleSelected, onTog
 export default function App() {
   const [workspace, setWorkspace] = useState<Workspace>(() => initialConsoleValue('workspace', ['setup', 'program', 'show', 'live'], 'program'));
   const [setupView, setSetupView] = useState<SetupView>(() => initialConsoleValue('setup', ['fixtures', 'groups', 'patch', 'stage', 'settings'], 'stage'));
-  const [programMode, setProgramMode] = useState<ProgramMode>(() => initialConsoleValue('program', ['stage', 'faders', 'groups'], 'faders'));
+  const [programMode, setProgramMode] = useState<ProgramMode>(() => initialConsoleValue('program', ['stage', 'faders', 'groups', 'fx'], 'faders'));
   const [showMode, setShowMode] = useState<ShowMode>(() => initialConsoleValue('show', ['cues', 'tracks'], 'cues'));
   const [fixtureSearch, setFixtureSearch] = useState('');
   const [selectedGroupId, setSelectedGroupId] = useState<string | null>(null);
