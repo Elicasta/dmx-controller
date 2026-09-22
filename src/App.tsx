@@ -11,7 +11,7 @@ import {
   VISIBLE_CHANNELS,
   type DmxUpdate
 } from './lib/dmx';
-import { EFFECT_PRESETS, renderEffect, type EffectId, type EffectPreset } from './lib/effects';
+import { EFFECT_PRESETS, EFFECT_SHAPES, effectWaveValue, renderEffect, renderCustomEffect, type CustomEffect, type EffectId, type EffectParameter, type EffectPreset, type EffectWaveform } from './lib/effects';
 import {
   DEFAULT_PATCH,
   FIXTURE_LIBRARY,
@@ -225,6 +225,7 @@ const MIDI_POLL_MS = 35;
 const FRAME_MS = 25;
 const RECORDING_SAMPLE_MS = 50;
 const LOOKS_STORAGE_KEY = 'dmx-controller.saved-looks.v1';
+const CUSTOM_FX_STORAGE_KEY = 'dmx-controller.custom-fx.v1';
 const SHOW_STORAGE_KEY = 'dmx-controller.show.v1';
 const SHOW_BACKUP_STORAGE_KEY = 'dmx-controller.show.backup.v1';
 const SHOW_LIBRARY_STORAGE_KEY = 'dmx-controller.show-library.v1';
@@ -325,6 +326,22 @@ function loadSavedLooks(): FixtureLook[] {
   return loadJson<FixtureLook[]>(LOOKS_STORAGE_KEY, [], (value): value is FixtureLook[] => (
     Array.isArray(value) && value.every(isFixtureLook)
   )).slice(0, 24);
+}
+
+function isCustomEffect(value: unknown): value is CustomEffect {
+  if (!value || typeof value !== 'object') return false;
+  const effect = value as Partial<CustomEffect>;
+  return typeof effect.id === 'string'
+    && typeof effect.name === 'string'
+    && ['dimmer', 'pan', 'tilt', 'uv'].includes(String(effect.parameter))
+    && ['sine', 'triangle', 'square', 'saw', 'reverse-saw', 'step'].includes(String(effect.waveform))
+    && [effect.bpm, effect.depth, effect.phaseSpread, effect.offset].every((part) => typeof part === 'number' && Number.isFinite(part));
+}
+
+function loadCustomEffects(): CustomEffect[] {
+  return loadJson<CustomEffect[]>(CUSTOM_FX_STORAGE_KEY, [], (value): value is CustomEffect[] => (
+    Array.isArray(value) && value.every(isCustomEffect)
+  )).slice(0, 32);
 }
 
 function loadShowFile(): ShowFile {
@@ -657,6 +674,20 @@ export default function App() {
 
   const [activeEffect, setActiveEffect] = useState<EffectId | null>(null);
   const activeEffectRef = useRef<EffectId | null>(null);
+  const [activeCustomEffectId, setActiveCustomEffectId] = useState<string | null>(null);
+  const activeCustomEffectIdRef = useRef<string | null>(null);
+  const [customEffects, setCustomEffects] = useState<CustomEffect[]>(loadCustomEffects);
+  const [fxEditor, setFxEditor] = useState<CustomEffect>({
+    id: 'custom-preview',
+    name: 'New FX',
+    parameter: 'dimmer',
+    waveform: 'sine',
+    bpm: 100,
+    depth: 100,
+    phaseSpread: 0,
+    offset: 0
+  });
+  const [selectedFxBankId, setSelectedFxBankId] = useState<string>('pulse');
   const effectTargetIdsRef = useRef<string[]>([]);
   const effectAnimationRef = useRef<number | null>(null);
   const effectStartedRef = useRef(0);
@@ -878,6 +909,7 @@ export default function App() {
   }, []);
   useEffect(() => { effectBpmRef.current = effectBpm; }, [effectBpm]);
   useEffect(() => { effectDepthRef.current = effectDepth; }, [effectDepth]);
+  useEffect(() => { activeCustomEffectIdRef.current = activeCustomEffectId; }, [activeCustomEffectId]);
   useEffect(() => { tempoSourceRef.current = tempoSource; }, [tempoSource]);
   useEffect(() => { midiBpmRef.current = midiBpm; }, [midiBpm]);
   useEffect(() => { midiMappingsRef.current = midiMappings; }, [midiMappings]);
@@ -894,6 +926,7 @@ export default function App() {
     return () => window.clearTimeout(timer);
   }, [patch]);
   useEffect(() => window.localStorage.setItem(LOOKS_STORAGE_KEY, JSON.stringify(savedLooks)), [savedLooks]);
+  useEffect(() => window.localStorage.setItem(CUSTOM_FX_STORAGE_KEY, JSON.stringify(customEffects)), [customEffects]);
   useEffect(() => {
     try { window.localStorage.setItem(SHOW_STORAGE_KEY, JSON.stringify(showFile)); }
     catch { setMessage('Show storage is full. Delete an older recorded take before recording another.'); }
@@ -969,8 +1002,10 @@ export default function App() {
   function stopEffect(announce = true) {
     momentaryEffectRef.current = null;
     activeEffectRef.current = null;
+    activeCustomEffectIdRef.current = null;
     effectTargetIdsRef.current = [];
     setActiveEffect(null);
+    setActiveCustomEffectId(null);
     if (effectAnimationRef.current !== null) window.cancelAnimationFrame(effectAnimationRef.current);
     effectAnimationRef.current = null;
     if (announce) setMessage('Effect stopped. The current output is held.');
@@ -2587,6 +2622,89 @@ export default function App() {
         : stageElements.find((element) => element.id === drag.id)?.label ?? 'Stage object';
       setMessage(`${itemName} moved in ${stageView} view. Its physical coordinates are saved with the show.`);
     }
+  }
+
+  function fxGraphPoints(waveform: EffectWaveform, depth = 100, offset = 0) {
+    return Array.from({ length: 65 }, (_, index) => {
+      const x = index / 64;
+      const y = Math.max(0, Math.min(1, offset / 100 + effectWaveValue(waveform, x) * depth / 100));
+      return `${(x * 600).toFixed(1)},${(120 - y * 100).toFixed(1)}`;
+    }).join(' ');
+  }
+
+  function loadFactoryFx(effect: EffectPreset) {
+    const shape = EFFECT_SHAPES[effect.id];
+    setSelectedFxBankId(effect.id);
+    setFxEditor({
+      id: `factory-${effect.id}`,
+      name: effect.name,
+      parameter: shape.parameter,
+      waveform: shape.waveform,
+      bpm: effect.defaultBpm,
+      depth: 100,
+      phaseSpread: shape.phaseSpread,
+      offset: 0
+    });
+  }
+
+  function saveCustomFx() {
+    const cleanName = fxEditor.name.trim() || 'Custom FX';
+    const saved: CustomEffect = {
+      ...fxEditor,
+      name: cleanName,
+      bpm: Math.max(20, Math.min(300, fxEditor.bpm)),
+      depth: Math.max(0, Math.min(100, fxEditor.depth)),
+      phaseSpread: Math.max(0, Math.min(100, fxEditor.phaseSpread)),
+      offset: Math.max(0, Math.min(100, fxEditor.offset)),
+      id: fxEditor.id.startsWith('custom-') && fxEditor.id !== 'custom-preview'
+        ? fxEditor.id
+        : `custom-${Date.now().toString(36)}`
+    };
+    setCustomEffects((current) => [...current.filter((effect) => effect.id !== saved.id), saved].slice(-32));
+    setFxEditor(saved);
+    setSelectedFxBankId(saved.id);
+    setMessage(`${saved.name} saved to the FX bank.`);
+  }
+
+  function deleteCustomFx(id: string) {
+    setCustomEffects((current) => current.filter((effect) => effect.id !== id));
+    if (activeCustomEffectIdRef.current === id) stopEffect(false);
+    if (selectedFxBankId === id) {
+      const fallback = EFFECT_PRESETS[0];
+      loadFactoryFx(fallback);
+    }
+    setMessage('Custom FX removed from the bank.');
+  }
+
+  function runCustomFx(effect: CustomEffect, targetIds?: readonly string[]) {
+    if (activeCustomEffectIdRef.current === effect.id) {
+      stopEffect();
+      return;
+    }
+    stopFade();
+    stopEffect(false);
+    setAudioArmed(false);
+    const targetSet = targetIds?.length ? new Set(targetIds) : null;
+    const effectFixtures = patchRef.current.map((fixture) => ({
+      ...fixture,
+      selected: targetSet ? targetSet.has(fixture.id) : fixture.selected
+    }));
+    if (!effectFixtures.some((fixture) => fixture.selected)) {
+      setMessage('Select fixtures or a group before running the custom FX.');
+      return;
+    }
+    effectBaseUniverseRef.current = [...universeRef.current];
+    const startedAt = performance.now();
+    activeCustomEffectIdRef.current = effect.id;
+    setActiveCustomEffectId(effect.id);
+    const tick = (now: number) => {
+      if (activeCustomEffectIdRef.current !== effect.id) return;
+      const updates = renderCustomEffect(effect, effectFixtures, now - startedAt);
+      void commitUniverse(applyUniverseUpdates(effectBaseUniverseRef.current, updates), 'fx');
+      effectAnimationRef.current = requestAnimationFrame(tick);
+    };
+    effectAnimationRef.current = requestAnimationFrame(tick);
+    setMessage(`${effect.name} running on selected lights.`);
   }
 
   function renderEffectButton(effect: EffectPreset, compact = false) {
