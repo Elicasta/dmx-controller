@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { EFFECT_PRESETS, renderEffect } from './effects';
+import { EFFECT_PRESETS, effectWaveValue, renderCustomEffect, renderEffect, type CustomEffect } from './effects';
 import { DEFAULT_PATCH, type PatchedFixture } from './fixtures';
 
 describe('portable effects', () => {
@@ -34,6 +34,30 @@ describe('portable effects', () => {
   it('does not treat an empty selection as the whole rig', () => {
     const unselected = DEFAULT_PATCH.map((fixture) => ({ ...fixture, selected: false }));
     expect(renderEffect('pulse', unselected, 0, 60, 1)).toEqual([]);
+  });
+
+  it('renders reusable custom waveform effects through semantic fixture parameters', () => {
+    const effect: CustomEffect = {
+      id: 'custom-test',
+      name: 'Custom Test',
+      parameter: 'dimmer',
+      waveform: 'square',
+      bpm: 120,
+      depth: 100,
+      phaseSpread: 0,
+      offset: 0
+    };
+    const on = renderCustomEffect(effect, DEFAULT_PATCH, 0);
+    const off = renderCustomEffect(effect, DEFAULT_PATCH, 300);
+    expect(on[0]).toEqual([5, 255]);
+    expect(off[0]).toEqual([5, 0]);
+  });
+
+  it('keeps graphical waveform math normalized for the FX editor', () => {
+    expect(effectWaveValue('sine', 0)).toBeCloseTo(0, 6);
+    expect(effectWaveValue('triangle', .5)).toBeCloseTo(1, 6);
+    expect(effectWaveValue('square', .75)).toBe(0);
+    expect(effectWaveValue('reverse-saw', .25)).toBeCloseTo(.75, 6);
   });
 
   it('chases in the supplied group fixture order', () => {
