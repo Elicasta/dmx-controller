@@ -117,6 +117,8 @@ import { ShowRuntime, type RuntimeDispatchResult } from './core/show-runtime';
 import { projectStagePoint, unprojectStagePoint, type StagePoint2D, type StageView } from './core/stage-projection';
 import { arrangeTargetPoints, buildStageTargets, type TargetArrangement, type TargetPoint } from './core/targets';
 import { RemoteRelay, type RelayCommandEnvelope, type RemoteRelayConfig, type RemoteRelayStatus } from './core/remote-relay';
+import { StudioBridgeDispatcher } from './core/studio-bridge-dispatcher';
+import type { StudioBridgeCommand, StudioSongIdentity } from './core/studio-bridge-protocol';
 
 type Workspace = 'setup' | 'program' | 'show' | 'live';
 type SetupView = 'fixtures' | 'groups' | 'patch' | 'stage' | 'settings';
@@ -1634,6 +1636,134 @@ export default function App() {
     if (dmxStatus.blackout && settings.confirmBlackoutRelease && !window.confirm('Release blackout and restore programmed output?')) return;
     await setBlackoutState(!dmxStatus.blackout, 'ui');
   }
+
+  async function dispatchStudioBridgeCommand(id: string, command: StudioBridgeCommand) {
+    const dispatcher = new StudioBridgeDispatcher({
+      createShow: (identity: StudioSongIdentity) => {
+        const existing = showLibrary.find((item) => item.name.toLowerCase() === identity.songTitle.toLowerCase());
+        if (existing) return existing.id;
+        const snapshot: ShowProjectSnapshot = {
+          id: `show-${identity.songId}`,
+          name: identity.songTitle,
+          savedAt: new Date().toISOString(),
+          status: 'show',
+          templateId: showLibrary.find((item) => item.status === 'template')?.id,
+          revision: sharedShowRevisionRef.current,
+          lastEditor: 'lumarig',
+          show: sanitizeShow({
+            ...EMPTY_SHOW,
+            name: identity.songTitle,
+            cues: [],
+            groups: [],
+            positionPalettes: [],
+            recordings: [],
+            externalTrack: {
+              ...DEFAULT_EXTERNAL_TRACK_SYNC,
+              songName: identity.songTitle,
+              bpm: identity.bpm
+            }
+          }),
+          patch: patch.map((fixture, index) =>
+            migratePatchedFixture(fixture, index, patch.length, stageSettings.dimensions)
+          ),
+          stageElements: stageElements.map((element) =>
+            migrateStageElement(element, stageSettings.dimensions)
+          ),
+          stageSettings: {
+            ...stageSettings,
+            dimensions: { ...stageSettings.dimensions }
+          },
+          looks: [...savedLooks]
+        };
+        setShowLibrary((current) =>
+          [snapshot, ...current.filter((item) => item.id !== snapshot.id)].slice(0, 40)
+        );
+        return snapshot.id;
+      },
+      loadShow: (showId) => {
+        const snapshot = showLibrary.find((item) => item.id === showId);
+        if (!snapshot) throw new Error('The linked LumaRig show is missing from this device.');
+        loadShowProject(snapshot);
+      },
+      goCue: (cueId) => {
+        const cue = cueId ? showFile.cues.find((item) => item.id === cueId) : nextCue;
+        if (!cue) throw new Error('No LumaRig cue is available.');
+        fadeToUniverse(cue.name, cue.universe, cue.fadeMs, 'remote');
+        setActiveCueId(cue.id);
+      },
+      fireScene: (sceneId) => {
+        const cue = showFile.cues.find((item) => item.id === sceneId);
+        if (!cue) throw new Error('LumaRig scene was not found.');
+        fadeToUniverse(cue.name, cue.universe, cue.fadeMs, 'remote');
+        setActiveCueId(cue.id);
+      },
+      startEffect: (effectId) => {
+        if (!EFFECT_PRESETS.some((effect) => effect.id === effectId)) {
+          throw new Error('Unknown LumaRig effect.');
+        }
+        startEffect(effectId as EffectId);
+      },
+      stopEffect: () => stopEffect(),
+      startRecording: (_songId, songTitle, bpm) => {
+        setShowTrackName(songTitle);
+        setRecordingTakeName(
+          `${songTitle} · Studio Take ${(showFile.recordings?.length ?? 0) + 1}`
+        );
+        setEffectBpm(bpm);
+        effectBpmRef.current = bpm;
+        startShowRecording();
+      },
+      stopRecording: () => stopShowRecording(true),
+      playRecording: (recordingId, offsetMs) => {
+        const recording = showFile.recordings?.find((item) => item.id === recordingId);
+        if (!recording) throw new Error('Recorded lighting take was not found.');
+        playShowRecording(recording, { external: true, positionMs: offsetMs });
+      },
+      stopRecordingPlayback: () => stopRecordedShowPlayback(false),
+      setBlackout: (enabled) => setBlackoutState(enabled, 'remote'),
+      syncTransport: (playing, positionMs, bpm) => {
+        setExternalSongPositionMs(positionMs);
+        externalSongPositionMsRef.current = positionMs;
+        setExternalTransportRunning(playing);
+        externalTransportRunningRef.current = playing;
+        setEffectBpm(bpm);
+        effectBpmRef.current = bpm;
+      }
+    });
+    return dispatcher.dispatch(id, command);
+  }
+
+  useEffect(() => {
+    let cancelled = false;
+    const poll = async () => {
+      if (cancelled) return;
+      try {
+        const requests = await invoke<Array<{ id: string; command: StudioBridgeCommand }>>(
+          'drain_studio_bridge'
+        );
+        for (const request of requests) {
+          const response = await dispatchStudioBridgeCommand(request.id, request.command);
+          await invoke('reply_studio_bridge', response);
+        }
+      } catch {
+        // Native Studio bridge is optional in browser/Vite development.
+      }
+    };
+    const timer = window.setInterval(() => void poll(), 25);
+    void poll();
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+    };
+  }, [
+    showLibrary,
+    showFile,
+    patch,
+    stageElements,
+    stageSettings,
+    savedLooks,
+    nextCue
+  ]);
 
   function addFixture() {
     const mode = newProfile.modes.find((item) => item.id === newModeId) ?? newProfile.modes[0];
