@@ -3038,18 +3038,20 @@ export default function App() {
       selectedFixtureIds: patch.filter((fixture) => fixture.selected).map((fixture) => fixture.id),
       fixtures: patch.map((fixture, index) => {
         const mode = findMode(fixture);
-        const values = fixtureValues(outputUniverse, fixture);
+        const baseValues = fixtureValues(universe, fixture);
+        const outputValues = fixtureValues(outputUniverse, fixture);
         const geometry = fixtureGeometryState(outputUniverse, fixture, index, patch.length, stageSettings.dimensions);
         return {
           id: fixture.id,
           name: fixture.name,
           group: fixture.group,
           labelColor: fixture.labelColor ?? '#55f29a',
-          intensity: values.dimmer / 255,
-          color: rgbToHex(values.red, values.green, values.blue),
+          intensity: baseValues.dimmer / 255,
+          outputIntensity: outputValues.dimmer / 255,
+          color: rgbToHex(outputValues.red, outputValues.green, outputValues.blue),
           attributes: Object.fromEntries(
             [...new Set(mode?.channels.map((channel) => channel.parameter).filter((parameter): parameter is FixtureParameter => Boolean(parameter)) ?? [])]
-              .map((parameter) => [parameter, readFixtureParameter(outputUniverse, fixture, parameter) / 255])
+              .map((parameter) => [parameter, readFixtureParameter(universe, fixture, parameter) / 255])
           ),
           capabilities: [...new Set(mode?.channels.map((channel) => channel.parameter).filter((parameter): parameter is FixtureParameter => Boolean(parameter)) ?? [])],
           stagePosition: { ...geometry.beam.origin },
@@ -3397,7 +3399,7 @@ export default function App() {
 
           <main className="live-playback-surface">
             <div className="live-surface-toolbar"><div><strong>LIVING PLAYBACK SURFACE</strong><small>{liveBank==='fixtures'?`${patch.length} FIXTURES`:`${fixtureGroups.length} GROUPS`} · OUTPUT COLORS + LEVELS</small></div><div className="live-bank-tabs"><button className={liveBank==='fixtures'?'active':''} onClick={()=>setLiveBank('fixtures')}>FIXTURES</button><button className={liveBank==='groups'?'active':''} onClick={()=>setLiveBank('groups')}>GROUPS</button></div><div className="live-select-tools"><button className={liveProgrammerOpen?'active':''} onClick={()=>setLiveProgrammerOpen((value)=>!value)}>PROGRAMMER</button>{liveBank==='fixtures'&&<><button onClick={selectAllFixtures}>ALL</button><button onClick={clearFixtureSelection}>CLEAR</button></>}</div></div>
-            <div className="live-fader-deck">{liveBank==='fixtures' ? patch.map((fixture)=>{const v=fixtureValues(outputUniverse,fixture);const outputColor=(v.red+v.green+v.blue)>0?rgbToHex(v.red,v.green,v.blue):(fixture.labelColor ?? '#55e98d');return <VerticalFader key={fixture.id} id={`live-${fixture.id}`} name={fixture.name} subtitle={activeEffect?`${fixtureBrowserSubtitle(fixture)} · ${activeEffect}`:fixtureBrowserSubtitle(fixture)} color={outputColor} value={fixtureIntensityPercent(outputUniverse,fixture)} selected={fixture.selected} onChange={(value)=>void setFixtureAttribute(fixture,'dimmer',percentToDmx(value))} onSelect={()=>selectFixtureFromConsole(fixture.id,true)} onFx={()=>{selectFixtureFromConsole(fixture.id);setWorkspace('create');setProgramMode('fx');}}/>}) : fixtureGroups.map((group)=>{const members=fixturesInGroup(patch,group);const first=members[0];const v=first?fixtureValues(outputUniverse,first):null;const outputColor=v&&(v.red+v.green+v.blue)>0?rgbToHex(v.red,v.green,v.blue):group.labelColor;return <VerticalFader key={group.id} id={`live-${group.id}`} name={group.name} subtitle={activeEffect?`${members.length} fixtures · ${activeEffect}`:`${members.length} fixtures`} color={outputColor} value={Math.round(groupMasters[group.id] ?? group.masterDefault)} selected={selectedGroupId===group.id} onChange={(value)=>applyGroupMaster(group,value)} onSelect={()=>selectFixtureGroup(group.id)} onFx={()=>{selectFixtureGroup(group.id);setWorkspace('create');setProgramMode('fx');}} quickAction={{label:'Chase',onPress:()=>toggleEffect('chase',members.map((fixture)=>fixture.id))}}/>;})}</div>
+            <div className="live-fader-deck">{liveBank==='fixtures' ? patch.map((fixture)=>{const v=fixtureValues(outputUniverse,fixture);const outputColor=(v.red+v.green+v.blue)>0?rgbToHex(v.red,v.green,v.blue):(fixture.labelColor ?? '#55e98d');return <VerticalFader key={fixture.id} id={`live-${fixture.id}`} name={fixture.name} subtitle={activeEffect?`${fixtureBrowserSubtitle(fixture)} · ${activeEffect}`:fixtureBrowserSubtitle(fixture)} color={outputColor} value={fixtureIntensityPercent(universe,fixture)} selected={fixture.selected} onChange={(value)=>void setFixtureAttribute(fixture,'dimmer',percentToDmx(value))} onSelect={()=>selectFixtureFromConsole(fixture.id,true)} onFx={()=>{selectFixtureFromConsole(fixture.id);setWorkspace('create');setProgramMode('fx');}}/>}) : fixtureGroups.map((group)=>{const members=fixturesInGroup(patch,group);const first=members[0];const v=first?fixtureValues(outputUniverse,first):null;const outputColor=v&&(v.red+v.green+v.blue)>0?rgbToHex(v.red,v.green,v.blue):group.labelColor;return <VerticalFader key={group.id} id={`live-${group.id}`} name={group.name} subtitle={activeEffect?`${members.length} fixtures · ${activeEffect}`:`${members.length} fixtures`} color={outputColor} value={Math.round(groupMasters[group.id] ?? group.masterDefault)} selected={selectedGroupId===group.id} onChange={(value)=>applyGroupMaster(group,value)} onSelect={()=>selectFixtureGroup(group.id)} onFx={()=>{selectFixtureGroup(group.id);setWorkspace('create');setProgramMode('fx');}} quickAction={{label:'Chase',onPress:()=>toggleEffect('chase',members.map((fixture)=>fixture.id))}}/>;})}</div>
           </main>
 
           <aside className="live-master-rack">
@@ -3427,7 +3429,7 @@ export default function App() {
 
         {liveView === 'overrides' && <div className="live-detail-view">
           <header><div><span>FIXTURE OVERRIDES</span><h2>Direct live control</h2></div><div><button onClick={selectAllFixtures}>ALL</button><button onClick={clearFixtureSelection}>CLEAR</button></div></header>
-          <div className="override-layout"><div className="override-fader-bank">{patch.map((fixture)=>{const v=fixtureValues(outputUniverse,fixture);const outputColor=(v.red+v.green+v.blue)>0?rgbToHex(v.red,v.green,v.blue):(fixture.labelColor ?? '#55e98d');return <VerticalFader key={fixture.id} id={`override-${fixture.id}`} name={fixture.name} subtitle={fixtureBrowserSubtitle(fixture)} color={outputColor} value={fixtureIntensityPercent(outputUniverse,fixture)} selected={fixture.selected} onChange={(value)=>void setFixtureAttribute(fixture,'dimmer',percentToDmx(value))} onSelect={()=>selectFixtureFromConsole(fixture.id,true)} onFx={()=>{setWorkspace('create');setProgramMode('fx');}}/>})}</div><aside><ColorDeck title="OVERRIDE COLOR" subtitle={selectedFixtureTargets.length?`${selectedFixtureTargets.length} selected`:'Select fixtures'} color={globalColor} disabled={selectedCompatibleColors.length===0} presets={consoleColorPresets} onChange={applyGlobalColor}/><button className="console-primary" onClick={()=>{setWorkspace('create');setProgramMode('stage');}}>OPEN FULL PROGRAMMER</button></aside></div>
+          <div className="override-layout"><div className="override-fader-bank">{patch.map((fixture)=>{const v=fixtureValues(outputUniverse,fixture);const outputColor=(v.red+v.green+v.blue)>0?rgbToHex(v.red,v.green,v.blue):(fixture.labelColor ?? '#55e98d');return <VerticalFader key={fixture.id} id={`override-${fixture.id}`} name={fixture.name} subtitle={fixtureBrowserSubtitle(fixture)} color={outputColor} value={fixtureIntensityPercent(universe,fixture)} selected={fixture.selected} onChange={(value)=>void setFixtureAttribute(fixture,'dimmer',percentToDmx(value))} onSelect={()=>selectFixtureFromConsole(fixture.id,true)} onFx={()=>{setWorkspace('create');setProgramMode('fx');}}/>})}</div><aside><ColorDeck title="OVERRIDE COLOR" subtitle={selectedFixtureTargets.length?`${selectedFixtureTargets.length} selected`:'Select fixtures'} color={globalColor} disabled={selectedCompatibleColors.length===0} presets={consoleColorPresets} onChange={applyGlobalColor}/><button className="console-primary" onClick={()=>{setWorkspace('create');setProgramMode('stage');}}>OPEN FULL PROGRAMMER</button></aside></div>
         </div>}
 
         {liveView === 'groups' && <div className="live-detail-view">
