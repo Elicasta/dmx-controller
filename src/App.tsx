@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ChangeEvent, type PointerEvent as ReactPointerEvent } from 'react';
 import { lumaVizDirectStatus, pollLumaVizDirectMessages, semanticFrameFromResolvedOutput, sendLumaVizDirectFrame, sendLumaVizDirectMessage, startLumaVizDirect, type LumaVizDirectStatus, type SharedShowPatchMutation } from './core/lumaviz-direct';
+import type { SharedLocationPreset } from './core/shared-locations';
 import { invoke } from '@tauri-apps/api/core';
 import {
   applyUniverseUpdates,
@@ -526,12 +527,23 @@ export default function App() {
   const [artNetTelemetry, setArtNetTelemetry] = useState({ framesSent: 0, lastError: "" });
   const [directStatus, setDirectStatus] = useState<LumaVizDirectStatus>({ listening: false, port: 9460, clients: 0, framesSent: 0 });
   const sharedShowRevisionRef = useRef(1);
+  const [activeLocation, setActiveLocation] = useState<{id:string;name:string;estimated:boolean}|null>(null);
   const directSequenceRef = useRef(0);
   useEffect(() => {
     const timer = window.setInterval(() => {
       void pollLumaVizDirectMessages().then((messages) => {
         for (const message of messages) {
-          if (!message || typeof message !== 'object' || (message as { type?: string }).type !== 'shared-show.patch.update') continue;
+          if (!message || typeof message !== 'object') continue;
+          if ((message as { type?: string }).type === 'shared-location.update') {
+            const incoming = message as { revision?:number; location?:SharedLocationPreset };
+            if (incoming.location) {
+              setActiveLocation({id:incoming.location.id,name:incoming.location.name,estimated:incoming.location.estimated});
+              sharedShowRevisionRef.current = Math.max(sharedShowRevisionRef.current, incoming.revision ?? sharedShowRevisionRef.current);
+              setMessage(`Location loaded from LumaViz: ${incoming.location.name}${incoming.location.estimated ? ' · estimated geometry' : ''}`);
+            }
+            continue;
+          }
+          if ((message as { type?: string }).type !== 'shared-show.patch.update') continue;
           const mutation = message as SharedShowPatchMutation;
           if (mutation.source !== 'lumaviz') continue;
           if (mutation.revision <= sharedShowRevisionRef.current) {
@@ -573,7 +585,7 @@ export default function App() {
       type: 'shared-show.snapshot',
       revision: sharedShowRevisionRef.current,
       source: 'lumarig',
-      show: { id: showFile.name, name: showFile.name },
+      show: { id: showFile.name, name: showFile.name, location: activeLocation },
       patch: patch.map((fixture) => ({
         id: fixture.id, name: fixture.name, profileId: fixture.profileId, modeId: fixture.modeId,
         universe: fixture.universe ?? 1, address: fixture.address, group: fixture.group,
@@ -581,7 +593,7 @@ export default function App() {
       })),
       library: showLibrary.map((item) => ({ id: item.id, name: item.name, savedAt: item.savedAt, status: item.status }))
     });
-  }, [patch, showFile.name, showLibrary, directStatus.clients]);
+  }, [patch, showFile.name, showLibrary, directStatus.clients, activeLocation]);
 
   const [remoteRelayConfig, setRemoteRelayConfig] = useState<RemoteRelayConfig>(loadRemoteRelayConfig);
   const [remoteRelayStatus, setRemoteRelayStatus] = useState<RemoteRelayStatus>('disconnected');
