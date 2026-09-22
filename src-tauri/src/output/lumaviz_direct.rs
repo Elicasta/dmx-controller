@@ -56,6 +56,8 @@ pub struct LumaVizDirectEngine {
     listening: Arc<AtomicBool>,
     frames_sent: Arc<AtomicU64>,
     shared: Arc<Mutex<Shared>>,
+    incoming: Arc<Mutex<Vec<serde_json::Value>>>,
+    preview_frame: Arc<Mutex<Option<serde_json::Value>>>,
 }
 
 impl LumaVizDirectEngine {
@@ -78,12 +80,13 @@ impl LumaVizDirectEngine {
             match listener.accept() {
                 Ok((stream, _)) => {
                     let _ = stream.set_nonblocking(false);
-                    let mut accepted_path = false;
-                    match accept_hdr(stream, |request: &Request, response: Response| {
-                        accepted_path = request.uri().path() == "/lumaviz";
+                    let accepted_path = Arc::new(AtomicBool::new(false));
+                    let accepted_path_for_header = accepted_path.clone();
+                    match accept_hdr(stream, move |request: &Request, response: Response| {
+                        accepted_path_for_header.store(request.uri().path() == "/lumaviz", Ordering::SeqCst);
                         Ok(response)
                     }) {
-                        Ok(mut socket) if accepted_path => {
+                        Ok(mut socket) if accepted_path.load(Ordering::SeqCst) => {
                             let _ = socket.get_mut().set_read_timeout(Some(Duration::from_millis(800)));
                             match socket.read() {
                                 Ok(Message::Text(text)) if valid_hello(text.as_str()) => {
@@ -128,6 +131,60 @@ impl LumaVizDirectEngine {
         }
         if sent > 0 {
             self.frames_sent.fetch_add(sent, Ordering::Relaxed);
+        }
+        Ok(())
+    }
+
+    pub fn poll_incoming(&self) {
+        if let Ok(mut shared) = self.shared.lock() {
+            let incoming = self.incoming.clone();
+            shared.clients.retain_mut(|socket| {
+                loop {
+                    match socket.read() {
+                        Ok(Message::Text(text)) => {
+                            if let Ok(value) = serde_json::from_str::<serde_json::Value>(text.as_str()) {
+                                match value.get("type").and_then(|v| v.as_str()) {
+                                    Some("stage-change") => {
+                                        if let Ok(mut queue) = incoming.lock() { queue.push(value); }
+                                    }
+                                    Some("preview-frame") => {
+                                        if let Ok(mut preview) = self.preview_frame.lock() { *preview = Some(value); }
+                                    }
+                                    _ => {}
+                                }
+                            }
+                        }
+                        Ok(Message::Ping(payload)) => { let _ = socket.send(Message::Pong(payload)); }
+                        Ok(Message::Close(_)) => return false,
+                        Ok(_) => {}
+                        Err(tungstenite::Error::Io(error)) if error.kind() == std::io::ErrorKind::WouldBlock => break,
+                        Err(_) => return false,
+                    }
+                }
+                true
+            });
+        }
+    }
+
+    pub fn drain_stage_changes(&self) -> Vec<serde_json::Value> {
+        self.poll_incoming();
+        self.incoming.lock().map(|mut queue| std::mem::take(&mut *queue)).unwrap_or_default()
+    }
+
+    pub fn latest_preview_frame(&self) -> Option<serde_json::Value> {
+        self.poll_incoming();
+        self.preview_frame.lock().ok().and_then(|preview| preview.clone())
+    }
+
+    pub fn broadcast_stage_change(&self, change: serde_json::Value) -> Result<(), String> {
+        if !self.listening.load(Ordering::SeqCst) { return Ok(()); }
+        let payload = serde_json::to_string(&serde_json::json!({"type":"stage-change","change":change})).map_err(|error| error.to_string())?;
+        if let Ok(mut shared) = self.shared.lock() {
+            shared.clients.retain_mut(|socket| match socket.send(Message::Text(payload.clone().into())) {
+                Ok(_) => true,
+                Err(tungstenite::Error::Io(error)) if error.kind() == std::io::ErrorKind::WouldBlock => true,
+                Err(_) => false,
+            });
         }
         Ok(())
     }
@@ -178,6 +235,21 @@ pub fn send_lumaviz_fixture_frame(
     frame: DirectFixtureFrame,
 ) -> Result<(), String> {
     engine.broadcast(frame)
+}
+
+#[tauri::command]
+pub fn drain_lumaviz_stage_changes(engine: tauri::State<'_, LumaVizDirectEngine>) -> Vec<serde_json::Value> {
+    engine.drain_stage_changes()
+}
+
+#[tauri::command]
+pub fn lumaviz_preview_frame(engine: tauri::State<'_, LumaVizDirectEngine>) -> Option<serde_json::Value> {
+    engine.latest_preview_frame()
+}
+
+#[tauri::command]
+pub fn send_lumaviz_stage_change(engine: tauri::State<'_, LumaVizDirectEngine>, change: serde_json::Value) -> Result<(), String> {
+    engine.broadcast_stage_change(change)
 }
 
 #[cfg(test)]

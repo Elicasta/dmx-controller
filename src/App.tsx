@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ChangeEvent, type PointerEvent as ReactPointerEvent } from 'react';
-import { lumaVizDirectStatus, semanticFrameFromResolvedOutput, sendLumaVizDirectFrame, startLumaVizDirect, type LumaVizDirectStatus } from './core/lumaviz-direct';
+import { drainLumaVizStageChanges, lumaVizDirectStatus, lumaVizPreviewFrame, semanticFrameFromResolvedOutput, sendLumaVizDirectFrame, sendLumaVizStageChange, startLumaVizDirect, type LumaVizDirectStatus } from './core/lumaviz-direct';
 import { invoke } from '@tauri-apps/api/core';
 import {
   applyUniverseUpdates,
@@ -9,7 +9,7 @@ import {
   VISIBLE_CHANNELS,
   type DmxUpdate
 } from './lib/dmx';
-import { EFFECT_PRESETS, renderEffect, type EffectId, type EffectPreset } from './lib/effects';
+import { EFFECT_PRESETS, EFFECT_SHAPES, effectWaveValue, renderEffect, renderCustomEffect, type CustomEffect, type EffectId, type EffectParameter, type EffectPreset, type EffectWaveform } from './lib/effects';
 import {
   DEFAULT_PATCH,
   FIXTURE_LIBRARY,
@@ -116,12 +116,20 @@ import { ShowRuntime, type RuntimeDispatchResult } from './core/show-runtime';
 import { projectStagePoint, unprojectStagePoint, type StagePoint2D, type StageView } from './core/stage-projection';
 import { arrangeTargetPoints, buildStageTargets, type TargetArrangement, type TargetPoint } from './core/targets';
 import { RemoteRelay, type RelayCommandEnvelope, type RemoteRelayConfig, type RemoteRelayStatus } from './core/remote-relay';
+import { canAutoApplyDangerousChange, decideIncomingChange, hasRevisionConflict, DEFAULT_STAGE_SYNC_POLICY, type StageChange, type StageSyncPolicy } from './core/stage-sync';
+import type { StageSyncMode } from './core/stage-model';
 
 type Workspace = 'setup' | 'program' | 'show' | 'live';
+
+const WORKSPACE_LABELS: Record<Workspace, string> = { setup: 'CREATE', program: 'PROGRAM', show: 'SHOW', live: 'LIVE' };
 type SetupView = 'fixtures' | 'groups' | 'patch' | 'stage' | 'settings';
-type ProgramMode = 'stage' | 'faders' | 'groups';
+type ProgramMode = 'stage' | 'faders' | 'groups' | 'fx';
+type ControlSurfaceMode = 'encoders' | 'faders' | 'xy' | 'palettes';
+type ControlSurfaceTab = 'intensity' | 'color' | 'position' | 'beam' | 'gobo' | 'fx' | 'speed';
+type InspectorTab = 'inspector' | 'history' | 'sync';
 type ShowMode = 'cues' | 'tracks' | 'library';
 type LiveBank = 'fixtures' | 'groups';
+type LiveView = 'performance' | 'fixtures' | 'groups' | 'masters' | 'shortcuts';
 
 type ShowProjectSnapshot = {
   id: string;
@@ -518,10 +526,15 @@ export default function App() {
   const [showFile, setShowFile] = useState<ShowFile>(loadShowFile);
   const [showLibrary, setShowLibrary] = useState<ShowProjectSnapshot[]>(loadShowLibrary);
   const [liveBank, setLiveBank] = useState<LiveBank>('fixtures');
+  const [liveView, setLiveView] = useState<LiveView>('performance');
+  const [liveExecutorBank, setLiveExecutorBank] = useState(0);
+  const [liveProgrammerOpen, setLiveProgrammerOpen] = useState(false);
+  const [livePaletteFamily, setLivePaletteFamily] = useState<'groups'|'intensity'|'position'|'color'|'beam'|'fx'>('groups');
   const [settings, setSettings] = useState<AppSettings>(loadSettings);
   const settingsRef = useRef(settings);
   const [artNetTelemetry, setArtNetTelemetry] = useState({ framesSent: 0, lastError: "" });
   const [directStatus, setDirectStatus] = useState<LumaVizDirectStatus>({ listening: false, port: 9460, clients: 0, framesSent: 0 });
+  const [lumaVizPreview, setLumaVizPreview] = useState<{ dataUrl: string; timestamp: number; view?: string } | null>(null);
   const directSequenceRef = useRef(0);
   const [remoteRelayConfig, setRemoteRelayConfig] = useState<RemoteRelayConfig>(loadRemoteRelayConfig);
   const [remoteRelayStatus, setRemoteRelayStatus] = useState<RemoteRelayStatus>('disconnected');
@@ -716,6 +729,23 @@ export default function App() {
   const selectedGroup = fixtureGroups.find((group) => group.id === selectedGroupId) ?? fixtureGroups[0] ?? null;
   const selectedGroupFixtures = selectedGroup ? fixturesInGroup(patch, selectedGroup) : [];
   const selectedFixtureTargets = selectedFixtures(patch);
+  const selectedCapabilities = useMemo(() => {
+    const supported = new Set<FixtureParameter>();
+    selectedFixtureTargets.forEach((fixture) => findMode(fixture)?.channels.forEach((channel) => {
+      if (channel.parameter) supported.add(channel.parameter);
+    }));
+    return supported;
+  }, [selectedFixtureTargets]);
+  const surfaceSupports = (tab: ControlSurfaceTab) => {
+    if (!selectedFixtureTargets.length) return tab === 'intensity';
+    if (tab === 'intensity') return selectedCapabilities.has('dimmer');
+    if (tab === 'color') return compatibleColorFixtures(selectedFixtureTargets).length > 0 || selectedCapabilities.has('colorWheel');
+    if (tab === 'position') return selectedCapabilities.has('pan') || selectedCapabilities.has('tilt');
+    if (tab === 'beam') return ['zoom','focus','iris','prism'].some((parameter) => selectedCapabilities.has(parameter as FixtureParameter));
+    if (tab === 'gobo') return selectedCapabilities.has('gobo') || selectedCapabilities.has('goboRotate');
+    if (tab === 'fx') return selectedFixtureTargets.length > 0;
+    return selectedCapabilities.has('movementSpeed') || activeEffect !== null;
+  };
 
   useEffect(() => {
     if (JSON.stringify(showFile.groups ?? []) === JSON.stringify(fixtureGroups)) return;
@@ -2349,7 +2379,111 @@ export default function App() {
         ? patchRef.current.find((fixture) => fixture.id === drag.id)?.name ?? 'Fixture'
         : stageElements.find((element) => element.id === drag.id)?.label ?? 'Stage object';
       setMessage(`${itemName} moved in ${stageView} view. Its physical coordinates are saved with the show.`);
+      if (drag.kind === 'fixture') {
+        const fixture = patchRef.current.find((item) => item.id === drag.id);
+        if (fixture) {
+          const index = patchRef.current.findIndex((item) => item.id === drag.id);
+          const after = fixtureTransform(fixture, Math.max(0, index), patchRef.current.length, stageSettings.dimensions);
+          void sendLumaVizStageChange({
+            id: `lumarig-${Date.now()}-${fixture.id}`,
+            entityId: fixture.id,
+            entityKind: 'fixture',
+            category: 'fixturePosition',
+            source: 'lumarig',
+            baseRevision: 0,
+            createdAt: new Date().toISOString(),
+            summary: `${fixture.name} position / rotation`,
+            before: { position: drag.preserved },
+            after: { position: after.position, rotation: after.rotation },
+            status: 'applied'
+          }).catch(() => undefined);
+        }
+      }
     }
+  }
+
+
+
+  function applySurfaceXY(clientX: number, clientY: number, element: HTMLElement) {
+    if (!surfaceSupports('position')) return;
+    const rect = element.getBoundingClientRect();
+    const pan = clampDmx(((clientX - rect.left) / Math.max(1, rect.width)) * 255);
+    const tilt = clampDmx((1 - (clientY - rect.top) / Math.max(1, rect.height)) * 255);
+    selectedFixtureTargets.forEach((fixture) => {
+      if (parameterChannel(fixture, 'pan')) void setFixtureAttribute(fixture, 'pan', pan);
+      if (parameterChannel(fixture, 'tilt')) void setFixtureAttribute(fixture, 'tilt', tilt);
+    });
+  }
+
+  function surfaceParameterControl(parameter: FixtureParameter, label: string) {
+    const supported = selectedCapabilities.has(parameter);
+    const value = selectedFixtureTargets.length === 1 ? readFixtureParameter(universe, selectedFixtureTargets[0], parameter) : 0;
+    return <label key={parameter} className={controlSurfaceMode === 'encoders' ? 'surface-encoder' : ''}><span>{label}</span>{controlSurfaceMode === 'encoders' ? <div className="encoder-dial" style={{ '--encoder-value': `${supported ? value / 255 * 270 : 0}deg` } as React.CSSProperties}><b>{supported ? value : '—'}</b></div> : <input type="range" min="0" max="255" disabled={!supported} value={value} onChange={(event) => selectedFixtureTargets.forEach((fixture) => void setFixtureAttribute(fixture, parameter, Number(event.target.value)))} />}{controlSurfaceMode === 'encoders' && <input className="encoder-hit" aria-label={label} type="range" min="0" max="255" disabled={!supported} value={value} onChange={(event) => selectedFixtureTargets.forEach((fixture) => void setFixtureAttribute(fixture, parameter, Number(event.target.value)))} />}</label>;
+  }
+
+  const allLooks = [...STARTER_LOOKS, ...savedLooks];
+  const liveExecutorItems = useMemo(() => {
+    const groupItems = fixtureGroups.map((group) => ({ id: `group-${group.id}`, name: group.name, kind: 'group' as const, group }));
+    const lookItems = allLooks.map((look) => ({ id: `look-${look.id}`, name: look.name, kind: 'look' as const, look }));
+    const fxItems = EFFECT_PRESETS.filter((effect) => effectSupportedByFixtures(effect.id, selectedFixtureTargets)).map((effect) => ({ id: `fx-${effect.id}`, name: effect.name, kind: 'fx' as const, effect }));
+    return [...groupItems, ...lookItems, ...fxItems];
+  }, [fixtureGroups, allLooks, selectedFixtureTargets]);
+
+  function fireLiveExecutor(item: (typeof liveExecutorItems)[number]) {
+    if (item.kind === 'group') selectFixtureGroup(item.group.id);
+    else if (item.kind === 'look') runLook(item.look);
+    else toggleEffect(item.effect.id, selectedFixtureTargets.map((fixture) => fixture.id));
+  }
+
+  function flashLiveExecutor(item: (typeof liveExecutorItems)[number], down: boolean) {
+    if (item.kind === 'fx') {
+      if (down) startMomentaryEffect(item.effect.id, selectedFixtureTargets.map((fixture) => fixture.id));
+      else releaseMomentaryEffect(item.effect.id);
+      return;
+    }
+    if (item.kind === 'group') {
+      if (down) applyGroupMaster(item.group, 100);
+      return;
+    }
+    if (down) runLook(item.look);
+  }
+
+  function fxGraphPoints(waveform: EffectWaveform, depth = 100, offset = 0) {
+    return Array.from({ length: 65 }, (_, index) => {
+      const x = index / 64;
+      const y = Math.max(0, Math.min(1, offset / 100 + effectWaveValue(waveform, x) * depth / 100));
+      return `${(x * 600).toFixed(1)},${(120 - y * 100).toFixed(1)}`;
+    }).join(' ');
+  }
+
+  function loadFactoryFx(effect: EffectPreset) {
+    const shape = EFFECT_SHAPES[effect.id];
+    setSelectedFxBankId(effect.id);
+    setFxEditor({ id: `factory-${effect.id}`, name: effect.name, parameter: shape.parameter, waveform: shape.waveform, bpm: effect.defaultBpm, depth: 100, phaseSpread: shape.phaseSpread, offset: 0 });
+  }
+
+  function saveCustomFx() {
+    const saved = { ...fxEditor, id: fxEditor.id.startsWith('custom-') && fxEditor.id !== 'custom-preview' ? fxEditor.id : `custom-${Date.now().toString(36)}` };
+    setCustomEffects((current) => [...current.filter((effect) => effect.id !== saved.id), saved]);
+    setFxEditor(saved);
+    setSelectedFxBankId(saved.id);
+    setMessage(`${saved.name} saved to the FX bank.`);
+  }
+
+  function runCustomFx(effect: CustomEffect, targetIds?: readonly string[]) {
+    stopEffect(false);
+    const targets = targetIds?.length ? new Set(targetIds) : null;
+    const effectFixtures = patchRef.current.map((fixture) => ({ ...fixture, selected: targets ? targets.has(fixture.id) : fixture.selected }));
+    if (!effectFixtures.some((fixture) => fixture.selected)) return setMessage('Select fixtures or a group before running the custom FX.');
+    effectBaseUniverseRef.current = [...universeRef.current];
+    const startedAt = performance.now();
+    const tick = (now: number) => {
+      const updates = renderCustomEffect(effect, effectFixtures, now - startedAt);
+      void commitUniverse(applyUniverseUpdates(effectBaseUniverseRef.current, updates), 'fx');
+      effectAnimationRef.current = requestAnimationFrame(tick);
+    };
+    effectAnimationRef.current = requestAnimationFrame(tick);
+    setMessage(`${effect.name} running on selected lights.`);
   }
 
   function renderEffectButton(effect: EffectPreset, compact = false) {
@@ -2406,7 +2540,9 @@ export default function App() {
     return (
       <div className={`multi-stage physical-stage stage-view-${stageView} stage-mode-${stageMode}`}>
         <div className="stage-view-toolbar" role="group" aria-label="Stage view">
-          {(['perspective', 'top', 'front', 'side'] as StageView[]).map((view) => <button key={view} className={stageView === view ? 'active' : ''} onClick={() => setStageView(view)}>{view}</button>)}
+          <span className="stage-representation-label">{stageView === 'perspective' ? 'RIG' : 'PLAN'} <small>SPATIAL GUIDE</small></span>
+          {(['perspective', 'top', 'front', 'side'] as StageView[]).map((view) => <button key={view} className={stageView === view ? 'active' : ''} onClick={() => setStageView(view)}>{view === 'perspective' ? 'Rig' : view}</button>)}
+          <span className="stage-fallback-badge">{directStatus.clients > 0 ? 'LUMAVIZ LINKED' : 'LOCAL GUIDE ACTIVE'}</span>
         </div>
         <svg className="stage-geometry-svg" viewBox="0 0 1000 560" aria-label={`${stageView} physical stage view`}>
           <defs>
@@ -2483,7 +2619,7 @@ export default function App() {
           const projected = projectStagePoint(geometry.beam.origin, stageSettings.dimensions, stageView);
           return <div className={`stage-light physical-fixture ${stageFixture?.id === fixture.id && interactive ? 'editing' : ''} ${fixture.selected ? 'selected' : ''}`} key={fixture.id} style={{ left: `${projected.x / 10}%`, top: `${projected.y / 5.6}%`, zIndex: 40 }}><button className="stage-unit stage-unit-button" style={{ borderColor: fixture.labelColor ?? '#505b68' }} aria-label={`${stageMode === 'move' ? 'Drag' : 'Select'} ${fixture.name} on stage`} onPointerDown={(event) => { if (interactive) beginStageDrag(event, 'fixture', fixture.id, fixtureTransform(fixture, index, patch.length, stageSettings.dimensions).position); }} onPointerMove={(event) => { if (interactive) moveStageDrag(event); }} onPointerUp={(event) => { if (interactive) endStageDrag(event); }} onPointerCancel={(event) => { if (interactive) endStageDrag(event); }} onClick={(event) => { if (interactive) selectFixtureFromConsole(fixture.id, event.metaKey || event.ctrlKey || event.shiftKey); }} /><span className="stage-light-label" style={{ borderColor: fixture.labelColor ?? '#3a444f', color: fixture.labelColor ?? '#c9d0d8' }}>{fixture.name}{geometry.movementCapable ? ` · ${Math.round(geometry.movement.pan)}°/${Math.round(geometry.movement.tilt)}°` : ''}</span></div>;
         })}
-        <div className="stage-coordinate-key">X stage left/right · Y floor/ceiling · Z downstage/upstage · meters internally</div>
+        <div className="stage-coordinate-key"><b>{stageView === 'perspective' ? 'RIG' : 'PLAN'}</b> · X stage left/right · Y floor/ceiling · Z downstage/upstage · meters internally · representative beams use live fixture output</div>
       </div>
     );
   }
@@ -2641,7 +2777,6 @@ export default function App() {
     name: preset.name,
     color: rgbToHex(preset.rgb[0], preset.rgb[1], preset.rgb[2])
   }));
-  const allLooks = [...STARTER_LOOKS, ...savedLooks];
   const programEffectFixtures = programMode === 'groups' ? selectedGroupFixtures : selectedFixtureTargets;
   const programEffectName = programMode === 'groups'
     ? selectedGroup?.name ?? ''
@@ -2652,16 +2787,112 @@ export default function App() {
         : '';
   const inspectedFixture = patch.find((fixture) => fixture.selected) ?? stageFixture;
   const selectedCompatibleColors = compatibleColorFixtures(selectedFixtureTargets);
+  const [controlSurfaceMode, setControlSurfaceMode] = useState<ControlSurfaceMode>('encoders');
+  const [controlSurfaceTab, setControlSurfaceTab] = useState<ControlSurfaceTab>('intensity');
+  const [inspectorTab, setInspectorTab] = useState<InspectorTab>('inspector');
+  const [customEffects, setCustomEffects] = useState<CustomEffect[]>([]);
+  const [fxEditor, setFxEditor] = useState<CustomEffect>({ id: 'custom-preview', name: 'New FX', parameter: 'dimmer', waveform: 'sine', bpm: 100, depth: 100, phaseSpread: 0, offset: 0 });
+  const [selectedFxBankId, setSelectedFxBankId] = useState<string>('pulse');
+  const [stageSyncPolicy, setStageSyncPolicy] = useState<StageSyncPolicy>(DEFAULT_STAGE_SYNC_POLICY);
+  const [stageSyncChanges, setStageSyncChanges] = useState<StageChange[]>([]);
+  const [stageRevision, setStageRevision] = useState(1);
+  const [stageSyncTab, setStageSyncTab] = useState<'sync' | 'history'>('sync');
+  const pendingStageChanges = stageSyncChanges.filter((change) => change.status === 'pending');
+  useEffect(() => {
+    if (workspace !== 'show' || directStatus.clients < 1) {
+      setLumaVizPreview(null);
+      return;
+    }
+    let cancelled = false;
+    const poll = window.setInterval(() => {
+      void lumaVizPreviewFrame().then((frame) => {
+        if (cancelled) return;
+        if (frame && Date.now() - frame.timestamp < 1500) setLumaVizPreview({ dataUrl: frame.dataUrl, timestamp: frame.timestamp, view: frame.view });
+        else setLumaVizPreview(null);
+      }).catch(() => { if (!cancelled) setLumaVizPreview(null); });
+    }, 250);
+    return () => { cancelled = true; window.clearInterval(poll); };
+  }, [workspace, directStatus.clients]);
+  useEffect(() => {
+    if (!directStatus.listening) return;
+    const timer = window.setInterval(() => {
+      void drainLumaVizStageChanges<StageChange>().then((changes) => {
+        if (!changes.length) return;
+        const normalized: StageChange[] = changes.map((change) => ({ ...change, status: 'pending' }));
+        normalized.forEach((change) => {
+          const conflict = hasRevisionConflict(stageRevision, change);
+          const decision = decideIncomingChange(stageSyncPolicy, change);
+          const safeLiveApply = decision === 'apply' && !conflict && !canAutoApplyDangerousChange(stageSyncPolicy, change.category);
+          if (safeLiveApply && change.entityKind === 'fixture' && change.category === 'fixturePosition') {
+            const after = change.after as { position?: Vec3; rotation?: { yaw: number; pitch: number; roll: number } } | null;
+            if (after?.position) {
+              setPatch((current) => current.map((fixture, index) => {
+                if (fixture.id !== change.entityId) return fixture;
+                const existing = fixtureTransform(fixture, index, current.length, stageSettings.dimensions);
+                return { ...fixture, transform: { position: { ...after.position! }, rotation: after.rotation ? { ...after.rotation } : existing.rotation } };
+              }));
+              setStageRevision((revision) => revision + 1);
+              change.status = 'applied';
+            }
+          }
+        });
+        setStageSyncChanges((current) => [...normalized, ...current].slice(0, 100));
+      }).catch(() => undefined);
+    }, 250);
+    return () => window.clearInterval(timer);
+  }, [directStatus.listening, stageRevision, stageSyncPolicy]);
+  const setStageSyncMode = (mode: StageSyncMode) => setStageSyncPolicy((current) => ({ ...current, mode }));
+  const resolveStageChange = (id: string, status: 'approved' | 'rejected') => {
+    const change = stageSyncChanges.find((item) => item.id === id);
+    if (!change) return;
+    if (status === 'approved' && change.entityKind === 'fixture' && change.category === 'fixturePosition') {
+      const after = change.after as { position?: Vec3; rotation?: { yaw: number; pitch: number; roll: number } } | null;
+      if (after?.position) {
+        setPatch((current) => current.map((fixture, index) => {
+          if (fixture.id !== change.entityId) return fixture;
+          const existing = fixtureTransform(fixture, index, current.length, stageSettings.dimensions);
+          return { ...fixture, transform: { position: { ...after.position! }, rotation: after.rotation ? { ...after.rotation } : existing.rotation } };
+        }));
+        setStageRevision((revision) => revision + 1);
+      }
+    }
+    setStageSyncChanges((current) => current.map((item) => item.id === id ? { ...item, status } : item));
+    setMessage(status === 'approved' ? `Applied Stage Sync change: ${change.summary}.` : `Rejected Stage Sync change: ${change.summary}.`);
+  };
+
+  const revertStageChange = (id: string) => {
+    const change = stageSyncChanges.find((item) => item.id === id);
+    if (!change || change.entityKind !== 'fixture' || change.category !== 'fixturePosition') return;
+    const before = change.before as { position?: Vec3; rotation?: { yaw: number; pitch: number; roll: number } } | Vec3 | null;
+    const position = before && 'position' in before && before.position ? before.position : before as Vec3 | null;
+    if (!position || typeof position.x !== 'number') return;
+    setPatch((current) => current.map((fixture, index) => {
+      if (fixture.id !== change.entityId) return fixture;
+      const existing = fixtureTransform(fixture, index, current.length, stageSettings.dimensions);
+      const rotation = before && 'rotation' in before && before.rotation ? before.rotation : existing.rotation;
+      return { ...fixture, transform: { position: { ...position }, rotation: { ...rotation } } };
+    }));
+    setStageRevision((revision) => revision + 1);
+    setStageSyncChanges((current) => current.map((item) => item.id === id ? { ...item, status: 'reverted' } : item));
+    setMessage(`Reverted Stage Sync change: ${change.summary}.`);
+  };
+
+  const systemHealth = [
+    { label: 'DMX', value: dmxStatus.connected ? 'ONLINE' : 'VIRTUAL', healthy: dmxStatus.connected, action: () => { setWorkspace('setup'); setSetupView('settings'); } },
+    { label: 'LUMAVIZ', value: directStatus.clients > 0 ? 'CONNECTED' : directStatus.listening ? 'READY' : 'OFFLINE', healthy: directStatus.clients > 0, action: () => { setWorkspace('setup'); setSetupView('settings'); } },
+    { label: 'MIDI', value: midiStatus.connected ? 'CONNECTED' : 'OFFLINE', healthy: midiStatus.connected, action: () => { setWorkspace('setup'); setSetupView('settings'); } },
+  ];
 
   return (
     <main className={`console-app workspace-${workspace} ${dmxStatus.blackout ? 'blackout-is-active' : ''}`}>
       <header className="console-header">
         <div className="console-brand"><span className="brand-mark">◆</span><div><small>SHOW</small><input aria-label="Current show name" value={showFile.name} onChange={(event) => setShowFile((current) => ({ ...current, name: event.target.value }))} /></div></div>
-        <nav className="console-workspace-tabs" aria-label="Workspace">{(['setup', 'program', 'show', 'live'] as Workspace[]).map((item) => <button key={item} className={workspace === item ? 'active' : ''} onClick={() => setWorkspace(item)}>{item.toUpperCase()}</button>)}</nav>
+        <nav className="console-workspace-tabs" aria-label="Workspace">{(['setup', 'program', 'show', 'live'] as Workspace[]).map((item) => <button key={item} className={workspace === item ? 'active' : ''} onClick={() => setWorkspace(item)}>{WORKSPACE_LABELS[item]}</button>)}</nav>
         <div className="console-header-status">
+          <div className="system-health-strip">{systemHealth.map((item) => <button key={item.label} className={item.healthy ? 'healthy' : ''} onClick={item.action}><i /><span><small>{item.label}</small><strong>{item.value}</strong></span></button>)}</div>
           <button className="tempo-pill" onClick={tapTempo}><strong>{tempoSource === 'midi' && midiBpm ? midiBpm : effectBpm} BPM</strong><small>{tempoSource === 'midi' ? 'MIDI CLOCK' : 'TAP'}</small></button>
-          <button className={`connection-pill ${dmxStatus.connected ? 'online' : ''}`} onClick={() => { setWorkspace('setup'); setSetupView('settings'); }}><i />{dmxStatus.connected ? 'DMX Connected' : 'Virtual Output'}</button>
-          <button className={`console-blackout ${dmxStatus.blackout ? 'active' : ''}`} onClick={toggleBlackout}>{dmxStatus.blackout ? 'RELEASE BLACKOUT' : 'BLACKOUT'}</button>
+          <div className="header-master"><small>MASTER</small><strong>{globalMaster}%</strong></div>
+          <button className={`console-blackout ${dmxStatus.blackout ? 'active' : ''}`} onClick={toggleBlackout}>{dmxStatus.blackout ? 'RELEASE' : 'BLACKOUT'}</button>
         </div>
       </header>
 
@@ -2672,7 +2903,7 @@ export default function App() {
 
       {workspace === 'setup' && <section className="console-workspace setup-console">
         <nav className="workspace-subtabs setup-subtabs">{([
-          ['fixtures', 'Fixtures'], ['groups', 'Group Assignment'], ['patch', 'Patch'], ['stage', 'Stage View'], ['settings', 'Settings']
+          ['stage', 'Stage'], ['patch', 'Patch'], ['fixtures', 'Fixtures'], ['groups', 'Groups'], ['settings', 'System']
         ] as Array<[SetupView, string]>).map(([id, label]) => <button key={id} className={setupView === id ? 'active' : ''} onClick={() => setSetupView(id)}>{label}</button>)}</nav>
         <FixtureBrowser
           patch={patch}
@@ -2690,7 +2921,7 @@ export default function App() {
 
         <div className="setup-center console-center">
           {setupView === 'stage' && <>
-            <div className="stage-console-toolbar"><div role="toolbar" aria-label="Stage Designer mode">{STAGE_DESIGNER_MODES.map((mode) => <button key={mode.id} className={stageMode === mode.id ? 'active' : ''} onClick={() => setStageMode(mode.id)}>{mode.label}</button>)}</div><span>{stageSettings.unit === 'feet' ? 'FEET' : 'METERS'} · {stageSettings.dimensions.width.toFixed(1)} × {stageSettings.dimensions.depth.toFixed(1)} m</span></div>
+            <div className="stage-console-toolbar"><div role="toolbar" aria-label="Stage Designer mode">{STAGE_DESIGNER_MODES.map((mode) => <button key={mode.id} className={stageMode === mode.id ? 'active' : ''} onClick={() => setStageMode(mode.id)}>{mode.label}</button>)}</div><div className="stage-sync-compact"><small>STAGE SYNC</small>{(['locked','review','live'] as StageSyncMode[]).map((mode) => <button key={mode} className={stageSyncPolicy.mode === mode ? 'active' : ''} onClick={() => setStageSyncMode(mode)}>{mode.toUpperCase()}</button>)}{pendingStageChanges.length > 0 && <b>{pendingStageChanges.length}</b>}</div><span>{stageSettings.unit === 'feet' ? 'FEET' : 'METERS'} · {stageSettings.dimensions.width.toFixed(1)} × {stageSettings.dimensions.depth.toFixed(1)} m</span></div>
             <div className="dominant-stage">{renderStagePreview(true)}</div>
             <div className="stage-bottom-tools">
               <section><header><strong>TARGETS &amp; AIM</strong><span>{selectedMovingFixtures.length} mover{selectedMovingFixtures.length === 1 ? '' : 's'} selected</span></header><div className="inline-control-grid"><select value={selectedTargetId} onChange={(event) => setSelectedTargetId(event.target.value)}>{stageTargets.map((target) => <option key={target.id} value={target.id}>{target.name}</option>)}</select><select value={aimArrangement} onChange={(event) => setAimArrangement(event.target.value as TargetArrangement)}><option value="converge">Converge</option><option value="fan-horizontal">Horizontal fan</option><option value="fan-vertical">Vertical fan</option><option value="mirror">Mirror</option><option value="cross">Cross</option></select><button className="console-primary" disabled={!selectedTarget || !selectedMovingFixtures.length} onClick={() => selectedTarget && void aimAtTarget(selectedTarget)}>Aim selected</button></div></section>
@@ -2724,6 +2955,8 @@ export default function App() {
         </div>
 
         <aside className="console-inspector setup-inspector">
+          <nav className="inspector-tabs" aria-label="Inspector view">{(['inspector','history','sync'] as InspectorTab[]).map((tab) => <button key={tab} className={inspectorTab === tab ? 'active' : ''} onClick={() => setInspectorTab(tab)}>{tab.toUpperCase()}{tab === 'sync' && pendingStageChanges.length > 0 ? <b>{pendingStageChanges.length}</b> : null}</button>)}</nav>
+          {inspectorTab === 'history' ? <div className="inspector-global-history"><header><span>STAGE HISTORY</span><strong>Revision {stageRevision}</strong><small>{stageSyncChanges.length} recorded changes</small></header>{stageSyncChanges.slice(0,16).map((change) => <article key={change.id}><i className={`history-source ${change.source}`} /><span><strong>{change.summary}</strong><small>{change.source === 'lumaviz' ? 'LumaViz' : 'LumaRig'} · {change.status.toUpperCase()} · {new Date(change.createdAt).toLocaleTimeString()}</small></span>{change.status === 'approved' && change.category === 'fixturePosition' ? <button onClick={() => revertStageChange(change.id)}>Revert</button> : null}</article>)}{!stageSyncChanges.length && <div className="empty-inspector"><strong>No stage history</strong><span>Spatial changes from LumaRig and LumaViz will appear here.</span></div>}</div> : inspectorTab === 'sync' ? <section className="inspector-stage-sync inspector-sync-primary"><header><span>STAGE SYNC</span><strong>REV {stageRevision} · {stageSyncPolicy.mode.toUpperCase()}</strong></header><div className="sync-mode-row">{(['locked','review','live'] as StageSyncMode[]).map((mode) => <button key={mode} className={stageSyncPolicy.mode === mode ? 'active' : ''} onClick={() => setStageSyncMode(mode)}>{mode.toUpperCase()}</button>)}</div><p>LumaRig and LumaViz share fixture identity and spatial transforms. Lighting output remains owned by LumaRig.</p><small>{pendingStageChanges.length ? `${pendingStageChanges.length} incoming change${pendingStageChanges.length === 1 ? '' : 's'} waiting for review.` : 'Spatial state is synchronized with no pending proposals.'}</small>{pendingStageChanges.map((change) => <article key={change.id}><b>{change.source === 'lumaviz' ? 'LumaViz' : 'LumaRig'} · {change.summary}</b><span>Base rev {change.baseRevision} → current rev {stageRevision}</span><details><summary>Compare transform</summary><pre>{JSON.stringify({ before: change.before, after: change.after }, null, 2)}</pre></details><div><button onClick={() => resolveStageChange(change.id,'rejected')}>Reject</button><button className="console-primary" onClick={() => resolveStageChange(change.id,'approved')}>Accept</button></div></article>)}</section> : <>
           {setupView === 'groups' && selectedGroup ? <>
             <header><span>GROUP SETTINGS</span><strong>{selectedGroup.name}</strong><small>{selectedGroupFixtures.length} fixtures</small></header>
             <label><span>Group Name</span><input defaultValue={selectedGroup.name} key={selectedGroup.id} onBlur={(event) => updateFixtureGroup(selectedGroup.id, { name: event.target.value })} /></label>
@@ -2746,54 +2979,81 @@ export default function App() {
             <label><span>Group</span><select value={inspectedFixture.group} onChange={(event) => savePatchedFixture({ ...inspectedFixture, group: event.target.value })}><option value="">Unassigned</option>{fixtureGroups.map((group) => <option key={group.id} value={group.name}>{group.name}</option>)}</select></label>
             <div className="inspector-pair"><label><span>Mounting</span><select value={inspectedFixture.mounting ?? 'hanging'} onChange={(event) => savePatchedFixture({ ...inspectedFixture, mounting: event.target.value as PatchedFixture['mounting'] })}><option value="hanging">Hanging</option><option value="floor">Floor</option><option value="wall">Wall</option><option value="custom">Custom</option></select></label><label><span>Orientation</span><select value={inspectedFixture.orientation ?? 'normal'} onChange={(event) => savePatchedFixture({ ...inspectedFixture, orientation: event.target.value as PatchedFixture['orientation'] })}><option value="normal">Normal</option><option value="inverted">Inverted</option><option value="rotated90">Rotated 90°</option><option value="rotated180">Rotated 180°</option><option value="custom">Custom</option></select></label></div>
             <div className="transform-grid">{(['x', 'y', 'z'] as const).map((axis) => <label key={axis}><span>{axis.toUpperCase()}</span><input type="number" step="0.1" value={Number(activeStageTransform.position[axis].toFixed(2))} onChange={(event) => updateStageFixtureTransform('position', axis, Number(event.target.value))} /></label>)}{(['yaw', 'pitch', 'roll'] as const).map((axis) => <label key={axis}><span>{axis}</span><input type="number" step="1" value={Number(activeStageTransform.rotation[axis].toFixed(1))} onChange={(event) => updateStageFixtureTransform('rotation', axis, Number(event.target.value))} /></label>)}</div>
-            <div className="calibration-status"><span>CALIBRATION</span><strong>{inspectedFixture.calibration?.status ?? 'uncalibrated'}</strong><small>{Math.round((inspectedFixture.calibration?.confidence ?? 0) * 100)}% confidence</small></div><button onClick={() => setCalibrationOpen((value) => !value)}>{calibrationOpen ? 'Close Calibration' : 'Calibrate Position'}</button>{calibrationOpen && <div className="calibration-mini"><button onClick={homeActiveFixture}>Send Home</button><button onClick={captureCalibrationObservation}>Capture Target</button><button onClick={solveActiveFixtureCalibration}>Solve</button><button onClick={resetActiveFixtureCalibration}>Reset</button></div>}
-          </> : <div className="empty-inspector"><strong>No selection</strong><span>Select a fixture or stage object to inspect it.</span></div>}
+            <div className="calibration-status"><span>CALIBRATION</span><strong>{inspectedFixture.calibration?.status ?? 'uncalibrated'}</strong><small>{Math.round((inspectedFixture.calibration?.confidence ?? 0) * 100)}% confidence</small></div>
+            <button className="inspector-sync-jump" onClick={() => setInspectorTab('sync')}><span>STAGE SYNC</span><strong>{stageSyncPolicy.mode.toUpperCase()}</strong><small>{pendingStageChanges.length ? `${pendingStageChanges.length} pending` : `Revision ${stageRevision}`}</small></button>
+            <button onClick={() => setCalibrationOpen((value) => !value)}>{calibrationOpen ? 'Close Calibration' : 'Calibrate Position'}</button>{calibrationOpen && <div className="calibration-mini"><button onClick={homeActiveFixture}>Send Home</button><button onClick={captureCalibrationObservation}>Capture Target</button><button onClick={solveActiveFixtureCalibration}>Solve</button><button onClick={resetActiveFixtureCalibration}>Reset</button></div>}
+          </> : <div className="empty-inspector"><strong>No selection</strong><span>Select a fixture or stage object to inspect it.</span></div>}</>}
         </aside>
       </section>}
 
       {workspace === 'program' && <section className="console-workspace program-console">
         <FixtureBrowser patch={patch} groups={fixtureGroups} search={fixtureSearch} onSearchChange={setFixtureSearch} onSelectAll={selectAllFixtures} onClearSelection={clearFixtureSelection} onSelectFixture={selectFixtureFromConsole} onSelectGroup={selectFixtureGroup} selectedGroupId={selectedGroupId} />
         <div className="program-center console-center">
-          <nav className="workspace-subtabs program-subtabs">{([['stage', 'Stage View'], ['faders', 'Fader Mode'], ['groups', 'Groups']] as Array<[ProgramMode, string]>).map(([id, label]) => <button key={id} className={programMode === id ? 'active' : ''} onClick={() => setProgramMode(id)}>{label}</button>)}</nav>
+          <header className="program-workbench-header"><div><span>PROGRAMMING WORKBENCH</span><strong>{selectedGroup ? selectedGroup.name : selectedFixtureTargets.length === 1 ? selectedFixtureTargets[0].name : selectedFixtureTargets.length ? `${selectedFixtureTargets.length} Fixtures` : 'No Selection'}</strong></div><nav>{([['stage','RIG'],['faders','FIXTURES'],['groups','GROUPS'],['fx','FX EDITOR']] as Array<[ProgramMode,string]>).map(([id,label]) => <button key={id} className={programMode === id ? 'active' : ''} onClick={() => setProgramMode(id)}>{label}</button>)}</nav><div className="program-workbench-status"><small>{activeEffect ? `FX · ${activeEffect.toUpperCase()}` : 'FX READY'}</small><b>{effectBpm} BPM</b></div></header>
           {programMode !== 'stage' && <ColorDeck title={programMode === 'groups' ? 'GROUP COLOR' : 'GLOBAL COLOR'} subtitle={programMode === 'groups' ? selectedGroup?.name ?? 'Select a group' : selectedFixtureTargets.length ? `${selectedFixtureTargets.length} selected fixture${selectedFixtureTargets.length === 1 ? '' : 's'}` : 'Select fixtures before applying color'} color={globalColor} disabled={programMode === 'groups' ? !selectedGroup || compatibleColorFixtures(selectedGroupFixtures).length === 0 : selectedCompatibleColors.length === 0} presets={consoleColorPresets} onChange={(color) => programMode === 'groups' && selectedGroup ? applyGroupColor(selectedGroup, color) : applyGlobalColor(color)} />}
           {programMode === 'faders' && <section className="fader-bank"><header><span>FIXTURE FADERS</span><strong>Fixture-level brightness · semantic dimmer</strong></header><div>{patch.map((fixture) => <VerticalFader key={fixture.id} id={fixture.id} name={fixture.name} subtitle={fixtureBrowserSubtitle(fixture)} color={fixture.labelColor ?? '#55e98d'} value={fixtureIntensityPercent(universe, fixture)} selected={fixture.selected} onChange={(value) => void setFixtureAttribute(fixture, 'dimmer', percentToDmx(value))} onSelect={() => selectFixtureFromConsole(fixture.id, true)} onFx={() => selectFixtureFromConsole(fixture.id)} />)}</div></section>}
           {programMode === 'groups' && <section className="fader-bank"><header><span>GROUP MASTERS</span><strong>Non-destructive output multipliers</strong></header><div>{fixtureGroups.map((group) => { const members = fixturesInGroup(patch, group); return <VerticalFader key={group.id} id={group.id} name={group.name} subtitle={`${members.length} fixtures`} color={group.labelColor} value={Math.round(groupMasters[group.id] ?? group.masterDefault)} selected={selectedGroupId === group.id} onChange={(value) => applyGroupMaster(group, value)} onSelect={() => selectFixtureGroup(group.id)} onFx={() => selectFixtureGroup(group.id)} quickAction={{ label: 'Chase', onPress: () => startEffect('chase', members.map((fixture) => fixture.id)) }} />; })}</div></section>}
           {programMode === 'stage' && <><div className="stage-console-toolbar"><div role="toolbar">{STAGE_DESIGNER_MODES.map((mode) => <button key={mode.id} className={stageMode === mode.id ? 'active' : ''} onClick={() => setStageMode(mode.id)}>{mode.label}</button>)}</div><span>{selectedFixtureTargets.length} selected</span></div><div className="program-stage">{renderStagePreview(true)}</div></>}
-          <LooksStrip looks={allLooks} onApply={runLook} onSave={saveCurrentLook} />
+          {programMode === 'fx' && <div className="fx-editor-workspace">
+            <section className="fx-graph-panel"><header><div><span>FX SHAPE</span><strong>{fxEditor.name}</strong></div><button onClick={saveCustomFx}>SAVE TO BANK</button></header><svg viewBox="0 0 600 140" role="img" aria-label={`${fxEditor.waveform} effect waveform`}><g className="fx-grid">{[0,100,200,300,400,500,600].map((x) => <line key={`x${x}`} x1={x} y1="10" x2={x} y2="130" />)}{[20,45,70,95,120].map((y) => <line key={`y${y}`} x1="0" y1={y} x2="600" y2={y} />)}</g><polyline className="fx-wave-line" points={fxGraphPoints(fxEditor.waveform,fxEditor.depth,fxEditor.offset)} /></svg><footer><span>0°</span><span>90°</span><span>180°</span><span>270°</span><span>360°</span></footer></section>
+            <section className="fx-editor-controls"><label><span>NAME</span><input value={fxEditor.name} onChange={(event) => setFxEditor((current) => ({...current,name:event.target.value}))} /></label><label><span>PARAMETER</span><select value={fxEditor.parameter} onChange={(event) => setFxEditor((current) => ({...current,parameter:event.target.value as EffectParameter}))}>{(['dimmer','pan','tilt','uv'] as EffectParameter[]).map((parameter) => <option key={parameter} value={parameter}>{parameter.toUpperCase()}</option>)}</select></label><label><span>SHAPE</span><select value={fxEditor.waveform} onChange={(event) => setFxEditor((current) => ({...current,waveform:event.target.value as EffectWaveform}))}>{(['sine','triangle','square','saw','reverse-saw','step'] as EffectWaveform[]).map((wave) => <option key={wave} value={wave}>{wave.toUpperCase()}</option>)}</select></label><label><span>BPM · {fxEditor.bpm}</span><input type="range" min="20" max="240" value={fxEditor.bpm} onChange={(event) => setFxEditor((current) => ({...current,bpm:Number(event.target.value)}))} /></label><label><span>DEPTH · {fxEditor.depth}%</span><input type="range" min="0" max="100" value={fxEditor.depth} onChange={(event) => setFxEditor((current) => ({...current,depth:Number(event.target.value)}))} /></label><label><span>PHASE SPREAD · {fxEditor.phaseSpread}%</span><input type="range" min="0" max="100" value={fxEditor.phaseSpread} onChange={(event) => setFxEditor((current) => ({...current,phaseSpread:Number(event.target.value)}))} /></label><label><span>BASE · {fxEditor.offset}%</span><input type="range" min="0" max="100" value={fxEditor.offset} onChange={(event) => setFxEditor((current) => ({...current,offset:Number(event.target.value)}))} /></label><button className="console-primary" onClick={() => runCustomFx(fxEditor,programEffectFixtures.map((fixture) => fixture.id))}>PREVIEW FX</button></section>
+            <section className="fx-bank"><header><span>FX BANK</span><small>Factory + custom effects</small></header><div>{EFFECT_PRESETS.map((effect) => <button key={effect.id} className={selectedFxBankId === effect.id ? 'active' : ''} onClick={() => loadFactoryFx(effect)}><i className={`fx-icon fx-${effect.id}`} /><strong>{effect.name}</strong><small>{EFFECT_SHAPES[effect.id].waveform} · {effect.defaultBpm} bpm</small></button>)}{customEffects.map((effect) => <button key={effect.id} className={selectedFxBankId === effect.id ? 'active custom' : 'custom'} onClick={() => {setSelectedFxBankId(effect.id);setFxEditor(effect);}} onDoubleClick={() => runCustomFx(effect,programEffectFixtures.map((fixture) => fixture.id))}><i>∿</i><strong>{effect.name}</strong><small>{effect.waveform} · {effect.bpm} bpm</small></button>)}</div></section>
+          </div>}
+          {programMode !== 'fx' && <LooksStrip looks={allLooks} onApply={runLook} onSave={saveCurrentLook} />}
         </div>
-        <EffectsPanel title={programMode === 'groups' ? 'FX FOR SELECTED GROUP' : 'FX FOR SELECTED FIXTURE'} targetName={programEffectName} fixtures={programEffectFixtures} activeEffect={activeEffect} bpm={effectBpm} depth={effectDepth} disabled={programMode === 'groups' && !selectedGroup?.fxEnabled} onBpmChange={(value) => { setEffectBpm(value); effectBpmRef.current = value; setTempoSource('manual'); }} onDepthChange={(value) => { setEffectDepth(value); effectDepthRef.current = value; }} onStart={(effect) => toggleEffect(effect, programEffectFixtures.map((fixture) => fixture.id))} onPress={(effect) => startMomentaryEffect(effect, programEffectFixtures.map((fixture) => fixture.id))} onRelease={releaseMomentaryEffect} onStop={() => stopEffect()} />
+        <aside className="console-inspector program-inspector"><header><span>{programMode === 'groups' ? 'GROUP INSPECTOR' : 'PROGRAM INSPECTOR'}</span><strong>{programEffectName}</strong><small>{programEffectFixtures.length} fixture{programEffectFixtures.length === 1 ? '' : 's'} targeted</small></header>{programMode === 'groups' && selectedGroup ? <><label><span>Master</span><input type="range" min="0" max="100" value={Math.round(groupMasters[selectedGroup.id] ?? selectedGroup.masterDefault)} onChange={(event) => applyGroupMaster(selectedGroup,Number(event.target.value))} /></label><label className="inspector-toggle"><span>FX Enabled</span><input type="checkbox" checked={selectedGroup.fxEnabled} onChange={(event) => updateFixtureGroup(selectedGroup.id,{ fxEnabled:event.target.checked })} /></label></> : inspectedFixture ? <><div className="program-fixture-summary"><i style={{ background: inspectedFixture.labelColor ?? '#55e98d' }} /><span><strong>{findProfile(inspectedFixture.profileId)?.model ?? inspectedFixture.name}</strong><small>U{inspectedFixture.universe ?? 1} · {addressLabel(inspectedFixture.address)}</small></span></div><button onClick={() => { setWorkspace('setup'); setSetupView('stage'); setInspectorTab('inspector'); }}>Open Spatial Inspector</button></> : <div className="empty-inspector"><strong>Select a fixture or group</strong><span>The inspector follows your programming target.</span></div>}<EffectsPanel title="FX" targetName={programEffectName} fixtures={programEffectFixtures} activeEffect={activeEffect} bpm={effectBpm} depth={effectDepth} disabled={programMode === 'groups' && !selectedGroup?.fxEnabled} onBpmChange={(value) => { setEffectBpm(value); effectBpmRef.current = value; setTempoSource('manual'); }} onDepthChange={(value) => { setEffectDepth(value); effectDepthRef.current = value; }} onStart={(effect) => toggleEffect(effect, programEffectFixtures.map((fixture) => fixture.id))} onPress={(effect) => startMomentaryEffect(effect, programEffectFixtures.map((fixture) => fixture.id))} onRelease={releaseMomentaryEffect} onStop={() => stopEffect()} /></aside>
       </section>}
 
-      {workspace === 'show' && <section className="show-console console-workspace-wide">
-        <nav className="workspace-subtabs show-subtabs"><button className={showMode === 'cues' ? 'active' : ''} onClick={() => setShowMode('cues')}>CUES</button><button className={showMode === 'tracks' ? 'active' : ''} onClick={() => setShowMode('tracks')}>TRACKS</button><button className={showMode === 'library' ? 'active' : ''} onClick={() => setShowMode('library')}>SHOW LIBRARY</button></nav>
-        {showMode === 'cues' ? <div className="show-cue-layout">
-          <aside className="cue-list-console"><header><span>CUE LIST</span><button onClick={captureCue}>＋ Capture</button></header>{showFile.cues.length ? showFile.cues.map((cue, index) => <article className={activeCueId === cue.id ? 'active' : ''} key={cue.id}><button className="cue-line" onClick={() => runCue(cue)}><b>{String(cue.number).padStart(2, '0')}</b><i style={{ background: lookSwatch(cue.values) }} /><span><strong>{cue.name}</strong><small>{cue.fadeMs ? `${cue.fadeMs / 1000}s fade` : 'Snap'}</small></span></button><div><button disabled={index === 0} onClick={() => setShowFile((current) => ({ ...current, cues: moveCue(current.cues, cue.id, -1) }))}>↑</button><button disabled={index === showFile.cues.length - 1} onClick={() => setShowFile((current) => ({ ...current, cues: moveCue(current.cues, cue.id, 1) }))}>↓</button><button onClick={() => deleteCue(cue.id)}>×</button></div></article>) : <div className="empty-cues"><strong>No cues yet</strong><span>Build a look in Program, then capture it here.</span><button onClick={() => setWorkspace('program')}>Open Program</button></div>}</aside>
-          <main className="cue-preview-console"><header><span>STAGE / CUE PREVIEW</span><b>{activeCue?.name ?? 'Live output'}</b></header>{renderStagePreview()}<div className="cue-preview-meta"><span>CURRENT<strong>{activeCue ? `${activeCue.number}. ${activeCue.name}` : 'Ready'}</strong></span><span>NEXT<strong>{nextCue ? `${nextCue.number}. ${nextCue.name}` : 'End of show'}</strong></span></div></main>
-          <aside className="cue-inspector-console"><header><span>CUE INSPECTOR</span><strong>{activeCue?.name ?? 'New cue'}</strong></header>{activeCue ? <><label><span>Cue Name</span><input value={activeCue.name} onChange={(event) => updateCueProperties(activeCue.id, { name: event.target.value })} /></label><label><span>Cue Color</span><input type="color" value={activeCue.color ?? '#55e98d'} onChange={(event) => updateCueProperties(activeCue.id, { color: event.target.value })} /></label><label><span>Description</span><textarea value={activeCue.description ?? ''} onChange={(event) => updateCueProperties(activeCue.id, { description: event.target.value })} /></label><div className="inspector-pair"><label><span>Fade In ms</span><input type="number" min="0" value={activeCue.fadeMs} onChange={(event) => updateCueProperties(activeCue.id, { fadeMs: Number(event.target.value) })} /></label><label><span>Fade Out ms</span><input type="number" min="0" value={activeCue.fadeOutMs ?? activeCue.fadeMs} onChange={(event) => updateCueProperties(activeCue.id, { fadeOutMs: Number(event.target.value) })} /></label></div><div className="inspector-pair"><label><span>Delay ms</span><input type="number" min="0" value={activeCue.delayMs ?? 0} onChange={(event) => updateCueProperties(activeCue.id, { delayMs: Number(event.target.value) })} /></label><label><span>Follow ms</span><input type="number" min="0" value={activeCue.followMs ?? 0} onChange={(event) => updateCueProperties(activeCue.id, { followMs: Number(event.target.value) })} /></label></div><label><span>Linked Effect</span><select value={activeCue.linkedEffectId ?? ''} onChange={(event) => updateCueProperties(activeCue.id, { linkedEffectId: event.target.value })}><option value="">None</option>{EFFECT_PRESETS.map((effect) => <option key={effect.id} value={effect.id}>{effect.name}</option>)}</select></label><label><span>Track / Audio Note</span><input value={activeCue.trackName ?? ''} onChange={(event) => updateCueProperties(activeCue.id, { trackName: event.target.value })} /></label><button className="console-primary" onClick={() => updateCue(activeCue.id)}>Update Look From Output</button></> : <><label><span>New Cue Name</span><input value={cueName} placeholder={`Cue ${showFile.cues.length + 1}`} onChange={(event) => setCueName(event.target.value)} /></label><label><span>Fade In</span><select value={cueFadeMs} onChange={(event) => setCueFadeMs(Number(event.target.value))}>{FADE_TIMES.map((time) => <option key={time} value={time}>{time === 0 ? 'Snap' : `${time / 1000}s`}</option>)}</select></label><button className="console-primary" onClick={captureCue}>Capture Current Look</button></>}<label><span>Show Notes</span><textarea value={showFile.notes ?? ''} placeholder="Set list, transitions, safety notes…" onChange={(event) => setShowFile((current) => ({ ...current, notes: event.target.value }))} /></label></aside>
-          <div className="cue-transport-console"><button onClick={goPreviousCue} disabled={!showFile.cues.length}>PREVIOUS</button><span><small>CURRENT CUE</small><strong>{activeCue?.name ?? 'Ready'}</strong></span><button className="giant-go" onClick={goNextCue} disabled={!nextCue}>GO<small>{nextCue?.name ?? 'End'}</small></button><span><small>NEXT CUE</small><strong>{nextCue?.name ?? 'End of show'}</strong></span><button onClick={goNextCue} disabled={!nextCue}>NEXT</button></div>
-        </div> : showMode === 'tracks' ? <div className="tracks-console">
-          <section className="console-panel track-source"><header><div><span>AUDIO &amp; SHOW RECORDER</span><h2>{showTrackName || 'No track loaded'}</h2></div><label className="file-button"><input type="file" accept="audio/*" onChange={loadShowTrack} />{showTrackName ? 'Change Track' : 'Load Track'}</label></header><div className="track-timeline"><span>{formatShowTime(showTrackPositionMs)}</span><input type="range" min="0" max={Math.max(1, showTrackDurationMs)} value={Math.min(showTrackPositionMs, Math.max(1, showTrackDurationMs))} onChange={(event) => { const next = Number(event.target.value); if (showTrackAudioRef.current) showTrackAudioRef.current.currentTime = next / 1000; setShowTrackPositionMs(next); }} /><span>{formatShowTime(showTrackDurationMs)}</span></div><div className="track-actions"><input value={recordingTakeName} placeholder={`Take ${(showFile.recordings?.length ?? 0) + 1}`} onChange={(event) => setRecordingTakeName(event.target.value)} /><button onClick={toggleShowTrackPreview}>Play / Pause</button><button className="record-button" onClick={startShowRecording}>● Record Show</button></div></section>
-          <section className="console-panel recorded-takes-console"><header><div><span>LIGHTING TAKES</span><h2>{showFile.recordings?.length ?? 0} saved</h2></div></header>{showFile.recordings?.map((recording) => <article key={recording.id}><span><strong>{recording.name}</strong><small>{formatShowTime(recording.durationMs)} · {recording.frames.length} changes</small></span><button onClick={() => playingRecordingId === recording.id ? stopRecordedShowPlayback() : playShowRecording(recording)}>{playingRecordingId === recording.id ? 'Stop' : 'Play'}</button><button onClick={() => deleteShowRecording(recording)}>Delete</button></article>)}</section>
-          <section className="console-panel external-track-console"><header><div><span>EXTERNAL TRACK SYNC</span><h2>Ableton / Logic / MIDI</h2></div><b className={externalTransportRunning ? 'healthy' : ''}>{externalTransportRunning ? 'Following' : externalTrack.armed ? 'Armed' : 'Off'}</b></header><label><span>Song Name</span><input value={externalTrack.songName} onChange={(event) => updateExternalTrack({ songName: event.target.value })} /></label><label><span>Lighting Take</span><select value={externalTrack.recordingId} onChange={(event) => assignExternalRecording(event.target.value)}><option value="">Choose take</option>{showFile.recordings?.map((recording) => <option key={recording.id} value={recording.id}>{recording.name}</option>)}</select></label><div className="inspector-pair"><label><span>BPM</span><input type="number" value={externalTrack.bpm} onChange={(event) => updateExternalTrack({ bpm: Number(event.target.value) })} /></label><label><span>Advance ms</span><input type="number" value={externalTrack.lightingOffsetMs} onChange={(event) => updateExternalTrack({ lightingOffsetMs: Number(event.target.value) })} /></label></div><button className={externalTrack.armed ? 'danger-button' : 'console-primary'} onClick={toggleExternalTrackArm}>{externalTrack.armed ? 'Disarm External Sync' : 'Arm External Sync'}</button><button onClick={() => { setWorkspace('setup'); setSetupView('settings'); }}>MIDI Connection Settings</button></section>
-        </div> : <div className="show-library-console">
-          <header><div><span>SHOW LIBRARY</span><h2>{showFile.name}</h2><small>Save complete show projects including cues, patch, stage design, groups and looks.</small></div><div><button onClick={newShowProject}>＋ New Show</button><button onClick={() => saveShowProject('draft')}>Save Draft</button><button className="console-primary" onClick={() => saveShowProject('show')}>Save Current Show</button></div></header>
-          <div className="show-library-grid">{showLibrary.length ? showLibrary.map((item) => <article key={item.id}><div><span className={item.status}>{item.status.toUpperCase()}</span><strong>{item.name}</strong><small>{new Date(item.savedAt).toLocaleString()} · {item.show.cues.length} cues · {item.patch.length} fixtures</small></div><div><button onClick={() => loadShowProject(item)}>Load</button><button className="danger-button" onClick={() => deleteShowProject(item.id)}>Delete</button></div></article>) : <div className="empty-show-library"><strong>No saved shows yet</strong><span>Save the current show or a draft. Your working show continues to autosave separately.</span></div>}</div>
-        </div>}
+      {workspace === 'show' && <section className="show-console show-reference-shell">
+        <aside className="show-sidebar"><header><strong>SHOW</strong><span>Program the service.</span></header><nav><button className={showMode === 'cues' ? 'active' : ''} onClick={() => setShowMode('cues')}>▣ <span>Cues</span></button><button onClick={() => setShowMode('cues')}>▻ <span>Timeline</span></button><button className={showMode === 'tracks' ? 'active' : ''} onClick={() => setShowMode('tracks')}>↔ <span>Tracks</span></button><button className={showMode === 'library' ? 'active' : ''} onClick={() => setShowMode('library')}>▤ <span>Show Library</span></button><button onClick={() => { setWorkspace('setup'); setSetupView('settings'); }}>∿ <span>MIDI / Sync</span></button><button onClick={() => setShowMode('tracks')}>◉ <span>Recordings</span></button></nav><blockquote>“Light supports<br/>the moment.”</blockquote></aside>
+        {showMode === 'cues' ? <div className="show-reference-main">
+          <section className="show-cues-card"><header><div><strong>Cues</strong><small>Create, organize, and fine-tune your cues.</small></div><input aria-label="Search cues" placeholder="Search cues…" /></header><div className="show-cue-actions"><button className="console-primary" onClick={captureCue}>＋ Add Cue</button><button>＋ Add Folder</button><button>•••</button></div><div className="show-cue-columns"><span>#</span><span>Name</span><span>Fade</span><span>Delay</span></div><div className="show-reference-cue-list">{showFile.cues.length ? showFile.cues.map((cue,index) => <button key={cue.id} className={activeCueId === cue.id ? 'active' : ''} onClick={() => { setActiveCueId(cue.id); }}><b>{cue.number}</b><i style={{background:cue.color ?? lookSwatch(cue.values)}}/><span>{cue.name}</span><small>{cue.fadeMs ? `${cue.fadeMs/1000}s` : 'Snap'}</small><small>{(cue.delayMs ?? 0)/1000}s</small><em>•••</em></button>) : <div className="empty-cues"><strong>No cues yet</strong><span>Build a look in Program, then add your first cue.</span></div>}</div></section>
+          <section className="show-cue-details"><header><strong>Cue Details</strong><button>•••</button></header>{activeCue ? <><label><span>Name</span><input value={activeCue.name} onChange={(event)=>updateCueProperties(activeCue.id,{name:event.target.value})}/></label><label><span>Color</span><input type="color" value={activeCue.color ?? '#55e98d'} onChange={(event)=>updateCueProperties(activeCue.id,{color:event.target.value})}/></label><div className="inspector-pair"><label><span>Fade Time</span><input type="number" min="0" step=".1" value={activeCue.fadeMs/1000} onChange={(event)=>updateCueProperties(activeCue.id,{fadeMs:Number(event.target.value)*1000})}/></label><label><span>Delay</span><input type="number" min="0" step=".1" value={(activeCue.delayMs ?? 0)/1000} onChange={(event)=>updateCueProperties(activeCue.id,{delayMs:Number(event.target.value)*1000})}/></label></div><label><span>Follow</span><select value={(activeCue.followMs ?? 0)>0?'follow':'manual'} onChange={(event)=>updateCueProperties(activeCue.id,{followMs:event.target.value==='follow'?Math.max(1000,activeCue.followMs ?? 1000):0})}><option value="manual">Next Cue / Manual</option><option value="follow">Timed Follow</option></select></label><label><span>Description</span><textarea value={activeCue.description ?? ''} onChange={(event)=>updateCueProperties(activeCue.id,{description:event.target.value})}/></label><div className="cue-target-summary"><strong>Included Targets</strong><span>{patch.length} fixtures · {fixtureGroups.length} groups</span></div><button className="console-primary" onClick={()=>updateCue(activeCue.id)}>Update From Output</button></> : <div className="empty-inspector"><strong>Select a cue</strong><span>Its timing and metadata will appear here.</span></div>}</section>
+          <section className="show-stage-preview"><header><div className="preview-title"><strong>Stage Preview</strong><small className={lumaVizPreview ? 'viz-live' : 'local-live'}>● {lumaVizPreview ? `LumaViz LIVE · ${(lumaVizPreview.view ?? 'camera').toUpperCase()}` : 'LumaRig LOCAL'}</small></div><div>{!lumaVizPreview && <><button onClick={()=>setStageView('front')}>Front</button><button onClick={()=>setStageView(stageView==='perspective'?'front':'perspective')}>{stageView==='perspective'?'2D':'3D'}</button></>}</div></header>{lumaVizPreview ? <div className="lumaviz-preview-feed"><img src={lumaVizPreview.dataUrl} alt="Live LumaViz stage preview" /><span>LIVE VISUALIZER FEED</span></div> : renderStagePreview()}</section>
+          <section className="show-cue-timeline"><header><strong>Cue Timeline</strong><small>{activeCue?.name ?? 'Select a cue'}</small></header><div className="cue-timeline-ruler">{[0,1,2,3,4,5,6,7,8].map((n)=><span key={n}>{n}s</span>)}</div><div className="cue-timeline-tracks"><label>☼ Intensity<i style={{width:activeCue?`${Math.min(92,28+(activeCue.fadeMs/1000)*16)}%`:'0%'}}/></label><label>● Color<i className="color" style={{width:activeCue?'48%':'0%'}}/></label><label>✣ Position<i className="position" style={{width:activeCue?'66%':'0%'}}/></label><label>✳ FX<i className="fx" style={{width:activeCue?.linkedEffectId?'72%':'0%'}}/></label></div></section>
+          <section className="show-settings-card"><header><strong>Show Settings</strong></header><div><label><span>Tempo (BPM)</span><input type="number" min="20" max="240" value={effectBpm} onChange={(event)=>{setEffectBpm(Number(event.target.value));effectBpmRef.current=Number(event.target.value);}}/></label><label><span>Timecode</span><input value={formatShowTime(externalSongPositionMs || showTrackPositionMs)} readOnly/></label><label><span>External Sync</span><select value={tempoSource} onChange={(event)=>setTempoSource(event.target.value as 'manual'|'midi')}><option value="manual">Internal</option><option value="midi">MIDI Clock</option></select></label></div></section>
+          <section className="show-mini-library"><header><strong>Show Library</strong><button onClick={()=>setShowMode('library')}>＋ New Show</button></header>{showLibrary.slice(0,4).map((item)=><button key={item.id} onClick={()=>loadShowProject(item)}><span>▤ <strong>{item.name}</strong></span><small>{new Date(item.savedAt).toLocaleDateString()}</small></button>)}</section>
+          <section className="show-playback-order"><header><strong>Playback Order</strong></header>{showFile.cues.slice(0,6).map((cue,index)=><div key={cue.id}><b>{index+1}</b><span>{cue.name}</span><small>⠿</small></div>)}</section>
+        </div> : showMode === 'tracks' ? <div className="tracks-console show-reference-alt"><section className="console-panel track-source"><header><div><span>AUDIO & SHOW RECORDER</span><h2>{showTrackName || 'No track loaded'}</h2></div><label className="file-button"><input type="file" accept="audio/*" onChange={loadShowTrack}/>{showTrackName?'Change Track':'Load Track'}</label></header><div className="track-timeline"><span>{formatShowTime(showTrackPositionMs)}</span><input type="range" min="0" max={Math.max(1,showTrackDurationMs)} value={Math.min(showTrackPositionMs,Math.max(1,showTrackDurationMs))} onChange={(event)=>{const next=Number(event.target.value);if(showTrackAudioRef.current)showTrackAudioRef.current.currentTime=next/1000;setShowTrackPositionMs(next);}}/><span>{formatShowTime(showTrackDurationMs)}</span></div><div className="track-actions"><button onClick={toggleShowTrackPreview}>Play / Pause</button><button className="record-button" onClick={startShowRecording}>● Record Show</button></div></section><section className="console-panel recorded-takes-console"><header><div><span>LIGHTING TAKES</span><h2>{showFile.recordings?.length ?? 0} saved</h2></div></header>{showFile.recordings?.map((recording)=><article key={recording.id}><span><strong>{recording.name}</strong><small>{formatShowTime(recording.durationMs)}</small></span><button onClick={()=>playingRecordingId===recording.id?stopRecordedShowPlayback():playShowRecording(recording)}>{playingRecordingId===recording.id?'Stop':'Play'}</button></article>)}</section></div> : <div className="show-library-console show-reference-alt"><header><div><span>SHOW LIBRARY</span><h2>{showFile.name}</h2></div><div><button onClick={newShowProject}>＋ New Show</button><button className="console-primary" onClick={()=>saveShowProject('show')}>Save Current Show</button></div></header><div className="show-library-grid">{showLibrary.map((item)=><article key={item.id}><div><strong>{item.name}</strong><small>{item.show.cues.length} cues · {item.patch.length} fixtures</small></div><button onClick={()=>loadShowProject(item)}>Load</button></article>)}</div></div>}
       </section>}
 
-      {workspace === 'live' && <section className="live-console">
-        <div className="live-cue-hero"><span><small>CURRENT CUE</small><strong>{activeCue?.name ?? 'Ready'}</strong><em>{activeCue ? `Cue ${activeCue.number}` : 'No cue running'}</em></span><button className="live-go" onClick={goNextCue} disabled={!nextCue}>GO<small>{nextCue?.name ?? 'End of show'}</small></button><span><small>NEXT CUE</small><strong>{nextCue?.name ?? 'End of show'}</strong><em>{nextCue ? `Cue ${nextCue.number}` : '—'}</em></span></div>
-        <div className="live-nav-buttons"><button onClick={goPreviousCue}>← PREVIOUS</button><button onClick={goNextCue} disabled={!nextCue}>NEXT →</button></div>
-        <section className="live-section live-fx"><header><span>PERFORMANCE FX</span>{activeEffect && <button onClick={() => stopEffect()}>Stop FX</button>}</header><div>{EFFECT_PRESETS.filter((effect) => ['bump', 'blinder', 'strobe', 'pulse', 'sweep', 'lightning', 'finale'].includes(effect.id) && effectSupportedByFixtures(effect.id, selectedFixtureTargets)).map((effect) => renderEffectButton(effect, true))}</div></section>
-        <section className="live-section live-control-bank">
-          <header><span>LIVE CONTROL</span><div className="live-control-actions">{liveBank === 'fixtures' && <><small>{patch.filter((fixture) => fixture.selected).length} selected</small><button onClick={selectAllFixtures}>All</button><button onClick={clearFixtureSelection}>Clear</button></>}<div className="live-bank-tabs"><button className={liveBank === 'fixtures' ? 'active' : ''} onClick={() => setLiveBank('fixtures')}>FIXTURES</button><button className={liveBank === 'groups' ? 'active' : ''} onClick={() => setLiveBank('groups')}>GROUPS</button></div></div></header>
-          {liveBank === 'fixtures' ? <div className="live-fader-row">{patch.map((fixture) => <VerticalFader key={fixture.id} id={`live-${fixture.id}`} name={fixture.name} subtitle={fixtureBrowserSubtitle(fixture)} color={fixture.labelColor ?? '#55e98d'} value={fixtureIntensityPercent(universe, fixture)} selected={fixture.selected} onChange={(value) => void setFixtureAttribute(fixture, 'dimmer', percentToDmx(value))} onSelect={() => selectFixtureFromConsole(fixture.id, true)} onFx={() => selectFixtureFromConsole(fixture.id)} />)}</div> : <div className="live-fader-row">{fixtureGroups.map((group) => { const members = fixturesInGroup(patch, group); return <VerticalFader key={group.id} id={`live-${group.id}`} name={group.name} subtitle={`${members.length} fixtures`} color={group.labelColor} value={Math.round(groupMasters[group.id] ?? group.masterDefault)} selected={selectedGroupId === group.id} onChange={(value) => applyGroupMaster(group, value)} onSelect={() => selectFixtureGroup(group.id)} onFx={() => selectFixtureGroup(group.id)} quickAction={{ label: 'Chase', onPress: () => toggleEffect('chase', members.map((fixture) => fixture.id)) }} />; })}</div>}
-        </section>
-        <section className="live-section live-looks"><header><span>LOOKS</span><small>{selectedFixtureTargets.length} fixture{selectedFixtureTargets.length === 1 ? '' : 's'} targeted</small></header><div>{allLooks.slice(0, 8).map((look) => <button key={look.id} onClick={() => runLook(look)}><i style={{ background: lookSwatch(look.values) }} /><strong>{look.name}</strong></button>)}</div></section>
-        <section className="live-master"><header><span>GRAND MASTER</span><strong>{globalMaster}%</strong></header><input type="range" min="0" max={settings.masterLimit} value={globalMaster} onChange={(event) => applyGlobalMaster(Number(event.target.value))} /><div>{[0, 25, 50, 75, 100].map((value) => <button key={value} onClick={() => applyGlobalMaster(value)}>{value}%</button>)}</div></section>
-        <footer className="live-health"><span className={dmxStatus.connected ? 'healthy' : ''}>● {dmxStatus.connected ? 'DMX ONLINE' : 'VIRTUAL OUTPUT'}</span><span className={midiStatus.connected ? 'healthy' : ''}>● MIDI {midiStatus.connected ? 'CONNECTED' : 'OFFLINE'}</span><span>{tempoSource === 'midi' ? 'MIDI CLOCK' : 'INTERNAL'} · {tempoSource === 'midi' && midiBpm ? midiBpm : effectBpm} BPM</span><span>{formatShowTime(externalSongPositionMs || showTrackPositionMs)}</span></footer>
+      {workspace === 'live' && <section className="live-reference-shell">
+        <aside className="live-sidebar"><header><strong>LIVE</strong><span>Operate the show.</span></header><nav>{([['performance','▷','Performance'],['fixtures','♙','Fixture Overrides'],['groups','♧','Groups'],['masters','⌘','Master Controls'],['shortcuts','▣','Shortcuts']] as Array<[LiveView,string,string]>).map(([id,icon,label])=><button key={id} className={liveView===id?'active':''} onClick={()=>{setLiveView(id);if(id==='fixtures')setLiveBank('fixtures');if(id==='groups')setLiveBank('groups')}}><b>{icon}</b><span>{label}</span></button>)}<button onClick={()=>{setWorkspace('setup');setSetupView('settings')}}><b>⚙</b><span>Settings</span></button></nav><blockquote><b>LIVE</b>Run your show with confidence.</blockquote></aside>
+        <div className="live-reference-main">
+          <header className="live-summary-row"><article><span>Current Cue</span><div><b>{activeCue?.number ?? '—'}</b><strong>{activeCue?.name ?? 'Ready'}</strong><small>{activeCue ? `Cue ${activeCue.number}` : 'No cue running'}</small></div></article><article><span>Next Cue</span><div><b>{nextCue?.number ?? '—'}</b><strong>{nextCue?.name ?? 'End of Show'}</strong><small>{nextCue ? 'Standing by' : 'Complete'}</small></div></article><article className="service-progress"><span>Service Progress</span><progress max={Math.max(1,showFile.cues.length)} value={Math.max(0,showFile.cues.findIndex((cue)=>cue.id===activeCueId)+1)} /><small>{showFile.cues.length ? `${Math.max(0,showFile.cues.findIndex((cue)=>cue.id===activeCueId)+1)} / ${showFile.cues.length} cues` : 'No cues'}</small></article></header>
+          {liveView === 'performance' ? <>
+            <section className="live-stage-card"><header><div><strong>Live Stage</strong><small className={lumaVizPreview?'viz-live':'local-live'}>● {lumaVizPreview?'LumaViz LIVE':'LumaRig LOCAL'}</small></div><button onClick={()=>setStageView(stageView==='perspective'?'front':'perspective')}>{stageView==='perspective'?'3D':'Front View'}</button></header>{lumaVizPreview?<div className="lumaviz-preview-feed"><img src={lumaVizPreview.dataUrl} alt="Live LumaViz stage preview"/><span>LIVE VISUALIZER FEED</span></div>:renderStagePreview()}</section>
+            <aside className="live-go-rail"><section><header>GO</header><button className="live-reference-go" onClick={goNextCue} disabled={!nextCue}>GO</button><div><button onClick={goPreviousCue}>◀ Back</button><button onClick={goNextCue} disabled={!nextCue}>Next ▶</button></div></section><section className="live-reference-blackout"><header>Blackout</header><button className={dmxStatus.blackout?'active':''} onClick={toggleBlackout}>{dmxStatus.blackout?'RELEASE BLACKOUT':'BLACKOUT'}</button></section></aside>
+            <section className="live-reference-masters"><header><strong>Master Controls</strong></header><div>{[['Master',globalMaster,(v:number)=>applyGlobalMaster(v)],['Intensity',selectedFixtureTargets.length===1?(fixtureIntensityPercent(universe,selectedFixtureTargets[0])??0):100,(v:number)=>selectedFixtureTargets.forEach((fixture)=>void setFixtureAttribute(fixture,'dimmer',percentToDmx(v)))],['FX',effectDepth,(v:number)=>setEffectDepth(v)]] .map(([label,value,handler])=><label key={label as string}><span>{label as string}</span><input type="range" min="0" max="100" value={value as number} onChange={(event)=>(handler as (v:number)=>void)(Number(event.target.value))}/><b>{value as number}%</b></label>)}</div></section>
+            <section className="live-reference-looks"><header><strong>Quick Looks</strong><button onClick={()=>setWorkspace('program')}>Edit</button></header><div>{allLooks.slice(0,6).map((look)=><button key={look.id} onClick={()=>runLook(look)}><i style={{background:lookSwatch(look.values)}}/><strong>{look.name}</strong></button>)}</div></section>
+            <section className="live-reference-fx"><header><strong>Performance FX</strong>{activeEffect&&<button onClick={()=>stopEffect()}>STOP</button>}</header><div>{EFFECT_PRESETS.filter((effect)=>['chase','color-chase','sweep','strobe','pulse','sparkle','bump','blinder'].includes(effect.id)&&effectSupportedByFixtures(effect.id,selectedFixtureTargets)).slice(0,8).map((effect)=>renderEffectButton(effect,true))}</div></section>
+          </> : liveView === 'masters' ? <section className="live-alt-panel live-master-alt"><header><div><strong>Master Controls</strong><small>Global output and performance shaping</small></div></header><div className="master-alt-grid"><label><span>GRAND MASTER</span><strong>{globalMaster}%</strong><input type="range" min="0" max={settings.masterLimit} value={globalMaster} onChange={(event)=>applyGlobalMaster(Number(event.target.value))}/></label><label><span>FX DEPTH</span><strong>{effectDepth}%</strong><input type="range" min="0" max="100" value={effectDepth} onChange={(event)=>setEffectDepth(Number(event.target.value))}/></label><label><span>FX SPEED</span><strong>{effectBpm} BPM</strong><input type="range" min="30" max="240" value={effectBpm} onChange={(event)=>setEffectBpm(Number(event.target.value))}/></label></div><button className={dmxStatus.blackout?'master-blackout active':'master-blackout'} onClick={toggleBlackout}>{dmxStatus.blackout?'RELEASE BLACKOUT':'BLACKOUT'}</button></section> : liveView === 'shortcuts' ? <section className="live-alt-panel live-shortcuts"><header><div><strong>Shortcuts</strong><small>Fast FOH actions</small></div></header><div><button onClick={goPreviousCue}>← PREVIOUS CUE</button><button className="console-primary" onClick={goNextCue} disabled={!nextCue}>GO · {nextCue?.name??'END'}</button>{allLooks.slice(0,6).map((look)=><button key={look.id} onClick={()=>runLook(look)}>{look.name}</button>)}{EFFECT_PRESETS.filter((effect)=>effectSupportedByFixtures(effect.id,selectedFixtureTargets)).slice(0,6).map((effect)=>renderEffectButton(effect,true))}</div></section> : <section className="live-alt-panel live-overrides"><header><div><strong>{liveView==='groups'?'Groups':'Fixture Overrides'}</strong><small>{liveView==='groups'?'Busk groups without leaving LIVE':'Temporary live fixture control'}</small></div><div><button onClick={selectAllFixtures}>All</button><button onClick={clearFixtureSelection}>Clear</button></div></header><div className="live-fader-row">{liveView==='fixtures'?patch.map((fixture)=><VerticalFader key={fixture.id} id={`live-${fixture.id}`} name={fixture.name} subtitle={fixtureBrowserSubtitle(fixture)} color={fixture.labelColor??'#55e98d'} value={fixtureIntensityPercent(universe,fixture)} selected={fixture.selected} onChange={(value)=>void setFixtureAttribute(fixture,'dimmer',percentToDmx(value))} onSelect={()=>selectFixtureFromConsole(fixture.id,true)} onFx={()=>selectFixtureFromConsole(fixture.id)}/>):fixtureGroups.map((group)=>{const members=fixturesInGroup(patch,group);return <VerticalFader key={group.id} id={`live-${group.id}`} name={group.name} subtitle={`${members.length} fixtures`} color={group.labelColor} value={Math.round(groupMasters[group.id]??group.masterDefault)} selected={selectedGroupId===group.id} onChange={(value)=>applyGroupMaster(group,value)} onSelect={()=>selectFixtureGroup(group.id)} onFx={()=>selectFixtureGroup(group.id)} quickAction={{label:'Chase',onPress:()=>toggleEffect('chase',members.map((fixture)=>fixture.id))}}/>})}</div></section>}
+          <section className="live-busk-deck"><header><nav><button className="active">EXECUTORS</button><button onClick={()=>setLiveView('groups')}>GROUPS</button><button onClick={()=>setLiveProgrammerOpen((value)=>!value)}>PROGRAMMER</button><button onClick={()=>{setLiveProgrammerOpen(true);setControlSurfaceTab('fx')}}>FX</button></nav><div><button onClick={()=>setLiveExecutorBank((bank)=>Math.max(0,bank-1))}>‹</button><strong>BANK {String.fromCharCode(65+liveExecutorBank)}</strong><button onClick={()=>setLiveExecutorBank((bank)=>(bank+1)%4)}>›</button></div></header><div className="live-executor-strip">{Array.from({length:10},(_,slot)=>{const index=liveExecutorBank*10+slot;const item=liveExecutorItems[index];return <article key={slot} className={item?`executor ${item.kind}`:'executor empty'}><button className="executor-main" disabled={!item} onClick={()=>item&&fireLiveExecutor(item)}><b>{index+1}</b><span>{item?.name??'—'}</span><small>{item?.kind.toUpperCase()??'EMPTY'}</small></button><input aria-label={item?`${item.name} level`:`Executor ${index+1}`} type="range" min="0" max="100" defaultValue={item?.kind==='group'?Math.round(groupMasters[item.group.id]??item.group.masterDefault):item?100:0} disabled={!item} onChange={(event)=>{if(item?.kind==='group')applyGroupMaster(item.group,Number(event.target.value))}}/><button className="executor-flash" disabled={!item} onPointerDown={()=>item&&flashLiveExecutor(item,true)} onPointerUp={()=>item&&flashLiveExecutor(item,false)} onPointerCancel={()=>item&&flashLiveExecutor(item,false)}>FLASH</button></article>})}</div></section>
+          {liveProgrammerOpen&&<section className="live-programmer-drawer"><header><div><span>PROGRAMMER</span><strong>{selectedFixtureTargets.length? `${selectedFixtureTargets.length} selected`:'No selection'}</strong></div><nav>{(['groups','intensity','position','color','beam','fx'] as const).map((family)=><button key={family} className={livePaletteFamily===family?'active':''} onClick={()=>setLivePaletteFamily(family)}>{family.toUpperCase()}</button>)}</nav><button onClick={()=>setLiveProgrammerOpen(false)}>×</button></header><div className="live-palette-grid">
+{livePaletteFamily==='groups'&&<>{fixtureGroups.map((group,index)=><button key={group.id} className={selectedGroupId===group.id?'selected':''} onClick={()=>selectFixtureGroup(group.id)}><b>{index+1}</b><span>{group.name}</span><small>{fixturesInGroup(patch,group).length} FIXTURES</small></button>)}</>}
+{livePaletteFamily==='intensity'&&<>{[0,25,50,75,100].map((value)=><button key={value} onClick={()=>selectedFixtureTargets.forEach((fixture)=>void setFixtureAttribute(fixture,'dimmer',percentToDmx(value)))}><b>{value===0?'OFF':value}</b><span>{value===0?'Black':'Intensity'}</span><small>{value}%</small></button>)}</>}
+{livePaletteFamily==='position'&&<>{(showFile.positionPalettes??[]).map((palette,index)=><button key={palette.id} onClick={()=>void runPositionPalette(palette)}><b>{index+1}</b><span>{palette.name}</span><small>{palette.kind.toUpperCase()}</small></button>)}{!(showFile.positionPalettes??[]).length&&<div className="palette-empty">Save Position palettes in PROGRAM and they will appear here.</div>}</>}
+{livePaletteFamily==='color'&&<>{consoleColorPresets.map((preset,index)=><button key={preset.name} className="color-palette" onClick={()=>applyGlobalColor(preset.color)}><i style={{background:preset.color}}/><b>{index+1}</b><span>{preset.name}</span><small>{preset.color}</small></button>)}</>}
+{livePaletteFamily==='beam'&&<>{[['Open',255,255,255],['Tight',65,180,210],['Wide',230,110,255],['Soft',200,80,170]] .map(([name,zoom,focus,iris],index)=><button key={name as string} onClick={()=>selectedFixtureTargets.forEach((fixture)=>{if(parameterChannel(fixture,'zoom'))void setFixtureAttribute(fixture,'zoom',zoom as number);if(parameterChannel(fixture,'focus'))void setFixtureAttribute(fixture,'focus',focus as number);if(parameterChannel(fixture,'iris'))void setFixtureAttribute(fixture,'iris',iris as number)})}><b>{index+1}</b><span>{name as string}</span><small>BEAM</small></button>)}</>}
+{livePaletteFamily==='fx'&&<>{EFFECT_PRESETS.filter((effect)=>effectSupportedByFixtures(effect.id,selectedFixtureTargets)).map((effect,index)=><button key={effect.id} className={activeEffect===effect.id?'selected':''} onClick={()=>toggleEffect(effect.id,selectedFixtureTargets.map((fixture)=>fixture.id))}><b>{index+1}</b><span>{effect.name}</span><small>{effect.defaultBpm} BPM</small></button>)}</>}
+</div></section>}
+          <footer className="live-reference-health"><span>LumaRig {appVersion}</span><b>LIVE</b><span>Universes: {Math.max(1,...patch.map((fixture)=>fixture.universe??1))}</span><span className={dmxStatus.connected?'healthy':''}>● DMX {dmxStatus.connected?'OK':'VIRTUAL'}</span><span>{patch.length} Fixtures</span><span>40 FPS</span></footer>
+        </div>
       </section>}
 
+      {(workspace === 'setup' || workspace === 'program') && <section className="persistent-control-surface">
+        <div className="surface-tabs">{(['intensity','color','position','beam','gobo','fx','speed'] as ControlSurfaceTab[]).map((tab) => <button key={tab} disabled={!surfaceSupports(tab)} className={controlSurfaceTab === tab ? 'active' : ''} onClick={() => setControlSurfaceTab(tab)}>{tab.toUpperCase()}</button>)}<span>{selectedFixtureTargets.length ? `${selectedFixtureTargets.length} SELECTED` : 'NO SELECTION'}</span>{(['encoders','faders','xy','palettes'] as ControlSurfaceMode[]).map((mode) => <button key={mode} className={controlSurfaceMode === mode ? 'surface-mode active' : 'surface-mode'} onClick={() => setControlSurfaceMode(mode)}>{mode.toUpperCase()}</button>)}</div>
+        <div className={`surface-controls surface-${controlSurfaceTab}`}>
+          {controlSurfaceTab === 'intensity' && <><label><span>DIMMER</span><input type="range" min="0" max="100" value={selectedFixtureTargets.length === 1 ? (fixtureIntensityPercent(universe, selectedFixtureTargets[0]) ?? 0) : 0} disabled={!selectedFixtureTargets.length} onChange={(event) => selectedFixtureTargets.forEach((fixture) => void setFixtureAttribute(fixture, 'dimmer', percentToDmx(Number(event.target.value))))} /></label><label><span>GRAND MASTER</span><input type="range" min="0" max={settings.masterLimit} value={globalMaster} onChange={(event) => applyGlobalMaster(Number(event.target.value))} /></label></>}
+          {controlSurfaceTab === 'color' && <ColorDeck title="COLOR" subtitle={compatibleColorFixtures(selectedFixtureTargets).length ? `${compatibleColorFixtures(selectedFixtureTargets).length} compatible fixture${compatibleColorFixtures(selectedFixtureTargets).length === 1 ? '' : 's'}` : 'Color wheel fixture'} color={globalColor} disabled={!surfaceSupports('color')} onChange={(color) => { setGlobalColor(color); const rgb = hexToRgb(color); compatibleColorFixtures(selectedFixtureTargets).forEach((fixture) => void setFixtureColor(fixture, rgb)); }} presets={COLOR_PRESETS.map((preset) => ({ name: preset.name, color: rgbToHex(preset.rgb[0], preset.rgb[1], preset.rgb[2]) }))} />}
+          {controlSurfaceTab === 'position' && (controlSurfaceMode === 'xy' ? <div className="surface-xy-pad" onPointerDown={(event) => { event.currentTarget.setPointerCapture(event.pointerId); applySurfaceXY(event.clientX,event.clientY,event.currentTarget); }} onPointerMove={(event) => { if (event.currentTarget.hasPointerCapture(event.pointerId)) applySurfaceXY(event.clientX,event.clientY,event.currentTarget); }}><i /><span>PAN</span><b>TILT</b></div> : controlSurfaceMode === 'palettes' ? <div className="surface-palette-bank">{(showFile.positionPalettes ?? []).map((palette) => <button key={palette.id} onClick={() => void runPositionPalette(palette)}><i>◎</i><strong>{palette.name}</strong><small>{palette.kind}</small></button>)}{!(showFile.positionPalettes ?? []).length && <small>No position palettes saved yet.</small>}</div> : <div className="surface-parameter-bank">{surfaceParameterControl('pan','PAN')}{surfaceParameterControl('tilt','TILT')}{selectedCapabilities.has('panFine') && surfaceParameterControl('panFine','PAN FINE')}{selectedCapabilities.has('tiltFine') && surfaceParameterControl('tiltFine','TILT FINE')}</div>)}
+          {controlSurfaceTab === 'beam' && <div className="surface-parameter-bank">{surfaceParameterControl('zoom','ZOOM')}{surfaceParameterControl('focus','FOCUS')}{surfaceParameterControl('iris','IRIS')}{surfaceParameterControl('prism','PRISM')}</div>}
+          {controlSurfaceTab === 'gobo' && <div className="surface-parameter-bank">{(['gobo','goboRotate'] as FixtureParameter[]).map((parameter) => <label key={parameter}><span>{parameter === 'goboRotate' ? 'ROTATE' : 'GOBO'}</span><input type="range" min="0" max="255" disabled={!selectedCapabilities.has(parameter)} value={selectedFixtureTargets.length === 1 ? readFixtureParameter(universe, selectedFixtureTargets[0], parameter) : 0} onChange={(event) => selectedFixtureTargets.forEach((fixture) => void setFixtureAttribute(fixture, parameter, Number(event.target.value)))} /></label>)}</div>}
+          {controlSurfaceTab === 'fx' && <div className="surface-fx-bank">{EFFECT_PRESETS.map((effect) => <button key={effect.id} disabled={!effectSupportedByFixtures(effect.id, selectedFixtureTargets)} className={activeEffect === effect.id ? 'active' : ''} onClick={() => toggleEffect(effect.id)}><span className={`fx-icon fx-${effect.id}`} /><b>{effect.name}</b></button>)}</div>}
+          {controlSurfaceTab === 'speed' && <div className="surface-parameter-bank"><label><span>FX SPEED</span><input type="range" min="30" max="240" value={effectBpm} onChange={(event) => setEffectBpm(Number(event.target.value))} /></label><label><span>FX DEPTH</span><input type="range" min="0" max="100" value={effectDepth} onChange={(event) => setEffectDepth(Number(event.target.value))} /></label>{selectedCapabilities.has('movementSpeed') && <label><span>MOVE SPEED</span><input type="range" min="0" max="255" value={selectedFixtureTargets.length === 1 ? readFixtureParameter(universe, selectedFixtureTargets[0], 'movementSpeed') : 0} onChange={(event) => selectedFixtureTargets.forEach((fixture) => void setFixtureAttribute(fixture, 'movementSpeed', Number(event.target.value)))} /></label>}</div>}
+          <div className="surface-quick"><button onClick={() => setWorkspace('show')}>CUES</button><button onClick={goPreviousCue}>PREV</button><button className="surface-go" onClick={goNextCue} disabled={!nextCue}>GO <small>{nextCue?.name ?? 'END'}</small></button><button onClick={() => setWorkspace('live')}>LIVE</button></div>
+        </div>
+      </section>}
       <footer className="console-footer"><span>{dmxStatus.last_error || midiStatus.last_error || message}</span><b>{patch.length} fixtures · {showFile.cues.length} cues · {showFile.recordings?.length ?? 0} takes · 40 Hz output{isFading ? ' · Fading' : ''}</b></footer>
     </main>
   );

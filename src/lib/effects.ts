@@ -20,6 +20,9 @@ export type EffectId =
   | 'blinder'
   | 'finale';
 
+export type EffectWaveform = 'sine' | 'triangle' | 'square' | 'saw' | 'reverse-saw' | 'step';
+export type EffectParameter = 'dimmer' | 'pan' | 'tilt' | 'uv';
+
 export type EffectPreset = {
   id: EffectId;
   name: string;
@@ -27,6 +30,57 @@ export type EffectPreset = {
   defaultBpm: number;
   momentary?: boolean;
 };
+
+export type CustomEffect = {
+  id: string;
+  name: string;
+  parameter: EffectParameter;
+  waveform: EffectWaveform;
+  bpm: number;
+  depth: number;
+  phaseSpread: number;
+  offset: number;
+};
+
+export const EFFECT_SHAPES: Record<EffectId, { waveform: EffectWaveform; parameter: EffectParameter; phaseSpread: number }> = {
+  pulse: { waveform: 'sine', parameter: 'dimmer', phaseSpread: 0 },
+  strobe: { waveform: 'square', parameter: 'dimmer', phaseSpread: 0 },
+  chase: { waveform: 'step', parameter: 'dimmer', phaseSpread: 100 },
+  rainbow: { waveform: 'saw', parameter: 'dimmer', phaseSpread: 100 },
+  wave: { waveform: 'sine', parameter: 'dimmer', phaseSpread: 100 },
+  'color-chase': { waveform: 'step', parameter: 'dimmer', phaseSpread: 100 },
+  sparkle: { waveform: 'step', parameter: 'dimmer', phaseSpread: 100 },
+  lightning: { waveform: 'step', parameter: 'dimmer', phaseSpread: 0 },
+  'uv-pulse': { waveform: 'sine', parameter: 'uv', phaseSpread: 0 },
+  sweep: { waveform: 'sine', parameter: 'pan', phaseSpread: 100 },
+  bump: { waveform: 'square', parameter: 'dimmer', phaseSpread: 0 },
+  blinder: { waveform: 'square', parameter: 'dimmer', phaseSpread: 0 },
+  finale: { waveform: 'step', parameter: 'dimmer', phaseSpread: 100 }
+};
+
+export function effectWaveValue(waveform: EffectWaveform, phase: number): number {
+  const p = ((phase % 1) + 1) % 1;
+  if (waveform === 'sine') return (Math.sin(p * Math.PI * 2 - Math.PI / 2) + 1) / 2;
+  if (waveform === 'triangle') return 1 - Math.abs(p * 2 - 1);
+  if (waveform === 'square') return p < .5 ? 1 : 0;
+  if (waveform === 'saw') return p;
+  if (waveform === 'reverse-saw') return 1 - p;
+  return p < .18 ? 1 : 0;
+}
+
+export function renderCustomEffect(effect: CustomEffect, fixtures: readonly PatchedFixture[], elapsedMs: number): DmxUpdate[] {
+  const active = fixtures.filter((fixture) => fixture.selected);
+  if (!active.length) return [];
+  const beatMs = 60000 / Math.max(20, effect.bpm);
+  const basePhase = (elapsedMs % beatMs) / beatMs;
+  return active.flatMap((fixture, index) => {
+    const spread = active.length > 1 ? (index / (active.length - 1)) * (effect.phaseSpread / 100) : 0;
+    const wave = effectWaveValue(effect.waveform, basePhase + spread);
+    const normalized = Math.max(0, Math.min(1, effect.offset / 100 + wave * effect.depth / 100));
+    const update = fixtureParameterUpdate(fixture, effect.parameter, normalized * 255);
+    return update ? [update] : [];
+  });
+}
 
 export const EFFECT_PRESETS: ReadonlyArray<EffectPreset> = [
   { id: 'pulse', name: 'Pulse', description: 'Smooth intensity breathing', defaultBpm: 80 },
