@@ -1,11 +1,13 @@
 mod dmx;
 mod midi;
 mod output;
+mod studio_bridge;
 mod updates;
 
 use dmx::{DmxEngine, DmxStatus};
 use midi::{MidiEngine, MidiEvent, MidiInputInfo, MidiStatus};
 use output::{artnet::ArtNetEngine, lumaviz_direct::LumaVizDirectEngine, udmx::UdmxDeviceInfo};
+use studio_bridge::{StudioBridge, StudioBridgeEnvelope, StudioBridgeResponse, StudioBridgeStatus};
 use tauri::State;
 
 #[tauri::command]
@@ -68,6 +70,28 @@ fn drain_midi_events(engine: State<'_, MidiEngine>) -> Vec<MidiEvent> {
     engine.drain_events()
 }
 
+
+#[tauri::command]
+fn studio_bridge_status(bridge: State<'_, StudioBridge>) -> StudioBridgeStatus {
+    bridge.status()
+}
+
+#[tauri::command]
+fn drain_studio_bridge(bridge: State<'_, StudioBridge>) -> Vec<StudioBridgeEnvelope> {
+    bridge.drain()
+}
+
+#[tauri::command]
+fn reply_studio_bridge(
+    bridge: State<'_, StudioBridge>,
+    id: String,
+    ok: bool,
+    error: Option<String>,
+    payload: Option<serde_json::Value>,
+) -> Result<(), String> {
+    bridge.reply(StudioBridgeResponse { id, ok, error, payload })
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -75,6 +99,7 @@ pub fn run() {
         .manage(DmxEngine::new())
         .manage(ArtNetEngine::default())
         .manage(LumaVizDirectEngine::default())
+        .manage(StudioBridge::new())
         .manage(MidiEngine::new())
         .manage(updates::UpdateState::default())
         .invoke_handler(tauri::generate_handler![
@@ -91,6 +116,9 @@ pub fn run() {
             output::lumaviz_direct::send_lumaviz_fixture_frame,
             output::lumaviz_direct::poll_lumaviz_direct_messages,
             output::lumaviz_direct::send_lumaviz_direct_message,
+            studio_bridge_status,
+            drain_studio_bridge,
+            reply_studio_bridge,
             list_midi_inputs,
             connect_midi,
             disconnect_midi,
