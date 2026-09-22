@@ -2706,6 +2706,10 @@ export default function App() {
     const bpm = tempoSource === 'midi' && midiBpm ? midiBpm : effectBpm;
     const runtimeSnapshot = runtimeRef.current?.snapshot;
     return {
+      protocolVersion: 2,
+      appName: 'LumaRig',
+      appVersion,
+      buildChannel: 'desktop',
       revision: runtimeSnapshot?.revision ?? 0,
       showName: showFile.name,
       stage: {
@@ -2785,7 +2789,7 @@ export default function App() {
       remotePublishTimerRef.current = null;
       remoteSnapshotHandlerRef.current?.();
     }, 120);
-  }, [remoteRelayStatus, showFile, activeCueId, globalMaster, dmxStatus, effectBpm, tempoSource, midiBpm, midiStatus, midiClockSeen, externalTransportRunning, externalSongPositionMs, showRecordingActive, showRecordingElapsedMs, activeEffect, patch, outputUniverse, fixtureGroups, savedLooks, stageView, stageElements, selectedStageElementId, stageSettings]);
+  }, [remoteRelayStatus, showFile, activeCueId, globalMaster, dmxStatus, effectBpm, effectDepth, tempoSource, midiBpm, midiStatus, midiClockSeen, externalTransportRunning, externalSongPositionMs, showRecordingActive, showRecordingElapsedMs, activeEffect, patch, outputUniverse, fixtureGroups, savedLooks, stageView, stageElements, selectedStageElementId, stageSettings]);
 
   const consoleColorPresets = COLOR_PRESETS.map((preset) => ({
     name: preset.name,
