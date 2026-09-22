@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ChangeEvent, type PointerEvent as ReactPointerEvent } from 'react';
 import { lumaVizDirectStatus, pollLumaVizDirectMessages, semanticFrameFromResolvedOutput, sendLumaVizDirectFrame, sendLumaVizDirectMessage, startLumaVizDirect, type LumaVizDirectStatus, type SharedShowPatchMutation } from './core/lumaviz-direct';
 import type { SharedLocationPreset } from './core/shared-locations';
+import { isSharedShowActivation } from './core/shared-show';
 import { invoke } from '@tauri-apps/api/core';
 import {
   applyUniverseUpdates,
@@ -554,6 +555,13 @@ export default function App() {
       void pollLumaVizDirectMessages().then((messages) => {
         for (const message of messages) {
           if (!message || typeof message !== 'object') continue;
+          if (isSharedShowActivation(message)) {
+            sharedShowRevisionRef.current = Math.max(sharedShowRevisionRef.current, message.revision);
+            const match = showLibrary.find((item) => item.id === message.showId);
+            if (match) { loadShowProject(match); setMessage(`${match.name} loaded from Shared Show Library · outputs unchanged.`); }
+            else { setMessage(`Shared show ${message.showId} requested but no matching LumaRig document is stored locally.`); }
+            continue;
+          }
           if ((message as { type?: string }).type === 'shared-location.update') {
             const incoming = message as { revision?:number; location?:SharedLocationPreset };
             if (incoming.location) {
