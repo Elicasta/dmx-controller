@@ -148,7 +148,7 @@ impl LumaVizDirectEngine {
                                         if let Ok(mut queue) = incoming.lock() { queue.push(value); }
                                     }
                                     Some("preview-frame") => {
-                                        if let Ok(mut preview) = engine.preview_frame.lock() { *preview = Some(value); }
+                                        if let Ok(mut preview) = self.preview_frame.lock() { *preview = Some(value); }
                                     }
                                     _ => {}
                                 }
