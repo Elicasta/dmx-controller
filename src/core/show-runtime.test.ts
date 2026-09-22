@@ -125,6 +125,30 @@ describe('ShowRuntime', () => {
     expect(restored.frame[4]).toBe(200);
   });
 
+  it('flashes fixture intensity without changing its programmer base value', () => {
+    const runtime = new ShowRuntime({ patch: DEFAULT_PATCH });
+    runtime.dispatch(controlCommand('ui', {
+      type: 'frame.update', universe: 1, updates: [[5, 160]]
+    }));
+    runtime.dispatch(controlCommand('ui', { type: 'master.set', value: .5 }));
+    runtime.dispatch(controlCommand('ui', { type: 'group.master.set', groupName: 'Front Wash', value: .5 }));
+
+    expect(runtime.baseFrame[4]).toBe(160);
+    expect(runtime.frame[4]).toBe(40);
+
+    const flashed = runtime.dispatch(controlCommand('surface', {
+      type: 'fixture.flash.set', fixtureIds: [DEFAULT_PATCH[0].id], active: true
+    }));
+    expect(flashed.baseFrame[4]).toBe(160);
+    expect(flashed.frame[4]).toBe(64);
+
+    const released = runtime.dispatch(controlCommand('surface', {
+      type: 'fixture.flash.set', fixtureIds: [DEFAULT_PATCH[0].id], active: false
+    }));
+    expect(released.baseFrame[4]).toBe(160);
+    expect(released.frame[4]).toBe(40);
+  });
+
   it('keeps edits under a group master as base values', () => {
     const runtime = new ShowRuntime({ patch: DEFAULT_PATCH });
     runtime.dispatch(controlCommand('ui', { type: 'group.master.set', groupName: 'Front Wash', value: .5 }));
