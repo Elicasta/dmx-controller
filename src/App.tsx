@@ -127,6 +127,7 @@ type ProgramMode = 'stage' | 'looks' | 'fx' | 'colors' | 'media' | 'presets';
 type ShowMode = 'cues' | 'timeline' | 'tracks' | 'library' | 'sync' | 'recordings';
 type LiveView = 'performance' | 'overrides' | 'groups' | 'masters' | 'shortcuts' | 'settings';
 type LiveBank = 'fixtures' | 'groups';
+type LivePaletteFamily = 'groups' | 'intensity' | 'position' | 'color' | 'beam' | 'fx';
 
 type ShowProjectSnapshot = {
   id: string;
@@ -550,6 +551,8 @@ export default function App() {
   const [showFile, setShowFile] = useState<ShowFile>(loadShowFile);
   const [showLibrary, setShowLibrary] = useState<ShowProjectSnapshot[]>(loadShowLibrary);
   const [liveBank, setLiveBank] = useState<LiveBank>('fixtures');
+  const [liveProgrammerOpen, setLiveProgrammerOpen] = useState(false);
+  const [livePaletteFamily, setLivePaletteFamily] = useState<LivePaletteFamily>('groups');
   const [settings, setSettings] = useState<AppSettings>(loadSettings);
   const settingsRef = useRef(settings);
   const [artNetTelemetry, setArtNetTelemetry] = useState({ framesSent: 0, lastError: "" });
@@ -3090,6 +3093,11 @@ export default function App() {
     : selectedFixtureTargets.length > 1
       ? `${selectedFixtureTargets.length} selected fixtures`
       : '';
+  const liveEffectLabel = activeCustomEffectId
+    ? customEffects.find((effect) => effect.id === activeCustomEffectId)?.name ?? 'Custom FX'
+    : activeEffect
+      ? EFFECT_PRESETS.find((effect) => effect.id === activeEffect)?.name ?? activeEffect
+      : '';
   const inspectedFixture = patch.find((fixture) => fixture.selected) ?? stageFixture;
   const selectedCompatibleColors = compatibleColorFixtures(selectedFixtureTargets);
 
@@ -3326,7 +3334,7 @@ export default function App() {
 
       {workspace === 'live' && <section className="live-console live-console-v3">
         <header className="live-command-bar">
-          <div className="live-show-state"><small>LIVE PERFORMANCE</small><strong>{showFile.name}</strong><span>{activeEffect ? `FX · ${EFFECT_PRESETS.find((item)=>item.id===activeEffect)?.name ?? activeEffect}` : 'PROGRAM OUTPUT'}</span></div>
+          <div className="live-show-state"><small>LIVE PERFORMANCE</small><strong>{showFile.name}</strong><span>{liveEffectLabel ? `FX · ${liveEffectLabel}` : 'PROGRAM OUTPUT'}</span></div>
           <div className="live-cue-deck">
             <button className="live-back" onClick={goPreviousCue}>BACK</button>
             <div className="live-cue-card current"><small>CURRENT</small><strong>{activeCue?.name ?? 'Ready'}</strong><span>{activeCue ? `Cue ${activeCue.number}` : 'No cue running'}</span></div>
@@ -3349,7 +3357,7 @@ export default function App() {
           </aside>
 
           <main className="live-playback-surface">
-            <div className="live-surface-toolbar"><div><strong>LIVING PLAYBACK SURFACE</strong><small>{liveBank==='fixtures'?`${patch.length} FIXTURES`:`${fixtureGroups.length} GROUPS`} · OUTPUT COLORS + LEVELS</small></div><div className="live-bank-tabs"><button className={liveBank==='fixtures'?'active':''} onClick={()=>setLiveBank('fixtures')}>FIXTURES</button><button className={liveBank==='groups'?'active':''} onClick={()=>setLiveBank('groups')}>GROUPS</button></div><div className="live-select-tools">{liveBank==='fixtures'&&<><button onClick={selectAllFixtures}>ALL</button><button onClick={clearFixtureSelection}>CLEAR</button></>}</div></div>
+            <div className="live-surface-toolbar"><div><strong>LIVING PLAYBACK SURFACE</strong><small>{liveBank==='fixtures'?`${patch.length} FIXTURES`:`${fixtureGroups.length} GROUPS`} · OUTPUT COLORS + LEVELS</small></div><div className="live-bank-tabs"><button className={liveBank==='fixtures'?'active':''} onClick={()=>setLiveBank('fixtures')}>FIXTURES</button><button className={liveBank==='groups'?'active':''} onClick={()=>setLiveBank('groups')}>GROUPS</button></div><div className="live-select-tools"><button className={liveProgrammerOpen?'active':''} onClick={()=>setLiveProgrammerOpen((value)=>!value)}>PROGRAMMER</button>{liveBank==='fixtures'&&<><button onClick={selectAllFixtures}>ALL</button><button onClick={clearFixtureSelection}>CLEAR</button></>}</div></div>
             <div className="live-fader-deck">{liveBank==='fixtures' ? patch.map((fixture)=>{const v=fixtureValues(outputUniverse,fixture);const outputColor=(v.red+v.green+v.blue)>0?rgbToHex(v.red,v.green,v.blue):(fixture.labelColor ?? '#55e98d');return <VerticalFader key={fixture.id} id={`live-${fixture.id}`} name={fixture.name} subtitle={activeEffect?`${fixtureBrowserSubtitle(fixture)} · ${activeEffect}`:fixtureBrowserSubtitle(fixture)} color={outputColor} value={fixtureIntensityPercent(outputUniverse,fixture)} selected={fixture.selected} onChange={(value)=>void setFixtureAttribute(fixture,'dimmer',percentToDmx(value))} onSelect={()=>selectFixtureFromConsole(fixture.id,true)} onFx={()=>{selectFixtureFromConsole(fixture.id);setWorkspace('create');setProgramMode('fx');}}/>}) : fixtureGroups.map((group)=>{const members=fixturesInGroup(patch,group);const first=members[0];const v=first?fixtureValues(outputUniverse,first):null;const outputColor=v&&(v.red+v.green+v.blue)>0?rgbToHex(v.red,v.green,v.blue):group.labelColor;return <VerticalFader key={group.id} id={`live-${group.id}`} name={group.name} subtitle={activeEffect?`${members.length} fixtures · ${activeEffect}`:`${members.length} fixtures`} color={outputColor} value={Math.round(groupMasters[group.id] ?? group.masterDefault)} selected={selectedGroupId===group.id} onChange={(value)=>applyGroupMaster(group,value)} onSelect={()=>selectFixtureGroup(group.id)} onFx={()=>{selectFixtureGroup(group.id);setWorkspace('create');setProgramMode('fx');}} quickAction={{label:'Chase',onPress:()=>toggleEffect('chase',members.map((fixture)=>fixture.id))}}/>;})}</div>
           </main>
 
@@ -3359,6 +3367,24 @@ export default function App() {
             <section className="live-tempo-card"><span>TEMPO</span><button onClick={tapTempo}><strong>{tempoSource==='midi'&&midiBpm?midiBpm:effectBpm}</strong><small>BPM · TAP</small></button><label>DEPTH <input type="range" min="0" max="100" value={effectDepth} onChange={(event)=>{const value=Number(event.target.value);setEffectDepth(value);effectDepthRef.current=value;}}/></label></section>
           </aside>
         </div>}
+
+        {liveView === 'performance' && liveProgrammerOpen && <section className="live-programmer-drawer">
+          <header>
+            <div><span>LIVE PROGRAMMER</span><strong>{selectedFixtureTargets.length ? `${selectedFixtureTargets.length} selected` : 'Select a group or fixture'}</strong></div>
+            <nav>{(['groups','intensity','position','color','beam','fx'] as LivePaletteFamily[]).map((family)=><button key={family} className={livePaletteFamily===family?'active':''} onClick={()=>setLivePaletteFamily(family)}>{family.toUpperCase()}</button>)}</nav>
+            <button className="live-programmer-close" onClick={()=>setLiveProgrammerOpen(false)}>×</button>
+          </header>
+          <div className="live-palette-grid">
+            {livePaletteFamily==='groups' && <>{fixtureGroups.map((group,index)=><button key={group.id} className={selectedGroupId===group.id?'selected':''} onClick={()=>selectFixtureGroup(group.id)} style={{'--palette-color':group.labelColor} as import('react').CSSProperties}><i/><b>{index+1}</b><span>{group.name}</span><small>{fixturesInGroup(patch,group).length} FIXTURES</small></button>)}</>}
+            {livePaletteFamily==='intensity' && <>{[0,25,50,75,100].map((value)=><button key={value} disabled={!selectedFixtureTargets.length} onClick={()=>selectedFixtureTargets.forEach((fixture)=>void setFixtureAttribute(fixture,'dimmer',percentToDmx(value)))}><b>{value===0?'OUT':value}</b><span>{value===100?'FULL':'Intensity'}</span><small>{value}%</small></button>)}</>}
+            {livePaletteFamily==='position' && <>{(showFile.positionPalettes??[]).map((palette,index)=><button key={palette.id} disabled={!selectedMovingFixtures.length} onClick={()=>void runPositionPalette(palette)}><b>{index+1}</b><span>{palette.name}</span><small>{palette.kind.toUpperCase()}</small></button>)}{!(showFile.positionPalettes??[]).length&&<div className="live-palette-empty">Save position palettes in CREATE and they appear here.</div>}</>}
+            {livePaletteFamily==='color' && <>{consoleColorPresets.map((preset,index)=><button key={preset.name} className="color-palette" disabled={!selectedCompatibleColors.length} onClick={()=>applyGlobalColor(preset.color)} style={{'--palette-color':preset.color} as import('react').CSSProperties}><i/><b>{index+1}</b><span>{preset.name}</span><small>{preset.color.toUpperCase()}</small></button>)}</>}
+            {livePaletteFamily==='beam' && <>{([
+              ['OPEN',255,255,255],['TIGHT',65,180,210],['WIDE',230,110,255],['SOFT',200,80,170]
+            ] as Array<[string,number,number,number]>).map(([name,zoom,focus,iris],index)=><button key={name} disabled={!selectedFixtureTargets.length} onClick={()=>selectedFixtureTargets.forEach((fixture)=>{if(parameterChannel(fixture,'zoom'))void setFixtureAttribute(fixture,'zoom',zoom);if(parameterChannel(fixture,'focus'))void setFixtureAttribute(fixture,'focus',focus);if(parameterChannel(fixture,'iris'))void setFixtureAttribute(fixture,'iris',iris);})}><b>{index+1}</b><span>{name}</span><small>BEAM</small></button>)}</>}
+            {livePaletteFamily==='fx' && <>{EFFECT_PRESETS.filter((effect)=>effectSupportedByFixtures(effect.id,selectedFixtureTargets)).map((effect,index)=><button key={effect.id} className={activeEffect===effect.id?'selected':''} onClick={()=>toggleEffect(effect.id,selectedFixtureTargets.map((fixture)=>fixture.id))}><b>{index+1}</b><span>{effect.name}</span><small>{effect.defaultBpm} BPM</small></button>)}{customEffects.map((effect,index)=><button key={effect.id} className={activeCustomEffectId===effect.id?'selected':''} disabled={!selectedFixtureTargets.length} onClick={()=>runCustomFx(effect,selectedFixtureTargets.map((fixture)=>fixture.id))}><b>C{index+1}</b><span>{effect.name}</span><small>{effect.waveform.toUpperCase()}</small></button>)}</>}
+          </div>
+        </section>}
 
         {liveView === 'overrides' && <div className="live-detail-view">
           <header><div><span>FIXTURE OVERRIDES</span><h2>Direct live control</h2></div><div><button onClick={selectAllFixtures}>ALL</button><button onClick={clearFixtureSelection}>CLEAR</button></div></header>
@@ -3385,7 +3411,7 @@ export default function App() {
           <div className="live-settings-grid"><section className={dmxStatus.connected?'healthy':''}><span>DMX OUTPUT</span><strong>{dmxStatus.connected?'CONNECTED':'VIRTUAL OUTPUT'}</strong><small>{dmxStatus.device_name || 'No physical interface'}</small></section><section className={directStatus.clients>0?'healthy':''}><span>LUMAVIZ</span><strong>{directStatus.clients>0?'CONNECTED':'READY'}</strong><small>{directStatus.framesSent.toLocaleString()} frames sent</small></section><section className={studioBridgeStatus.connectedClients>0?'healthy':''}><span>LUMASTUDIO</span><strong>{studioBridgeStatus.connectedClients>0?'CONNECTED':'READY'}</strong><small>{studioBridgeStatus.connectedClients} client(s)</small></section><section className={midiStatus.connected?'healthy':''}><span>MIDI</span><strong>{midiStatus.connected?'CONNECTED':'OFFLINE'}</strong><small>{midiStatus.input_name || 'No input'}</small></section><section><span>MASTER LIMIT</span><strong>{settings.masterLimit}%</strong><small>Configured output ceiling</small></section><section className={dmxStatus.blackout?'danger':''}><span>BLACKOUT</span><strong>{dmxStatus.blackout?'ACTIVE':'CLEAR'}</strong><small>Output safety state</small></section></div>
         </div>}
 
-        <footer className="live-system-strip"><span className={dmxStatus.connected?'healthy':''}>● DMX {dmxStatus.connected?'ONLINE':'VIRTUAL'}</span><span className={directStatus.clients>0?'healthy':''}>● VIZ {directStatus.clients>0?'LINKED':'WAITING'}</span><span className={studioBridgeStatus.connectedClients>0?'healthy':''}>● STUDIO {studioBridgeStatus.connectedClients>0?'LINKED':'WAITING'}</span><span className={midiStatus.connected?'healthy':''}>● MIDI {midiStatus.connected?'ONLINE':'OFF'}</span><span>{activeEffect?`FX ${activeEffect.toUpperCase()}`:'FX IDLE'}</span><b>{formatShowTime(externalSongPositionMs || showTrackPositionMs)}</b></footer>
+        <footer className="live-system-strip"><span className={dmxStatus.connected?'healthy':''}>● DMX {dmxStatus.connected?'ONLINE':'VIRTUAL'}</span><span className={directStatus.clients>0?'healthy':''}>● VIZ {directStatus.clients>0?'LINKED':'WAITING'}</span><span className={studioBridgeStatus.connectedClients>0?'healthy':''}>● STUDIO {studioBridgeStatus.connectedClients>0?'LINKED':'WAITING'}</span><span className={midiStatus.connected?'healthy':''}>● MIDI {midiStatus.connected?'ONLINE':'OFF'}</span><span>{liveEffectLabel?`FX ${liveEffectLabel.toUpperCase()}`:'FX IDLE'}</span><b>{formatShowTime(externalSongPositionMs || showTrackPositionMs)}</b></footer>
       </section>}
 
       <footer className="console-footer console-status-strip">
