@@ -1233,12 +1233,27 @@ export default function App() {
     void dispatchControl({ type: 'fixture.select', fixtureIds: [fixtureId], mode: 'toggle' }, source);
   }
 
-  function fadeToUniverse(name: string, target: number[], duration: number, source: ControlSource = 'ui') {
+  function fadeToUniverseFrames(
+    name: string,
+    targets: ReadonlyMap<number, readonly number[]>,
+    duration: number,
+    source: ControlSource = 'ui'
+  ) {
     stopFade();
     if (activeEffectRef.current) stopEffect(false);
-    const from = [...universeRef.current];
+    if (!targets.size) {
+      setMessage(`${name} has no target universes.`);
+      return;
+    }
+    const snapshot = runtimeRef.current!.snapshot;
+    const from = new Map<number, number[]>(
+      [...targets.keys()].map((universe) => [
+        universe,
+        [...(snapshot.baseUniverses.get(universe) ?? makeUniverse())]
+      ])
+    );
     if (duration === 0) {
-      void commitUniverse(target, source);
+      void commitUniverseFrames(targets, source);
       setMessage(`${name} is live.`);
       return;
     }
@@ -1250,7 +1265,11 @@ export default function App() {
       const eased = raw < .5 ? 4 * raw * raw * raw : 1 - Math.pow(-2 * raw + 2, 3) / 2;
       if (now - fadeLastFrameRef.current >= FRAME_MS || raw === 1) {
         fadeLastFrameRef.current = now;
-        void commitUniverse(interpolateUniverse(from, target, eased), source);
+        const frames = new Map<number, number[]>();
+        for (const [universe, target] of targets) {
+          frames.set(universe, interpolateUniverse(from.get(universe) ?? makeUniverse(), target, eased));
+        }
+        void commitUniverseFrames(frames, source);
       }
       if (raw < 1) fadeAnimationRef.current = requestAnimationFrame(tick);
       else {
@@ -1262,9 +1281,12 @@ export default function App() {
     fadeAnimationRef.current = requestAnimationFrame(tick);
   }
 
+  function fadeToUniverse(name: string, target: number[], duration: number, source: ControlSource = 'ui') {
+    fadeToUniverseFrames(name, new Map([[1, target]]), duration, source);
+  }
+
   function runLook(look: FixtureLook, duration = fadeMs) {
-    const target = applyUniverseUpdates(universeRef.current, lookUpdates(look.values, selectedFixtures(patch)));
-    fadeToUniverse(look.name, target, duration);
+    fadeToUniverseFrames(look.name, lookTargetFrames(look), duration);
   }
 
   function applyGlobalColor(hex: string, source: ControlSource = 'ui') {
