@@ -194,6 +194,30 @@ describe('ShowRuntime', () => {
     expect(result.baseFrame.slice(10, 13)).toEqual([12, 34, 56]);
   });
 
+  it('keeps one target arrangement across fixtures split over multiple universes', () => {
+    const fixtures = [
+      { ...mover, id: 'u1-left', universe: 1, transform: { position: { x: -2, y: 5, z: 0 }, rotation: { yaw: 0, pitch: 0, roll: 0 } } },
+      { ...mover, id: 'u2-right', universe: 2, transform: { position: { x: 2, y: 5, z: 0 }, rotation: { yaw: 0, pitch: 0, roll: 0 } } }
+    ];
+    const target = { x: 0, y: 1, z: -4 };
+    const expected = arrangeTargetPoints(target, 2, 'fan-horizontal', 4);
+    const runtime = new ShowRuntime({ patch: fixtures });
+    const result = runtime.dispatch(controlCommand('ui', {
+      type: 'fixture.target',
+      fixtureIds: fixtures.map((fixture) => fixture.id),
+      target,
+      arrangement: 'fan-horizontal',
+      spreadMeters: 4
+    }));
+    expect(result.outputs.map((output) => output.universe)).toEqual([1, 2]);
+    fixtures.forEach((fixture, index) => {
+      const output = result.outputs.find((item) => item.universe === fixture.universe)!;
+      const state = fixtureGeometryState(output.frame, fixture, index, fixtures.length);
+      const direction = normalize(subtract(expected[index], state.beam.origin));
+      expect(angularDistanceDegrees(state.beam.direction, direction)).toBeLessThan(.02);
+    });
+  });
+
   it('routes a fixture command to the fixture universe instead of the last active universe', () => {
     const universeTwo = { ...DEFAULT_PATCH[0], id: 'u2-fixture', name: 'Universe 2 Fixture', universe: 2 };
     const runtime = new ShowRuntime({ patch: [DEFAULT_PATCH[0], universeTwo] });
