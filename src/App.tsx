@@ -819,7 +819,8 @@ export default function App() {
     }));
     router.register(new ArtNetOutputDriver(() => ({
       enabled: settingsRef.current.visualizerArtNetEnabled,
-      target: settingsRef.current.visualizerArtNetTarget.trim() || '127.0.0.1'
+      target: settingsRef.current.visualizerArtNetTarget.trim() || '127.0.0.1',
+      blackout: runtimeRef.current?.snapshot.blackout ?? false
     })));
     outputRouterRef.current = router;
   }
@@ -1033,19 +1034,26 @@ export default function App() {
     setUniverse(result.baseFrame);
     outputUniverseRef.current = result.frame;
     setOutputUniverse(result.frame);
-    try { await outputRouterRef.current?.route(result.universe, result.frame); }
-    catch (error) { setMessage(`Output update failed: ${String(error)}`); }
-    directSequenceRef.current += 1;
-    const directFrame = semanticFrameFromResolvedOutput(
-      directSequenceRef.current,
-      result.frame,
-      patchRef.current,
-      result.universe,
-      showFile.name
-    );
-    void sendLumaVizDirectFrame(directFrame).catch(() => {
-      // Direct visualization is non-fatal and must never interrupt physical output.
-    });
+    try {
+      await Promise.all(result.outputs.map((output) => outputRouterRef.current?.route(output.universe, output.frame)));
+    } catch (error) {
+      setMessage(`Output update failed: ${String(error)}`);
+    }
+    const blackout = runtimeRef.current?.snapshot.blackout ?? false;
+    for (const output of result.outputs) {
+      directSequenceRef.current += 1;
+      const visualFrame = blackout ? makeUniverse() : output.frame;
+      const directFrame = semanticFrameFromResolvedOutput(
+        directSequenceRef.current,
+        visualFrame,
+        patchRef.current,
+        output.universe,
+        showFile.name
+      );
+      void sendLumaVizDirectFrame(directFrame).catch(() => {
+        // Direct visualization is non-fatal and must never interrupt physical output.
+      });
+    }
   }
 
   async function dispatchControl(command: ControlCommand, source: ControlSource = 'ui') {
