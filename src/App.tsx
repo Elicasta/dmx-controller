@@ -12,7 +12,7 @@ import {
   VISIBLE_CHANNELS,
   type DmxUpdate
 } from './lib/dmx';
-import { EFFECT_PRESETS, EFFECT_SHAPES, effectWaveValue, renderEffect, renderCustomEffect, type CustomEffect, type EffectId, type EffectParameter, type EffectPreset, type EffectWaveform } from './lib/effects';
+import { EFFECT_PRESETS, EFFECT_SHAPES, effectWaveValue, renderEffectByUniverse, renderCustomEffectByUniverse, type CustomEffect, type EffectId, type EffectParameter, type EffectPreset, type EffectWaveform } from './lib/effects';
 import {
   DEFAULT_PATCH,
   FIXTURE_LIBRARY,
@@ -709,10 +709,10 @@ export default function App() {
   const effectTargetIdsRef = useRef<string[]>([]);
   const effectAnimationRef = useRef<number | null>(null);
   const effectStartedRef = useRef(0);
-  const effectBaseUniverseRef = useRef<number[]>(makeUniverse());
+  const effectBaseUniversesRef = useRef<Map<number, number[]>>(new Map([[1, makeUniverse()]]));
   const momentaryEffectRef = useRef<{
     effect: EffectId;
-    baseUniverse: number[];
+    baseUniverses: Map<number, number[]>;
     previousEffect: EffectId | null;
     previousTargetIds: string[];
   } | null>(null);
@@ -1080,6 +1080,58 @@ export default function App() {
     await dispatchControl({ type: 'frame.replace', universe: 1, values: next }, source);
   }
 
+  function cloneEffectBaseFrames(fixtures?: readonly PatchedFixture[]) {
+    const snapshot = runtimeRef.current!.snapshot;
+    const universes = fixtures?.length
+      ? [...new Set(fixtures.map((fixture) => fixture.universe ?? 1))]
+      : [...snapshot.baseUniverses.keys()];
+    if (!universes.length) universes.push(1);
+    return new Map(
+      universes
+        .sort((a, b) => a - b)
+        .map((universe) => [universe, [...(snapshot.baseUniverses.get(universe) ?? makeUniverse())]])
+    );
+  }
+
+  function capEffectUpdatesByUniverse(updatesByUniverse: ReadonlyMap<number, ReadonlyArray<DmxUpdate>>) {
+    const masterCap = percentToDmx(settingsRef.current.masterLimit);
+    const result = new Map<number, DmxUpdate[]>();
+    for (const [universe, updates] of updatesByUniverse) {
+      const dimmerChannels = new Set(
+        patchRef.current
+          .filter((fixture) => (fixture.universe ?? 1) === universe)
+          .map((fixture) => parameterChannel(fixture, 'dimmer'))
+          .filter((channel): channel is number => channel !== null)
+      );
+      result.set(
+        universe,
+        updates.map(([channel, value]) => [channel, dimmerChannels.has(channel) ? Math.min(value, masterCap) : value] as DmxUpdate)
+      );
+    }
+    return result;
+  }
+
+  function effectFramesFromUpdates(
+    baseUniverses: ReadonlyMap<number, readonly number[]>,
+    updatesByUniverse: ReadonlyMap<number, ReadonlyArray<DmxUpdate>>
+  ) {
+    const frames = new Map<number, number[]>();
+    for (const [universe, base] of baseUniverses) {
+      frames.set(universe, applyUniverseUpdates(base, updatesByUniverse.get(universe) ?? []));
+    }
+    return frames;
+  }
+
+  async function commitUniverseFrames(frames: ReadonlyMap<number, readonly number[]>, source: ControlSource = 'fx') {
+    if (!frames.size) return;
+    await dispatchControl({
+      type: 'frame.batch.replace',
+      frames: [...frames.entries()]
+        .sort(([a], [b]) => a - b)
+        .map(([universe, values]) => ({ universe, values: [...values] }))
+    }, source);
+  }
+
   async function commitOutputUniverse(next: number[], source: ControlSource = 'recorder') {
     await dispatchControl({ type: 'frame.output.replace', universe: 1, values: next }, source);
   }
@@ -1183,7 +1235,7 @@ export default function App() {
     }
     const preset = EFFECT_PRESETS.find((item) => item.id === effect);
     effectTargetIdsRef.current = targets.map((fixture) => fixture.id);
-    effectBaseUniverseRef.current = [...universeRef.current];
+    effectBaseUniversesRef.current = cloneEffectBaseFrames(targets);
     effectStartedRef.current = performance.now();
     activeEffectRef.current = effect;
     setActiveEffect(effect);
@@ -1195,21 +1247,18 @@ export default function App() {
         .map((fixture) => ({ ...fixture, selected: true }));
       const bpm = tempoSourceRef.current === 'midi' && midiBpmRef.current ? midiBpmRef.current : effectBpmRef.current;
       const elapsed = now - effectStartedRef.current;
-      if (effect === 'finale' && elapsed >= (60000 / bpm) * 8) {
-        const finaleHold = renderEffect('blinder', effectFixtures, elapsed, bpm, 1);
-        const dimmerChannels = new Set(patchRef.current.map((fixture) => parameterChannel(fixture, 'dimmer')).filter(Boolean));
-        const masterCap = percentToDmx(settingsRef.current.masterLimit);
-        const cappedHold = finaleHold.map(([channel, value]) => [channel, dimmerChannels.has(channel) ? Math.min(value, masterCap) : value] as const);
-        void commitUniverse(applyUniverseUpdates(effectBaseUniverseRef.current, cappedHold), 'fx');
+      const effectToRender = effect === 'finale' && elapsed >= (60000 / bpm) * 8 ? 'blinder' : effect;
+      const depth = effectToRender === 'blinder' ? 1 : effectDepthRef.current / 100;
+      const updatesByUniverse = capEffectUpdatesByUniverse(
+        renderEffectByUniverse(effectToRender, effectFixtures, elapsed, bpm, depth)
+      );
+      const frames = effectFramesFromUpdates(effectBaseUniversesRef.current, updatesByUniverse);
+      void commitUniverseFrames(frames, 'fx');
+      if (effect === 'finale' && effectToRender === 'blinder') {
         stopEffect(false);
         setMessage('Finale complete — holding the full-white finish.');
         return;
       }
-      const dimmerChannels = new Set(patchRef.current.map((fixture) => parameterChannel(fixture, 'dimmer')).filter(Boolean));
-      const masterCap = percentToDmx(settingsRef.current.masterLimit);
-      const updates = renderEffect(effect, effectFixtures, elapsed, bpm, effectDepthRef.current / 100)
-        .map(([channel, value]) => [channel, dimmerChannels.has(channel) ? Math.min(value, masterCap) : value] as const);
-      void commitUniverse(applyUniverseUpdates(effectBaseUniverseRef.current, updates), 'fx');
       effectAnimationRef.current = requestAnimationFrame(tick);
     };
     effectAnimationRef.current = requestAnimationFrame(tick);
@@ -1226,11 +1275,11 @@ export default function App() {
 
   function startMomentaryEffect(effect: EffectId, targetIds?: readonly string[]) {
     if (momentaryEffectRef.current?.effect === effect) return;
-    const baseUniverse = [...universeRef.current];
+    const baseUniverses = cloneEffectBaseFrames();
     const previousEffect = activeEffectRef.current;
     const previousTargetIds = [...effectTargetIdsRef.current];
     startEffect(effect, targetIds);
-    momentaryEffectRef.current = { effect, baseUniverse, previousEffect, previousTargetIds };
+    momentaryEffectRef.current = { effect, baseUniverses, previousEffect, previousTargetIds };
     const preset = EFFECT_PRESETS.find((item) => item.id === effect);
     setMessage(`${preset?.name ?? effect} held — release to restore the previous output.`);
   }
@@ -1241,7 +1290,7 @@ export default function App() {
     momentaryEffectRef.current = null;
     stopEffect(false);
     const preset = EFFECT_PRESETS.find((item) => item.id === effect);
-    void commitUniverse(held.baseUniverse, 'fx').finally(() => {
+    void commitUniverseFrames(held.baseUniverses, 'fx').finally(() => {
       if (held.previousEffect) startEffect(held.previousEffect, held.previousTargetIds);
       else setMessage(`${preset?.name ?? effect} released. Previous output restored.`);
     });
@@ -2765,14 +2814,18 @@ export default function App() {
       setMessage('Select fixtures or a group before running the custom FX.');
       return;
     }
-    effectBaseUniverseRef.current = [...universeRef.current];
+    const selectedEffectFixtures = effectFixtures.filter((fixture) => fixture.selected);
+    effectBaseUniversesRef.current = cloneEffectBaseFrames(selectedEffectFixtures);
     const startedAt = performance.now();
     activeCustomEffectIdRef.current = effect.id;
     setActiveCustomEffectId(effect.id);
     const tick = (now: number) => {
       if (activeCustomEffectIdRef.current !== effect.id) return;
-      const updates = renderCustomEffect(effect, effectFixtures, now - startedAt);
-      void commitUniverse(applyUniverseUpdates(effectBaseUniverseRef.current, updates), 'fx');
+      const updatesByUniverse = capEffectUpdatesByUniverse(
+        renderCustomEffectByUniverse(effect, effectFixtures, now - startedAt)
+      );
+      const frames = effectFramesFromUpdates(effectBaseUniversesRef.current, updatesByUniverse);
+      void commitUniverseFrames(frames, 'fx');
       effectAnimationRef.current = requestAnimationFrame(tick);
     };
     effectAnimationRef.current = requestAnimationFrame(tick);
