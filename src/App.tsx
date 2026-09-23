@@ -1084,13 +1084,52 @@ export default function App() {
     const snapshot = runtimeRef.current!.snapshot;
     const universes = fixtures?.length
       ? [...new Set(fixtures.map((fixture) => fixture.universe ?? 1))]
-      : [...snapshot.baseUniverses.keys()];
+      : [...new Set([...snapshot.baseUniverses.keys(), ...patchRef.current.map((fixture) => fixture.universe ?? 1)])];
     if (!universes.length) universes.push(1);
     return new Map(
       universes
         .sort((a, b) => a - b)
         .map((universe) => [universe, [...(snapshot.baseUniverses.get(universe) ?? makeUniverse())]])
     );
+  }
+
+  function clonePatchedOutputFrames() {
+    const snapshot = runtimeRef.current!.snapshot;
+    const universes = [...new Set([...snapshot.universes.keys(), ...patchRef.current.map((fixture) => fixture.universe ?? 1)])].sort((a, b) => a - b);
+    if (!universes.length) universes.push(1);
+    return new Map(universes.map((universe) => [universe, [...(snapshot.universes.get(universe) ?? makeUniverse())]]));
+  }
+
+  function cueUniverseFrames(cue: ShowCue) {
+    if (cue.universes?.length) {
+      return new Map(cue.universes.map((snapshot) => [snapshot.universe, [...snapshot.values]]));
+    }
+    if (cue.universe?.length === 512) return new Map([[1, [...cue.universe]]]);
+    const selected = selectedFixtures(patchRef.current);
+    const baseFrames = cloneEffectBaseFrames(selected);
+    const frames = new Map<number, number[]>();
+    for (const [universe, base] of baseFrames) {
+      const fixtures = selected.filter((fixture) => (fixture.universe ?? 1) === universe);
+      frames.set(universe, applyUniverseUpdates(base, lookUpdates(cue.values, fixtures)));
+    }
+    return frames;
+  }
+
+  function lookTargetFrames(look: FixtureLook) {
+    const selected = selectedFixtures(patchRef.current);
+    const baseFrames = cloneEffectBaseFrames(selected);
+    const frames = new Map<number, number[]>();
+    for (const [universe, base] of baseFrames) {
+      const fixtures = selected.filter((fixture) => (fixture.universe ?? 1) === universe);
+      frames.set(universe, applyUniverseUpdates(base, lookUpdates(look.values, fixtures)));
+    }
+    return frames;
+  }
+
+  function serializeUniverseFrames(frames: ReadonlyMap<number, readonly number[]>) {
+    return [...frames.entries()]
+      .sort(([a], [b]) => a - b)
+      .map(([universe, values]) => ({ universe, values: [...values] }));
   }
 
   function capEffectUpdatesByUniverse(updatesByUniverse: ReadonlyMap<number, ReadonlyArray<DmxUpdate>>) {
@@ -1153,6 +1192,16 @@ export default function App() {
 
   async function commitOutputUniverse(next: number[], source: ControlSource = 'recorder') {
     await dispatchControl({ type: 'frame.output.replace', universe: 1, values: next }, source);
+  }
+
+  async function commitOutputUniverseFrames(frames: ReadonlyMap<number, readonly number[]>, source: ControlSource = 'recorder') {
+    if (!frames.size) return;
+    await dispatchControl({
+      type: 'frame.batch.output.replace',
+      frames: [...frames.entries()]
+        .sort(([a], [b]) => a - b)
+        .map(([universe, values]) => ({ universe, values: [...values] }))
+    }, source);
   }
 
   async function setChannels(updates: ReadonlyArray<DmxUpdate>, interrupt = true, source: ControlSource = 'ui') {
