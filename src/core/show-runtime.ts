@@ -28,12 +28,16 @@ export type ShowRuntimeSnapshot = {
   groupMasters: ReadonlyMap<string, number>;
 };
 
-export type RuntimeDispatchResult = {
-  revision: number;
+export type RuntimeOutputFrame = {
   universe: number;
   frame: number[];
   baseFrame: number[];
   changedChannels: number[];
+};
+
+export type RuntimeDispatchResult = RuntimeOutputFrame & {
+  revision: number;
+  outputs: RuntimeOutputFrame[];
   patchChanged: boolean;
   warnings: string[];
 };
@@ -104,12 +108,13 @@ export class ShowRuntime {
 
   dispatch(envelope: ControlCommandEnvelope): RuntimeDispatchResult {
     const command = envelope.command;
+    const targetUniverses = this.commandUniverses(command);
     const groupUniverses = command.type === 'group.color' || command.type === 'group.master.set'
-      ? [...new Set(this.patch.filter((fixture) => fixture.group === command.groupName).map((fixture) => fixture.universe ?? 1))]
+      ? targetUniverses
       : [];
     const universe = 'universe' in command
       ? command.universe
-      : groupUniverses[0] ?? this.activeUniverse;
+      : targetUniverses[0] ?? this.activeUniverse;
     this.activeUniverse = universe;
     const previous = this.universes.get(universe) ?? makeUniverse();
     const previousBase = this.baseUniverses.get(universe) ?? makeUniverse();
@@ -193,9 +198,7 @@ export class ShowRuntime {
       nextBase = applyUniverseUpdates(previousBase, updates);
     } else if (command.type === 'group.master.set') {
       this.groupMasters.set(command.groupName, Math.max(0, Math.min(1, command.value)));
-      if (groupUniverses.length > 1) {
-        warnings.push(`Group ${command.groupName} spans universes ${groupUniverses.join(', ')}; all member universes require output refresh.`);
-      }
+
     } else if (command.type === 'master.set') {
       this.master = Math.max(0, Math.min(1, command.value));
     } else if (command.type === 'blackout.set') {
@@ -216,15 +219,121 @@ export class ShowRuntime {
     };
     changed.forEach((channel) => this.sourceTrace.set(`${universe}:${channel}`, trace));
 
+    const outputs: RuntimeOutputFrame[] = [{
+      universe,
+      frame: [...next],
+      baseFrame: [...nextBase],
+      changedChannels: changed
+    }];
+
+    for (const secondaryUniverse of targetUniverses) {
+      if (secondaryUniverse === universe) continue;
+      const secondaryPrevious = this.universes.get(secondaryUniverse) ?? makeUniverse();
+      const secondaryBase = this.baseUniverses.get(secondaryUniverse) ?? makeUniverse();
+      const secondaryNextBase = this.applyCommandToUniverseBase(command, secondaryUniverse, secondaryBase, warnings);
+      const secondaryNext = this.resolveFrame(secondaryUniverse, secondaryNextBase);
+      const secondaryChanged = changedChannels(secondaryPrevious, secondaryNext);
+      this.baseUniverses.set(secondaryUniverse, secondaryNextBase);
+      this.universes.set(secondaryUniverse, secondaryNext);
+      secondaryChanged.forEach((channel) => this.sourceTrace.set(`${secondaryUniverse}:${channel}`, trace));
+      outputs.push({
+        universe: secondaryUniverse,
+        frame: [...secondaryNext],
+        baseFrame: [...secondaryNextBase],
+        changedChannels: secondaryChanged
+      });
+    }
+
     return {
       revision: this.revision,
       universe,
       frame: [...next],
       baseFrame: [...nextBase],
       changedChannels: changed,
+      outputs,
       patchChanged,
       warnings
     };
+  }
+
+  private commandUniverses(command: ControlCommandEnvelope['command']): number[] {
+    if ('universe' in command) return [command.universe];
+    let fixtureIds: readonly string[] = [];
+    if (command.type === 'fixture.attribute' || command.type === 'fixture.color' || command.type === 'fixture.flash.set' || command.type === 'fixture.target') {
+      fixtureIds = command.fixtureIds;
+    } else if (command.type === 'fixture.position') {
+      fixtureIds = command.positions.map((position) => position.fixtureId);
+    } else if (command.type === 'group.color' || command.type === 'group.master.set') {
+      return [...new Set(this.patch.filter((fixture) => fixture.group === command.groupName).map((fixture) => fixture.universe ?? 1))].sort((a, b) => a - b);
+    } else if (command.type === 'master.set' || command.type === 'blackout.set') {
+      return [...new Set([this.activeUniverse, ...this.baseUniverses.keys(), ...this.patch.map((fixture) => fixture.universe ?? 1)])].sort((a, b) => a - b);
+    }
+    if (fixtureIds.length) {
+      const ids = new Set(fixtureIds);
+      return [...new Set(this.patch.filter((fixture) => ids.has(fixture.id)).map((fixture) => fixture.universe ?? 1))].sort((a, b) => a - b);
+    }
+    return [this.activeUniverse];
+  }
+
+  private applyCommandToUniverseBase(
+    command: ControlCommandEnvelope['command'],
+    universe: number,
+    base: readonly number[],
+    warnings: string[]
+  ): number[] {
+    let next = [...base];
+    if (command.type === 'fixture.attribute') {
+      const ids = new Set(command.fixtureIds);
+      const updates = this.patch
+        .filter((fixture) => (fixture.universe ?? 1) === universe && ids.has(fixture.id))
+        .flatMap((fixture) => {
+          const update = fixtureParameterUpdate(fixture, command.parameter, command.value);
+          return update ? [update] : [];
+        });
+      next = applyUniverseUpdates(base, updates);
+    } else if (command.type === 'fixture.color') {
+      const ids = new Set(command.fixtureIds);
+      const updates = this.patch
+        .filter((fixture) => (fixture.universe ?? 1) === universe && ids.has(fixture.id))
+        .flatMap((fixture) => fixtureColorUpdates(fixture, [command.color.red, command.color.green, command.color.blue]));
+      next = applyUniverseUpdates(base, updates);
+    } else if (command.type === 'fixture.position') {
+      const positions = new Map(command.positions.map((position) => [position.fixtureId, position]));
+      const updates = this.patch
+        .filter((fixture) => (fixture.universe ?? 1) === universe && positions.has(fixture.id))
+        .flatMap((fixture) => {
+          const position = positions.get(fixture.id)!;
+          const resolved = fixtureMovementUpdates(fixture, position.panNormalized, position.tiltNormalized);
+          if (!resolved.length) warnings.push(`${fixture.name} has no Pan/Tilt channels for this absolute palette.`);
+          return resolved;
+        });
+      next = applyUniverseUpdates(base, updates);
+    } else if (command.type === 'fixture.target') {
+      const ids = new Set(command.fixtureIds);
+      const fixtures = this.patch
+        .map((fixture, index) => ({ fixture, index }))
+        .filter(({ fixture }) => (fixture.universe ?? 1) === universe && ids.has(fixture.id));
+      const targets = arrangeTargetPoints(command.target, fixtures.length, command.arrangement, command.spreadMeters);
+      const updates = fixtures.flatMap(({ fixture, index }, targetIndex) => {
+        const solution = aimFixtureAtTarget(base, fixture, targets[targetIndex], index, this.patch.length);
+        if (!solution) {
+          warnings.push(`${fixture.name} has no Pan/Tilt geometry.`);
+          return [];
+        }
+        if (!solution.reachable) {
+          warnings.push(`${fixture.name} cannot reach that target within its movement range.`);
+          return [];
+        }
+        return solution.updates;
+      });
+      next = applyUniverseUpdates(base, updates);
+    } else if (command.type === 'group.color') {
+      const updates = this.patch
+        .filter((fixture) => (fixture.universe ?? 1) === universe && fixture.group === command.groupName)
+        .flatMap((fixture) => fixtureColorUpdates(fixture, [command.color.red, command.color.green, command.color.blue]));
+      next = applyUniverseUpdates(base, updates);
+    }
+    return next;
   }
 
   private resolveFrame(universe: number, base: readonly number[]): number[] {
