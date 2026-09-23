@@ -14,6 +14,7 @@ const DIRECT_PORT: u16 = 9460;
 const MAX_CLIENTS: usize = 8;
 const MESSAGES_PER_POLL: usize = 4;
 const MAX_TOTAL_MESSAGES: usize = 16;
+const MAX_BYTES_PER_POLL: usize = 2 * 1024 * 1024;
 
 pub use super::fixture_frame::DirectFixtureFrame;
 
@@ -66,9 +67,9 @@ impl LumaVizDirectEngine {
                     let _ = stream.set_read_timeout(Some(Duration::from_millis(800)));
                     let _ = stream.set_write_timeout(Some(Duration::from_millis(800)));
                     let mut config = WebSocketConfig::default();
-                    config.max_message_size = Some(64 * 1024);
-                    config.max_frame_size = Some(64 * 1024);
-                    config.max_write_buffer_size = 256 * 1024;
+                    config.max_message_size = Some(1024 * 1024);
+                    config.max_frame_size = Some(1024 * 1024);
+                    config.max_write_buffer_size = 2 * 1024 * 1024;
                     let accepted_path = Arc::new(AtomicBool::new(false));
                     let accepted_path_flag = accepted_path.clone();
                     match accept_hdr_with_config(stream, move |request: &Request, response: Response| {
@@ -135,11 +136,12 @@ impl LumaVizDirectEngine {
         let mut messages = Vec::new();
         if let Ok(mut shared) = self.shared.lock() {
             let mut received = Vec::new();
+            let mut bytes = 0usize;
             shared.clients.retain_mut(|socket| {
               for _ in 0..MESSAGES_PER_POLL {
-                if received.len() >= MAX_TOTAL_MESSAGES { break; }
+                if received.len() >= MAX_TOTAL_MESSAGES || bytes >= MAX_BYTES_PER_POLL { break; }
                 match socket.read() {
-                    Ok(Message::Text(text)) => { received.push(text.to_string()); continue; }
+                    Ok(Message::Text(text)) => { bytes += text.len(); received.push(text.to_string()); continue; }
                     Ok(Message::Close(_)) => return false,
                     Ok(_) => continue,
                     Err(tungstenite::Error::Io(error)) if error.kind() == std::io::ErrorKind::WouldBlock => return true,
@@ -185,11 +187,43 @@ fn valid_hello(text: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::valid_hello;
+    use super::{valid_hello, LumaVizDirectEngine, WebSocketConfig, accept_hdr_with_config, Request, Response, Message};
 
     #[test]
     fn accepts_v1_fixture_frame_client() {
         assert!(valid_hello(r#"{"type":"lumaviz.hello","protocolVersion":1,"capabilities":["fixture-frame-v1"]}"#));
+    }
+
+    #[test]
+    fn accepts_a_compressed_preview_sized_message_without_unbounded_poll() {
+        use std::{net::{TcpListener, TcpStream}, sync::mpsc, thread, time::{Duration, Instant}};
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let (sender, receiver) = mpsc::channel();
+        thread::spawn(move || {
+            let (stream, _) = listener.accept().unwrap();
+            let mut config = WebSocketConfig::default();
+            config.max_message_size = Some(1024 * 1024);
+            config.max_frame_size = Some(1024 * 1024);
+            let socket = accept_hdr_with_config(stream, |_: &Request, response: Response| Ok(response), Some(config)).unwrap();
+            socket.get_ref().set_nonblocking(true).unwrap();
+            sender.send(socket).unwrap();
+        });
+        let stream = TcpStream::connect(("127.0.0.1", port)).unwrap();
+        let (mut client, _) = tungstenite::client(format!("ws://127.0.0.1:{port}/lumaviz"), stream).unwrap();
+        let engine = LumaVizDirectEngine::default();
+        engine.shared.lock().unwrap().clients.push(receiver.recv_timeout(Duration::from_secs(1)).unwrap());
+        let payload = "x".repeat(130_000);
+        client.send(Message::Text(payload.clone().into())).unwrap();
+        let start = Instant::now();
+        let received = loop {
+            let messages = engine.poll_incoming();
+            if !messages.is_empty() { break messages; }
+            assert!(start.elapsed() < Duration::from_secs(1), "preview not received");
+            thread::sleep(Duration::from_millis(10));
+        };
+        assert_eq!(received, vec![payload]);
+        assert_eq!(engine.status().clients, 1);
     }
 
     #[test]
