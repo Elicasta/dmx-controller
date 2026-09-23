@@ -116,6 +116,7 @@ import {
 import { CallbackOutputDriver, OutputRouter, VirtualOutputDriver } from './core/output-router';
 import { ArtNetOutputDriver } from './core/artnet-output';
 import { ShowRuntime, type RuntimeDispatchResult } from './core/show-runtime';
+import { CueLaunchGuard } from './core/cue-launch-guard';
 import { projectStagePoint, unprojectStagePoint, type StagePoint2D, type StageView } from './core/stage-projection';
 import { arrangeTargetPoints, buildStageTargets, type TargetArrangement, type TargetPoint } from './core/targets';
 import { RemoteRelay, type RelayCommandEnvelope, type RemoteRelayConfig, type RemoteRelayStatus } from './core/remote-relay';
@@ -730,10 +731,9 @@ export default function App() {
   const [cueFadeMs, setCueFadeMs] = useState(1000);
   const [activeCueId, setActiveCueId] = useState<string | null>(null);
   const activeCueIdRef = useRef<string | null>(null);
-  const pendingCueIdRef = useRef<string | null>(null);
+  const cueLaunchGuardRef = useRef(new CueLaunchGuard());
   const cueDelayTimerRef = useRef<number | null>(null);
   const cueFollowTimerRef = useRef<number | null>(null);
-  const cueGenerationRef = useRef(0);
 
   const [showTrackUrl, setShowTrackUrl] = useState('');
   const showTrackUrlRef = useRef('');
@@ -1280,23 +1280,27 @@ export default function App() {
     setMessage(`${name} captured with all ${patch.length} patched lights.`);
   }
 
-  function cancelPendingCueLaunches() {
-    cueGenerationRef.current += 1;
-    pendingCueIdRef.current = null;
+  function clearCueTimers() {
     if (cueDelayTimerRef.current !== null) window.clearTimeout(cueDelayTimerRef.current);
     if (cueFollowTimerRef.current !== null) window.clearTimeout(cueFollowTimerRef.current);
     cueDelayTimerRef.current = null;
     cueFollowTimerRef.current = null;
   }
 
+  function cancelPendingCueLaunches() {
+    clearCueTimers();
+    cueLaunchGuardRef.current.cancel();
+  }
+
   function runCue(cue: ShowCue) {
-    if (pendingCueIdRef.current === cue.id) return;
-    cancelPendingCueLaunches();
-    const generation = cueGenerationRef.current;
+    const delayed = (cue.delayMs ?? 0) > 0;
+    if (cueLaunchGuardRef.current.pendingCueId === cue.id) return;
+    clearCueTimers();
+    const generation = cueLaunchGuardRef.current.begin(cue.id, delayed);
+    if (generation === null) return;
     const launch = () => {
-      if (generation !== cueGenerationRef.current) return;
+      if (!cueLaunchGuardRef.current.markLaunched(generation)) return;
       cueDelayTimerRef.current = null;
-      pendingCueIdRef.current = null;
       activeCueIdRef.current = cue.id;
       setActiveCueId(cue.id);
       const target = cue.universe?.length === 512 ? [...cue.universe] : applyUniverseUpdates(universeRef.current, lookUpdates(cue.values, selectedFixtures(patch)));
@@ -1310,19 +1314,18 @@ export default function App() {
         const following = showFile.cues[cueIndex + 1];
         if (following) {
           cueFollowTimerRef.current = window.setTimeout(() => {
-            if (generation === cueGenerationRef.current) runCue(following);
+            if (cueLaunchGuardRef.current.isCurrent(generation)) runCue(following);
           }, cue.followMs);
         }
       }
     };
     if ((cue.delayMs ?? 0) > 0) {
-      pendingCueIdRef.current = cue.id;
       cueDelayTimerRef.current = window.setTimeout(launch, cue.delayMs);
     } else launch();
   }
 
   function goNextCue() {
-    if (pendingCueIdRef.current) return;
+    if (cueLaunchGuardRef.current.pendingCueId) return;
     const currentIndex = showFile.cues.findIndex((cue) => cue.id === activeCueIdRef.current);
     const next = currentIndex < 0 ? showFile.cues[0] : showFile.cues[currentIndex + 1];
     if (next) runCue(next);
