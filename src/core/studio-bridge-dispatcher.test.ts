@@ -3,6 +3,7 @@ import { StudioBridgeDispatcher, type StudioBridgeActions } from './studio-bridg
 
 function actions(): StudioBridgeActions {
   return {
+    getStatus: vi.fn(() => ({ blackout: true, currentCueId: 'cue-live', activeEffectId: null })),
     createShow: vi.fn(() => 'show-new'),
     loadShow: vi.fn(),
     goCue: vi.fn(),
@@ -19,9 +20,29 @@ function actions(): StudioBridgeActions {
 }
 
 describe('StudioBridgeDispatcher', () => {
-  it('handshakes protocol 1', async () => {
+  it('handshakes protocol 1 with current operator state', async () => {
     const dispatcher = new StudioBridgeDispatcher(actions());
-    expect(await dispatcher.dispatch('a', { type: 'hello', protocol: 1, clientName: 'Studio' })).toMatchObject({ id: 'a', ok: true });
+    expect(await dispatcher.dispatch('a', { type: 'hello', protocol: 1, clientName: 'Studio' })).toMatchObject({
+      id: 'a',
+      ok: true,
+      payload: {
+        protocol: 1,
+        app: 'LumaRig',
+        status: { blackout: true, currentCueId: 'cue-live', activeEffectId: null }
+      }
+    });
+  });
+
+  it('returns current runtime status without mutating output', async () => {
+    const target = actions();
+    const dispatcher = new StudioBridgeDispatcher(target);
+    expect(await dispatcher.dispatch('status', { type: 'status.get' })).toEqual({
+      id: 'status',
+      ok: true,
+      payload: { blackout: true, currentCueId: 'cue-live', activeEffectId: null }
+    });
+    expect(target.getStatus).toHaveBeenCalledTimes(1);
+    expect(target.setBlackout).not.toHaveBeenCalled();
   });
 
   it('routes blackout without exposing DMX', async () => {
