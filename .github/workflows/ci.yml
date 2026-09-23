@@ -39,5 +39,8 @@ jobs:
       - name: Frontend production build
         run: npm run build
 
+      - name: Bridge disconnect and malformed-traffic tests
+        run: cargo test --manifest-path tests/bridge-harness/Cargo.toml
+
       - name: Native tests
         run: cargo test --manifest-path src-tauri/Cargo.toml
