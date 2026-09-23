@@ -1132,6 +1132,25 @@ export default function App() {
     }, source);
   }
 
+  async function clearFixtureFrames(fixtures: readonly PatchedFixture[], source: ControlSource = 'ui') {
+    if (!fixtures.length) return;
+    stopFade();
+    if (activeEffectRef.current) stopEffect(false);
+    if (audioArmedRef.current) setAudioArmed(false);
+    const frames = cloneEffectBaseFrames(fixtures);
+    for (const fixture of fixtures) {
+      const universe = fixture.universe ?? 1;
+      const base = frames.get(universe) ?? makeUniverse();
+      const mode = findMode(fixture);
+      const updates = Array.from(
+        { length: mode?.channelCount ?? 0 },
+        (_, index) => [fixture.address + index, 0] as DmxUpdate
+      );
+      frames.set(universe, applyUniverseUpdates(base, updates));
+    }
+    await commitUniverseFrames(frames, source);
+  }
+
   async function commitOutputUniverse(next: number[], source: ControlSource = 'recorder') {
     await dispatchControl({ type: 'frame.output.replace', universe: 1, values: next }, source);
   }
@@ -1203,12 +1222,16 @@ export default function App() {
     setGlobalColor(hex);
     const rgb = hexToRgb(hex);
     const targets = compatibleColorFixtures(selectedFixtures(patch));
-    const updates = targets.flatMap((fixture) => {
-      const result = fixtureColorUpdates(fixture, rgb);
-      // Color recall preserves intensity; it must never bring a dark fixture live.
-      return result;
-    });
-    void setChannels(updates, true, source);
+    stopFade();
+    if (activeEffectRef.current) stopEffect(false);
+    if (audioArmedRef.current) setAudioArmed(false);
+    if (targets.length) {
+      void dispatchControl({
+        type: 'fixture.color',
+        fixtureIds: targets.map((fixture) => fixture.id),
+        color: { red: rgb[0], green: rgb[1], blue: rgb[2] }
+      }, source);
+    }
     setMessage(`Color applied to ${targets.length} light${targets.length === 1 ? '' : 's'}.`);
   }
 
@@ -2206,27 +2229,26 @@ export default function App() {
 
   function homeActiveFixture() {
     if (!stageFixture) return;
-    void setChannels(fixtureMovementUpdates(stageFixture, .5, .5), true, 'ui');
+    stopFade();
+    if (activeEffectRef.current) stopEffect(false);
+    void dispatchControl({
+      type: 'fixture.position',
+      positions: [{ fixtureId: stageFixture.id, panNormalized: .5, tiltNormalized: .5 }]
+    }, 'ui');
     setMessage(`${stageFixture.name} sent to profile home.`);
   }
 
-  function removeFixture(fixture: PatchedFixture) {
+  async function removeFixture(fixture: PatchedFixture) {
     if (patch.length === 1) return setMessage('Keep at least one fixture in the patch.');
-    const mode = findMode(fixture);
-    const updates = Array.from({ length: mode?.channelCount ?? 0 }, (_, index) => [fixture.address + index, 0] as const);
-    void setChannels(updates);
+    await clearFixtureFrames([fixture]);
     setPatch((current) => current.filter((item) => item.id !== fixture.id));
   }
 
-  function deleteSelectedFixtures() {
+  async function deleteSelectedFixtures() {
     const selected = patch.filter((fixture) => fixture.selected);
     if (!selected.length) return setMessage('Select one or more fixtures first.');
     if (selected.length >= patch.length) return setMessage('Keep at least one fixture in the patch.');
-    const updates = selected.flatMap((fixture) => {
-      const mode = findMode(fixture);
-      return Array.from({ length: mode?.channelCount ?? 0 }, (_, index) => [fixture.address + index, 0] as const);
-    });
-    void setChannels(updates);
+    await clearFixtureFrames(selected);
     const selectedIds = new Set(selected.map((fixture) => fixture.id));
     setPatch((current) => current.filter((fixture) => !selectedIds.has(fixture.id)));
     if (stageFixtureId && selectedIds.has(stageFixtureId)) setStageFixtureId('');
