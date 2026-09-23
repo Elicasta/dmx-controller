@@ -729,7 +729,11 @@ export default function App() {
   const [cueName, setCueName] = useState('');
   const [cueFadeMs, setCueFadeMs] = useState(1000);
   const [activeCueId, setActiveCueId] = useState<string | null>(null);
+  const activeCueIdRef = useRef<string | null>(null);
+  const pendingCueIdRef = useRef<string | null>(null);
+  const cueDelayTimerRef = useRef<number | null>(null);
   const cueFollowTimerRef = useRef<number | null>(null);
+  const cueGenerationRef = useRef(0);
 
   const [showTrackUrl, setShowTrackUrl] = useState('');
   const showTrackUrlRef = useRef('');
@@ -1272,9 +1276,24 @@ export default function App() {
     setMessage(`${name} captured with all ${patch.length} patched lights.`);
   }
 
-  function runCue(cue: ShowCue) {
+  function cancelPendingCueLaunches() {
+    cueGenerationRef.current += 1;
+    pendingCueIdRef.current = null;
+    if (cueDelayTimerRef.current !== null) window.clearTimeout(cueDelayTimerRef.current);
     if (cueFollowTimerRef.current !== null) window.clearTimeout(cueFollowTimerRef.current);
+    cueDelayTimerRef.current = null;
+    cueFollowTimerRef.current = null;
+  }
+
+  function runCue(cue: ShowCue) {
+    if (pendingCueIdRef.current === cue.id) return;
+    cancelPendingCueLaunches();
+    const generation = cueGenerationRef.current;
     const launch = () => {
+      if (generation !== cueGenerationRef.current) return;
+      cueDelayTimerRef.current = null;
+      pendingCueIdRef.current = null;
+      activeCueIdRef.current = cue.id;
       setActiveCueId(cue.id);
       const target = cue.universe?.length === 512 ? [...cue.universe] : applyUniverseUpdates(universeRef.current, lookUpdates(cue.values, selectedFixtures(patch)));
       void dispatchControl({ type: 'cue.go', cueId: cue.id }, 'cue');
@@ -1285,21 +1304,31 @@ export default function App() {
       if ((cue.followMs ?? 0) > 0) {
         const cueIndex = showFile.cues.findIndex((item) => item.id === cue.id);
         const following = showFile.cues[cueIndex + 1];
-        if (following) cueFollowTimerRef.current = window.setTimeout(() => runCue(following), cue.followMs);
+        if (following) {
+          cueFollowTimerRef.current = window.setTimeout(() => {
+            if (generation === cueGenerationRef.current) runCue(following);
+          }, cue.followMs);
+        }
       }
     };
-    if ((cue.delayMs ?? 0) > 0) window.setTimeout(launch, cue.delayMs);
-    else launch();
+    if ((cue.delayMs ?? 0) > 0) {
+      pendingCueIdRef.current = cue.id;
+      cueDelayTimerRef.current = window.setTimeout(launch, cue.delayMs);
+    } else launch();
   }
 
   function goNextCue() {
-    if (nextCue) runCue(nextCue);
+    if (pendingCueIdRef.current) return;
+    const currentIndex = showFile.cues.findIndex((cue) => cue.id === activeCueIdRef.current);
+    const next = currentIndex < 0 ? showFile.cues[0] : showFile.cues[currentIndex + 1];
+    if (next) runCue(next);
     else setMessage(showFile.cues.length ? 'End of cue stack.' : 'Capture a cue before pressing GO.');
   }
 
   function goPreviousCue() {
     if (!showFile.cues.length) return;
-    runCue(showFile.cues[activeCueIndex <= 0 ? 0 : activeCueIndex - 1]);
+    const currentIndex = showFile.cues.findIndex((cue) => cue.id === activeCueIdRef.current);
+    runCue(showFile.cues[currentIndex <= 0 ? 0 : currentIndex - 1]);
   }
 
   function updateCue(id: string) {
@@ -1323,7 +1352,11 @@ export default function App() {
 
   function deleteCue(id: string) {
     setShowFile((current) => ({ ...current, cues: current.cues.filter((cue) => cue.id !== id).map((cue, index) => ({ ...cue, number: index + 1 })) }));
-    if (activeCueId === id) setActiveCueId(null);
+    if (activeCueIdRef.current === id) {
+      cancelPendingCueLaunches();
+      activeCueIdRef.current = null;
+      setActiveCueId(null);
+    }
   }
 
   function saveShowProject(status: 'template' | 'draft' | 'show' = 'show') {
@@ -1355,6 +1388,8 @@ export default function App() {
     setStageElements(snapshot.stageElements.map((element) => migrateStageElement(element, snapshot.stageSettings.dimensions)));
     setStageSettings(snapshot.stageSettings);
     setSavedLooks(snapshot.looks);
+    cancelPendingCueLaunches();
+    activeCueIdRef.current = null;
     setActiveCueId(null);
     setSelectedStageElementId(null);
     setMessage(`${snapshot.name} loaded from the show library.`);
@@ -1371,6 +1406,8 @@ export default function App() {
       nextName = `Untitled Show ${showNumber}`;
     }
     setShowFile({ ...EMPTY_SHOW, name: nextName, cues: [], groups: [], positionPalettes: [], recordings: [], externalTrack: { ...DEFAULT_EXTERNAL_TRACK_SYNC } });
+    cancelPendingCueLaunches();
+    activeCueIdRef.current = null;
     setActiveCueId(null);
     setMessage('New show started. Your fixture patch and stage remain available until you load another saved show.');
   }
