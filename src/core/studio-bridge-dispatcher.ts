@@ -1,8 +1,9 @@
-import type { StudioBridgeResult, StudioSongIdentity } from './studio-bridge-protocol';
+import type { StudioBridgeResult, StudioBridgeRuntimeStatus, StudioSongIdentity } from './studio-bridge-protocol';
 import { assertStudioBridgeCommand, STUDIO_BRIDGE_PROTOCOL } from './studio-bridge-protocol';
 import { resolveStudioBinding, saveStudioBinding } from './studio-bindings';
 
 export type StudioBridgeActions = {
+  getStatus: () => StudioBridgeRuntimeStatus;
   createShow: (identity: StudioSongIdentity) => Promise<string> | string;
   loadShow: (showId: string) => Promise<void> | void;
   goCue: (cueId?: string) => Promise<void> | void;
@@ -26,7 +27,9 @@ export class StudioBridgeDispatcher {
       switch (command.type) {
         case 'hello':
           if (command.protocol !== STUDIO_BRIDGE_PROTOCOL) throw new Error(`Studio bridge protocol ${command.protocol} is not supported.`);
-          return { id, ok: true, payload: { protocol: STUDIO_BRIDGE_PROTOCOL, app: 'LumaRig' } };
+          return { id, ok: true, payload: { protocol: STUDIO_BRIDGE_PROTOCOL, app: 'LumaRig', status: this.actions.getStatus() } };
+        case 'status.get':
+          return { id, ok: true, payload: this.actions.getStatus() };
         case 'song.resolve': {
           const identity: StudioSongIdentity = command;
           const existing = resolveStudioBinding(identity);
