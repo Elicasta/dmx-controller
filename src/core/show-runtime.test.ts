@@ -193,4 +193,51 @@ describe('ShowRuntime', () => {
     expect(result.baseFrame.slice(0, 3)).toEqual([0, 0, 0]);
     expect(result.baseFrame.slice(10, 13)).toEqual([12, 34, 56]);
   });
+
+  it('routes a fixture command to the fixture universe instead of the last active universe', () => {
+    const universeTwo = { ...DEFAULT_PATCH[0], id: 'u2-fixture', name: 'Universe 2 Fixture', universe: 2 };
+    const runtime = new ShowRuntime({ patch: [DEFAULT_PATCH[0], universeTwo] });
+    const result = runtime.dispatch(controlCommand('ui', {
+      type: 'fixture.attribute', fixtureIds: [universeTwo.id], parameter: 'dimmer', value: 173
+    }));
+    expect(result.universe).toBe(2);
+    expect(result.outputs).toHaveLength(1);
+    expect(result.baseFrame[4]).toBe(173);
+    expect(runtime.snapshot.universes.get(1)?.[4] ?? 0).toBe(0);
+    expect(runtime.snapshot.universes.get(2)?.[4]).toBe(173);
+  });
+
+  it('refreshes every universe under the grand master', () => {
+    const universeTwo = { ...DEFAULT_PATCH[0], id: 'u2-fixture', name: 'Universe 2 Fixture', universe: 2 };
+    const runtime = new ShowRuntime({ patch: [DEFAULT_PATCH[0], universeTwo] });
+    runtime.dispatch(controlCommand('ui', { type: 'frame.update', universe: 1, updates: [[5, 200]] }));
+    runtime.dispatch(controlCommand('ui', { type: 'frame.update', universe: 2, updates: [[5, 180]] }));
+    const result = runtime.dispatch(controlCommand('ui', { type: 'master.set', value: .5 }));
+    expect(result.outputs.map((output) => output.universe)).toEqual([1, 2]);
+    expect(result.outputs.find((output) => output.universe === 1)?.frame[4]).toBe(100);
+    expect(result.outputs.find((output) => output.universe === 2)?.frame[4]).toBe(90);
+  });
+
+  it('refreshes a group master across every universe containing that group', () => {
+    const universeTwo = { ...DEFAULT_PATCH[0], id: 'u2-fixture', name: 'Universe 2 Fixture', universe: 2 };
+    const runtime = new ShowRuntime({ patch: [DEFAULT_PATCH[0], universeTwo] });
+    runtime.dispatch(controlCommand('ui', { type: 'frame.update', universe: 1, updates: [[5, 200]] }));
+    runtime.dispatch(controlCommand('ui', { type: 'frame.update', universe: 2, updates: [[5, 180]] }));
+    const result = runtime.dispatch(controlCommand('surface', { type: 'group.master.set', groupName: 'Front Wash', value: .25 }));
+    expect(result.outputs.map((output) => output.universe)).toEqual([1, 2]);
+    expect(result.outputs.find((output) => output.universe === 1)?.frame[4]).toBe(50);
+    expect(result.outputs.find((output) => output.universe === 2)?.frame[4]).toBe(45);
+  });
+
+  it('marks every known universe affected by blackout so every output adapter refreshes', () => {
+    const universeTwo = { ...DEFAULT_PATCH[0], id: 'u2-fixture', name: 'Universe 2 Fixture', universe: 2 };
+    const runtime = new ShowRuntime({ patch: [DEFAULT_PATCH[0], universeTwo] });
+    runtime.dispatch(controlCommand('ui', { type: 'frame.update', universe: 1, updates: [[5, 200]] }));
+    runtime.dispatch(controlCommand('ui', { type: 'frame.update', universe: 2, updates: [[5, 180]] }));
+    const result = runtime.dispatch(controlCommand('remote', { type: 'blackout.set', active: true }));
+    expect(runtime.snapshot.blackout).toBe(true);
+    expect(result.outputs.map((output) => output.universe)).toEqual([1, 2]);
+    expect(result.outputs.find((output) => output.universe === 1)?.frame[4]).toBe(200);
+    expect(result.outputs.find((output) => output.universe === 2)?.frame[4]).toBe(180);
+  });
 });
