@@ -119,16 +119,23 @@ fn failure(id: String, error: &str) -> StudioBridgeResponse {
     StudioBridgeResponse { id, ok: false, error: Some(error.into()), payload: None }
 }
 fn handle_client(stream: TcpStream, requests: SyncSender<StudioBridgeEnvelope>, pending: Pending, serial: Arc<AtomicU64>, running: Arc<AtomicBool>, _permit: ClientPermit) {
-    let _ = stream.set_read_timeout(Some(Duration::from_secs(1)));
-    let _ = stream.set_write_timeout(Some(Duration::from_secs(1)));
+    // macOS may deliver a partial WebSocket upgrade while the runner is busy.
+    // Give the upgrade and initial hello a bounded grace period; subsequent
+    // idle reads can poll shutdown at a shorter interval.
+    let _ = stream.set_read_timeout(Some(Duration::from_secs(5)));
+    let _ = stream.set_write_timeout(Some(Duration::from_secs(5)));
     let config = WebSocketConfig::default().max_message_size(Some(64 * 1024)).max_frame_size(Some(64 * 1024));
     let mut socket = match accept_with_config(stream, Some(config)) { Ok(socket) => socket, Err(_) => return };
+    let _ = socket.get_mut().set_read_timeout(Some(Duration::from_secs(1)));
+    let _ = socket.get_mut().set_write_timeout(Some(Duration::from_secs(1)));
     let mut greeted = false;
+    let hello_deadline = Instant::now() + Duration::from_secs(5);
     let mut cache: VecDeque<(String, Value, StudioBridgeResponse)> = VecDeque::new();
     while running.load(Ordering::SeqCst) {
         let message = match socket.read() {
             Ok(message) => message,
-            Err(tungstenite::Error::Io(err)) if greeted && matches!(err.kind(), std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut) => continue,
+            Err(tungstenite::Error::Io(err)) if matches!(err.kind(), std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut)
+                && (greeted || Instant::now() < hello_deadline) => continue,
             Err(_) => break,
         };
         if message.is_close() { break; }
