@@ -18,6 +18,7 @@ export type ControlSource =
 
 export type ControlCommand =
   | { type: 'frame.batch.replace'; frames: Array<{ universe: number; values: readonly number[] }> }
+  | { type: 'frame.batch.output.replace'; frames: Array<{ universe: number; values: readonly number[] }> }
   | { type: 'frame.replace'; universe: number; values: readonly number[] }
   | { type: 'frame.output.replace'; universe: number; values: readonly number[] }
   | { type: 'frame.update'; universe: number; updates: ReadonlyArray<DmxUpdate> }
