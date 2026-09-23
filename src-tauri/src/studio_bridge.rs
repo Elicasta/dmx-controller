@@ -81,7 +81,8 @@ impl StudioBridge {
                         let permit = ClientPermit(connected_clients.clone());
                         let tx = requests_tx.clone(); let entries = pending.clone();
                         let serial = request_serial.clone(); let active = running.clone();
-                        thread::spawn(move || handle_client(stream, tx, entries, serial, active, permit));
+                        let errors = last_error.clone();
+                        thread::spawn(move || handle_client(stream, tx, entries, serial, active, errors, permit));
                     }
                     Err(err) if err.kind() == std::io::ErrorKind::WouldBlock => thread::sleep(Duration::from_millis(10)),
                     Err(err) => { *last_error.lock().unwrap() = Some(err.to_string()); thread::sleep(Duration::from_millis(100)); }
@@ -118,14 +119,22 @@ impl Drop for StudioBridge {
 fn failure(id: String, error: &str) -> StudioBridgeResponse {
     StudioBridgeResponse { id, ok: false, error: Some(error.into()), payload: None }
 }
-fn handle_client(stream: TcpStream, requests: SyncSender<StudioBridgeEnvelope>, pending: Pending, serial: Arc<AtomicU64>, running: Arc<AtomicBool>, _permit: ClientPermit) {
+fn handle_client(stream: TcpStream, requests: SyncSender<StudioBridgeEnvelope>, pending: Pending, serial: Arc<AtomicU64>, running: Arc<AtomicBool>, last_error: Arc<Mutex<Option<String>>>, _permit: ClientPermit) {
     // macOS may deliver a partial WebSocket upgrade while the runner is busy.
     // Give the upgrade and initial hello a bounded grace period; subsequent
     // idle reads can poll shutdown at a shorter interval.
     let _ = stream.set_read_timeout(Some(Duration::from_secs(5)));
     let _ = stream.set_write_timeout(Some(Duration::from_secs(5)));
     let config = WebSocketConfig::default().max_message_size(Some(64 * 1024)).max_frame_size(Some(64 * 1024));
-    let mut socket = match accept_with_config(stream, Some(config)) { Ok(socket) => socket, Err(_) => return };
+    let mut socket = match accept_with_config(stream, Some(config)) {
+        Ok(socket) => socket,
+        Err(error) => {
+            let reason = format!("Studio WebSocket upgrade failed: {error}");
+            *last_error.lock().unwrap() = Some(reason.clone());
+            #[cfg(test)] eprintln!("{reason}");
+            return;
+        }
+    };
     let _ = socket.get_mut().set_read_timeout(Some(Duration::from_secs(1)));
     let _ = socket.get_mut().set_write_timeout(Some(Duration::from_secs(1)));
     let mut greeted = false;
