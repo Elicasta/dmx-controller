@@ -120,6 +120,13 @@ fn failure(id: String, error: &str) -> StudioBridgeResponse {
     StudioBridgeResponse { id, ok: false, error: Some(error.into()), payload: None }
 }
 fn handle_client(stream: TcpStream, requests: SyncSender<StudioBridgeEnvelope>, pending: Pending, serial: Arc<AtomicU64>, running: Arc<AtomicBool>, last_error: Arc<Mutex<Option<String>>>, _permit: ClientPermit) {
+    // macOS can inherit the listener's O_NONBLOCK flag on accepted sockets.
+    // tungstenite's blocking handshake does not resume an Interrupted/WouldBlock
+    // upgrade, so normalize the socket before upgrading it.
+    if let Err(error) = stream.set_nonblocking(false) {
+        *last_error.lock().unwrap() = Some(format!("Studio socket setup failed: {error}"));
+        return;
+    }
     // macOS may deliver a partial WebSocket upgrade while the runner is busy.
     // Give the upgrade and initial hello a bounded grace period; subsequent
     // idle reads can poll shutdown at a shorter interval.
@@ -243,5 +250,35 @@ mod tests {
         socket.send(Message::Text("not-json".into())).unwrap(); assert!(socket.read().unwrap().to_text().unwrap().contains("\"ok\":false"));
         send(&mut socket,"unsafe",serde_json::json!({"type":"blackout","enabled":false}));
         assert!(socket.read().unwrap().to_text().unwrap().contains("\"ok\":false")); assert!(bridge.drain().is_empty());
+    }
+    #[test]
+    fn nonblocking_accepted_socket_completes_the_handshake() {
+        let listener = TcpListener::bind(("127.0.0.1", 0)).unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let (requests, received) = mpsc::sync_channel(1);
+        let pending: Pending = Arc::new(Mutex::new(HashMap::new()));
+        let running = Arc::new(AtomicBool::new(true));
+        let count = Arc::new(AtomicUsize::new(1));
+        let worker_pending = pending.clone();
+        let worker_running = running.clone();
+        let worker_count = count.clone();
+        let worker = thread::spawn(move || {
+            let (accepted, _) = listener.accept().unwrap();
+            accepted.set_nonblocking(true).unwrap();
+            handle_client(accepted, requests, worker_pending, Arc::new(AtomicU64::new(1)), worker_running,
+                Arc::new(Mutex::new(None)), ClientPermit(worker_count));
+        });
+        let stream = TcpStream::connect(("127.0.0.1", port)).unwrap();
+        stream.set_read_timeout(Some(Duration::from_secs(5))).unwrap();
+        let mut socket = tungstenite::client(format!("ws://127.0.0.1:{port}/studio"), stream).unwrap().0;
+        send(&mut socket, "hello", serde_json::json!({"type":"hello","protocol":1}));
+        let request = received.recv_timeout(Duration::from_secs(2)).unwrap();
+        let response = pending.lock().unwrap().remove(&request.id).unwrap();
+        response.reply.send(StudioBridgeResponse { id: response.original_id, ok: true, error: None, payload: None }).unwrap();
+        assert!(socket.read().unwrap().to_text().unwrap().contains("\"ok\":true"));
+        socket.close(None).unwrap();
+        running.store(false, Ordering::SeqCst);
+        worker.join().unwrap();
+        assert_eq!(count.load(Ordering::SeqCst), 0);
     }
 }
