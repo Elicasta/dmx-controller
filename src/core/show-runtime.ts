@@ -110,7 +110,8 @@ export class ShowRuntime {
 
   dispatch(envelope: ControlCommandEnvelope): RuntimeDispatchResult {
     const command = envelope.command;
-    if (command.type === 'frame.batch.replace') return this.dispatchBatchReplace(envelope, command.frames);
+    if (command.type === 'frame.batch.replace') return this.dispatchBatchReplace(envelope, command.frames, false);
+    if (command.type === 'frame.batch.output.replace') return this.dispatchBatchReplace(envelope, command.frames, true);
     const targetUniverses = this.commandUniverses(command);
     const groupUniverses = command.type === 'group.color' || command.type === 'group.master.set'
       ? targetUniverses
@@ -244,7 +245,8 @@ export class ShowRuntime {
 
   private dispatchBatchReplace(
     envelope: ControlCommandEnvelope,
-    frames: Array<{ universe: number; values: readonly number[] }>
+    frames: Array<{ universe: number; values: readonly number[] }>,
+    outputOverride: boolean
   ): RuntimeDispatchResult {
     const unique = new Map<number, readonly number[]>();
     for (const frame of frames) {
@@ -280,7 +282,7 @@ export class ShowRuntime {
     for (const [universe, values] of ordered) {
       const previous = this.universes.get(universe) ?? makeUniverse();
       const nextBase = normalizeFrame(values);
-      const next = this.resolveFrame(universe, nextBase);
+      const next = outputOverride ? [...nextBase] : this.resolveFrame(universe, nextBase);
       const changed = changedChannels(previous, next);
       this.baseUniverses.set(universe, nextBase);
       this.universes.set(universe, next);
@@ -309,7 +311,7 @@ export class ShowRuntime {
   }
 
   private commandUniverses(command: ControlCommandEnvelope['command']): number[] {
-    if (command.type === 'frame.batch.replace') return [...new Set(command.frames.map((frame) => frame.universe))].sort((a, b) => a - b);
+    if (command.type === 'frame.batch.replace' || command.type === 'frame.batch.output.replace') return [...new Set(command.frames.map((frame) => frame.universe))].sort((a, b) => a - b);
     if ('universe' in command) return [command.universe];
     let fixtureIds: readonly string[] = [];
     if (command.type === 'fixture.attribute' || command.type === 'fixture.color' || command.type === 'fixture.flash.set' || command.type === 'fixture.target') {
