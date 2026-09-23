@@ -231,6 +231,56 @@ describe('ShowRuntime', () => {
     expect(runtime.snapshot.universes.get(2)?.[4]).toBe(173);
   });
 
+  it('replaces multiple universes in one runtime revision', () => {
+    const runtime = new ShowRuntime({ patch: [
+      DEFAULT_PATCH[0],
+      { ...DEFAULT_PATCH[0], id: 'u2', name: 'U2', universe: 2 }
+    ] });
+    const one = Array.from({ length: 512 }, () => 0);
+    const two = Array.from({ length: 512 }, () => 0);
+    one[4] = 200;
+    two[4] = 180;
+
+    const result = runtime.dispatch(controlCommand('fx', {
+      type: 'frame.batch.replace',
+      frames: [
+        { universe: 2, values: two },
+        { universe: 1, values: one }
+      ]
+    }));
+
+    expect(result.revision).toBe(1);
+    expect(result.universe).toBe(1);
+    expect(result.outputs.map((output) => output.universe)).toEqual([1, 2]);
+    expect(result.outputs.find((output) => output.universe === 1)?.baseFrame[4]).toBe(200);
+    expect(result.outputs.find((output) => output.universe === 2)?.baseFrame[4]).toBe(180);
+    expect(runtime.snapshot.baseUniverses.get(1)?.[4]).toBe(200);
+    expect(runtime.snapshot.baseUniverses.get(2)?.[4]).toBe(180);
+  });
+
+  it('applies live master resolution independently to every frame in a batch', () => {
+    const runtime = new ShowRuntime({ patch: [
+      DEFAULT_PATCH[0],
+      { ...DEFAULT_PATCH[0], id: 'u2', name: 'U2', universe: 2 }
+    ] });
+    runtime.dispatch(controlCommand('ui', { type: 'master.set', value: .5 }));
+    const one = Array.from({ length: 512 }, () => 0);
+    const two = Array.from({ length: 512 }, () => 0);
+    one[4] = 200;
+    two[4] = 180;
+
+    const result = runtime.dispatch(controlCommand('fx', {
+      type: 'frame.batch.replace',
+      frames: [
+        { universe: 1, values: one },
+        { universe: 2, values: two }
+      ]
+    }));
+
+    expect(result.outputs.find((output) => output.universe === 1)?.frame[4]).toBe(100);
+    expect(result.outputs.find((output) => output.universe === 2)?.frame[4]).toBe(90);
+  });
+
   it('refreshes every universe under the grand master', () => {
     const universeTwo = { ...DEFAULT_PATCH[0], id: 'u2-fixture', name: 'Universe 2 Fixture', universe: 2 };
     const runtime = new ShowRuntime({ patch: [DEFAULT_PATCH[0], universeTwo] });
