@@ -160,24 +160,7 @@ export class ShowRuntime {
         });
       nextBase = applyUniverseUpdates(previousBase, updates);
     } else if (command.type === 'fixture.target') {
-      const ids = new Set(command.fixtureIds);
-      const fixtures = this.patch
-        .map((fixture, index) => ({ fixture, index }))
-        .filter(({ fixture }) => (fixture.universe ?? 1) === universe && ids.has(fixture.id));
-      const targets = arrangeTargetPoints(command.target, fixtures.length, command.arrangement, command.spreadMeters);
-      const updates = fixtures.flatMap(({ fixture, index }, targetIndex) => {
-        const solution = aimFixtureAtTarget(previousBase, fixture, targets[targetIndex], index, this.patch.length);
-        if (!solution) {
-          warnings.push(`${fixture.name} has no Pan/Tilt geometry.`);
-          return [];
-        }
-        if (!solution.reachable) {
-          warnings.push(`${fixture.name} cannot reach that target within its movement range.`);
-          return [];
-        }
-        return solution.updates;
-      });
-      nextBase = applyUniverseUpdates(previousBase, updates);
+      nextBase = this.applyTargetCommand(command, universe, previousBase, warnings);
     } else if (command.type === 'fixture.select') {
       const ids = new Set(command.fixtureIds);
       this.patch = this.patch.map((fixture) => {
@@ -309,24 +292,7 @@ export class ShowRuntime {
         });
       next = applyUniverseUpdates(base, updates);
     } else if (command.type === 'fixture.target') {
-      const ids = new Set(command.fixtureIds);
-      const fixtures = this.patch
-        .map((fixture, index) => ({ fixture, index }))
-        .filter(({ fixture }) => (fixture.universe ?? 1) === universe && ids.has(fixture.id));
-      const targets = arrangeTargetPoints(command.target, fixtures.length, command.arrangement, command.spreadMeters);
-      const updates = fixtures.flatMap(({ fixture, index }, targetIndex) => {
-        const solution = aimFixtureAtTarget(base, fixture, targets[targetIndex], index, this.patch.length);
-        if (!solution) {
-          warnings.push(`${fixture.name} has no Pan/Tilt geometry.`);
-          return [];
-        }
-        if (!solution.reachable) {
-          warnings.push(`${fixture.name} cannot reach that target within its movement range.`);
-          return [];
-        }
-        return solution.updates;
-      });
-      next = applyUniverseUpdates(base, updates);
+      next = this.applyTargetCommand(command, universe, base, warnings);
     } else if (command.type === 'group.color') {
       const updates = this.patch
         .filter((fixture) => (fixture.universe ?? 1) === universe && fixture.group === command.groupName)
@@ -334,6 +300,33 @@ export class ShowRuntime {
       next = applyUniverseUpdates(base, updates);
     }
     return next;
+  }
+
+  private applyTargetCommand(
+    command: Extract<ControlCommandEnvelope['command'], { type: 'fixture.target' }>,
+    universe: number,
+    base: readonly number[],
+    warnings: string[]
+  ): number[] {
+    const ids = new Set(command.fixtureIds);
+    const fixtures = this.patch
+      .map((fixture, index) => ({ fixture, index }))
+      .filter(({ fixture }) => ids.has(fixture.id));
+    const targets = arrangeTargetPoints(command.target, fixtures.length, command.arrangement, command.spreadMeters);
+    const updates = fixtures.flatMap(({ fixture, index }, targetIndex) => {
+      if ((fixture.universe ?? 1) !== universe) return [];
+      const solution = aimFixtureAtTarget(base, fixture, targets[targetIndex], index, this.patch.length);
+      if (!solution) {
+        warnings.push(`${fixture.name} has no Pan/Tilt geometry.`);
+        return [];
+      }
+      if (!solution.reachable) {
+        warnings.push(`${fixture.name} cannot reach that target within its movement range.`);
+        return [];
+      }
+      return solution.updates;
+    });
+    return applyUniverseUpdates(base, updates);
   }
 
   private resolveFrame(universe: number, base: readonly number[]): number[] {
