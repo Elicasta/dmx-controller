@@ -1,3 +1,4 @@
+import { isColorPalette, type ColorPalette } from '../core/color';
 import { clampDmx } from './dmx';
 import type { DmxUpdate } from './dmx';
 import type { FixtureLookValues } from './looks';
@@ -85,6 +86,7 @@ export type ShowFile = {
   cues: ShowCue[];
   groups?: FixtureGroup[];
   positionPalettes?: PositionPalette[];
+  colorPalettes?: ColorPalette[];
   recordings?: ShowRecording[];
   externalTrack?: ExternalTrackSync;
 };
@@ -169,6 +171,7 @@ export function isShowFile(value: unknown): value is ShowFile {
   );
   return cuesValid
     && externalTrackValid
+    && (candidate.colorPalettes === undefined || (Array.isArray(candidate.colorPalettes) && candidate.colorPalettes.every(isColorPalette)))
     && (candidate.groups === undefined || (Array.isArray(candidate.groups) && candidate.groups.every(isFixtureGroup)))
     && (candidate.positionPalettes === undefined || (Array.isArray(candidate.positionPalettes) && candidate.positionPalettes.every(isPositionPalette)))
     && (candidate.recordings === undefined || (
@@ -273,6 +276,7 @@ export function applyLightingOffset(positionMs: number, offsetMs: number) {
 export function sanitizeShow(show: ShowFile): ShowFile {
   return {
     version: 3,
+    colorPalettes: (show.colorPalettes ?? []).filter(isColorPalette).slice(0, 256).map(p => ({id:p.id.slice(0,100),name:p.name.trim().slice(0,64),color:p.color.toLowerCase(),folder:p.folder.trim().slice(0,64)})),
     name: show.name.trim().slice(0, 64) || EMPTY_SHOW.name,
     notes: typeof show.notes === 'string' ? show.notes.slice(0, 4000) : '',
     groups: (show.groups ?? []).slice(0, 64).map((group) => ({

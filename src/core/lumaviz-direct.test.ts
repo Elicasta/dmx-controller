@@ -20,3 +20,13 @@ describe('LumaRig Direct semantic encoder', () => {
     expect(result.fixtures[0].color).toBe('#ff4010');
   });
 });
+
+
+it('preserves 16-bit pan and tilt precision at non-first patch addresses', () => {
+  const moving: PatchedFixture = { ...fixture, profileId: 'generic-moving-head', modeId: '14ch-common', address: 100 };
+  const dmx = Array(512).fill(0); dmx[99]=128; dmx[100]=255; dmx[101]=64; dmx[102]=127;
+  const state=semanticFrameFromResolvedOutput(1,dmx,[moving],1).fixtures[0];
+  expect(state.pan).toBeCloseTo(((128*256+255)/65535-.5)*540,8);
+  expect(state.tilt).toBeCloseTo(((64*256+127)/65535-.5)*270,8);
+  expect(state.address).toBe(100);
+});

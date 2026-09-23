@@ -44,3 +44,12 @@ describe('StudioBridgeDispatcher', () => {
     expect(result.ok).toBe(false);
   });
 });
+
+
+describe('untrusted Studio commands', () => {
+  it.each([null, [], {}, { type: 'future.command' }, { type: 'blackout', enabled: 'false' }, { type: 'transport', playing: true, positionMs: -1, bpm: 120 }, { type: 'transport', playing: true, positionMs: 0, bpm: NaN }, { type: 'record.play', recordingId: '' }, { type: 'song.resolve', songId: 'partial' }])('rejects malformed input without changing output: %j', async (command) => {
+    const target = actions();
+    expect((await new StudioBridgeDispatcher(target).dispatch('bad', command)).ok).toBe(false);
+    for (const action of Object.values(target)) expect(action).not.toHaveBeenCalled();
+  });
+});

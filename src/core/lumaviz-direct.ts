@@ -82,11 +82,14 @@ export function semanticFrameFromResolvedOutput(
       const white = has('white') ? readFixtureParameter(frame, fixture, 'white') : 0;
       const amber = has('amber') ? readFixtureParameter(frame, fixture, 'amber') : 0;
       const uv = has('uv') ? readFixtureParameter(frame, fixture, 'uv') : 0;
+      const axis = (coarse: 'pan' | 'tilt', fine: 'panFine' | 'tiltFine') => has(fine)
+        ? (readFixtureParameter(frame, fixture, coarse) * 256 + readFixtureParameter(frame, fixture, fine)) / 65535
+        : normalized(frame, fixture, coarse);
       const pan = has('pan') && profile?.movement
-        ? movementDegrees(normalized(frame, fixture, 'pan'), profile.movement.panRangeDegrees)
+        ? movementDegrees(axis('pan', 'panFine'), profile.movement.panRangeDegrees)
         : undefined;
       const tilt = has('tilt') && profile?.movement
-        ? movementDegrees(normalized(frame, fixture, 'tilt'), profile.movement.tiltRangeDegrees)
+        ? movementDegrees(axis('tilt', 'tiltFine'), profile.movement.tiltRangeDegrees)
         : undefined;
       const zoom = has('zoom') && profile?.optics
         ? profile.optics.beamAngleMinDegrees

@@ -1917,3 +1917,17 @@ input[type="text"], input[type="number"], .add-fixture-grid input, .patch-card-b
 .fx-module header strong{max-width:86px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:#55e98d!important}
 @media(max-width:1450px){.programmer-attribute-deck-v4{grid-template-columns:260px 190px 160px 135px 135px 145px!important}.programmer-attribute-deck-v4{overflow-x:auto!important}}
 @media(max-width:1180px){.programmer-v3{grid-template-rows:48px minmax(210px,1fr) 258px 118px!important}.programmer-attribute-deck-v4{grid-template-columns:250px 185px 155px 132px 132px 142px!important}}
+
+/* Color controls expose the same actual hue to pointer, touch and keyboard. */
+.hue-control,.color-level,.color-native {display:flex;gap:8px;align-items:center;font-size:11px;color:#b8c2cf;}
+.hue-control input {min-width:100px;width:100%;accent-color:#fff;background:linear-gradient(90deg,#f00,#ff0,#0f0,#0ff,#00f,#f0f,#f00);touch-action:none;}
+.color-wheel-control.interactive-wheel {touch-action:none;cursor:crosshair;background:radial-gradient(circle,#fff,transparent 70%),conic-gradient(#f00,#ff0,#0f0,#0ff,#00f,#f0f,#f00);}
+.color-wheel-control.interactive-wheel::after {display:none;}
+.color-wheel-control.interactive-wheel span {right:auto;bottom:auto;transform:translate(-50%,-50%);width:12px;height:12px;pointer-events:none;}
+.interactive-wheel:focus-visible {outline:2px solid #fff;outline-offset:4px;}
+.interactive-wheel[aria-disabled=true] {cursor:not-allowed;opacity:.5;}
+.color-library {padding:16px;background:#11151c;border:1px solid #303945;}
+.color-library header {display:flex;gap:16px;align-items:baseline;margin-bottom:12px;}
+.color-library form,.color-library article {display:flex;flex-wrap:wrap;gap:8px;margin:10px 0;align-items:center;}
+.color-library input {min-width:90px;max-width:230px;}
+.color-library small,.color-library p {color:#aeb7c3;font-size:12px;}

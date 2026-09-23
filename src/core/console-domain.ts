@@ -64,7 +64,7 @@ export function fixtureSupportsParameter(fixture: PatchedFixture, parameter: Fix
 }
 
 export function fixtureSupportsColor(fixture: PatchedFixture): boolean {
-  return ['red', 'green', 'blue', 'white', 'amber', 'uv'].some((parameter) => (
+  return ['red', 'green', 'blue'].every((parameter) => (
     fixtureSupportsParameter(fixture, parameter as FixtureParameter)
   ));
 }

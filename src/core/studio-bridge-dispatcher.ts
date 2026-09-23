@@ -1,5 +1,5 @@
-import type { StudioBridgeCommand, StudioBridgeResult, StudioSongIdentity } from './studio-bridge-protocol';
-import { STUDIO_BRIDGE_PROTOCOL } from './studio-bridge-protocol';
+import type { StudioBridgeResult, StudioSongIdentity } from './studio-bridge-protocol';
+import { assertStudioBridgeCommand, STUDIO_BRIDGE_PROTOCOL } from './studio-bridge-protocol';
 import { resolveStudioBinding, saveStudioBinding } from './studio-bindings';
 
 export type StudioBridgeActions = {
@@ -20,8 +20,9 @@ export type StudioBridgeActions = {
 export class StudioBridgeDispatcher {
   constructor(private readonly actions: StudioBridgeActions) {}
 
-  async dispatch(id: string, command: StudioBridgeCommand): Promise<StudioBridgeResult> {
+  async dispatch(id: string, command: unknown): Promise<StudioBridgeResult> {
     try {
+      assertStudioBridgeCommand(command);
       switch (command.type) {
         case 'hello':
           if (command.protocol !== STUDIO_BRIDGE_PROTOCOL) throw new Error(`Studio bridge protocol ${command.protocol} is not supported.`);

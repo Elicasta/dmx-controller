@@ -1,3 +1,4 @@
+import { ColorPaletteLibrary } from './components/ColorPaletteLibrary';
 import { useCallback, useEffect, useMemo, useRef, useState, type ChangeEvent, type PointerEvent as ReactPointerEvent } from 'react';
 import { lumaVizDirectStatus, pollLumaVizDirectMessages, semanticFrameFromResolvedOutput, sendLumaVizDirectFrame, sendLumaVizDirectMessage, startLumaVizDirect, type LumaVizDirectStatus, type SharedShowPatchMutation } from './core/lumaviz-direct';
 import type { SharedLocationPreset } from './core/shared-locations';
@@ -551,7 +552,8 @@ export default function App() {
   const [showFile, setShowFile] = useState<ShowFile>(loadShowFile);
   const [showLibrary, setShowLibrary] = useState<ShowProjectSnapshot[]>(loadShowLibrary);
   const [liveBank, setLiveBank] = useState<LiveBank>('fixtures');
-  const [liveProgrammerOpen, setLiveProgrammerOpen] = useState(false);
+  const [liveProgrammerOpen, setLiveProgrammerOpen] = useState(true);
+  const [liveFaderPage, setLiveFaderPage] = useState(0);
   const [livePaletteFamily, setLivePaletteFamily] = useState<LivePaletteFamily>('groups');
   const [settings, setSettings] = useState<AppSettings>(loadSettings);
   const settingsRef = useRef(settings);
@@ -1132,11 +1134,10 @@ export default function App() {
   function applyGlobalColor(hex: string, source: ControlSource = 'ui') {
     setGlobalColor(hex);
     const rgb = hexToRgb(hex);
-    const targets = selectedFixtures(patch);
+    const targets = compatibleColorFixtures(selectedFixtures(patch));
     const updates = targets.flatMap((fixture) => {
       const result = fixtureColorUpdates(fixture, rgb);
-      const dimmer = parameterChannel(fixture, 'dimmer');
-      if (dimmer && universeRef.current[dimmer - 1] === 0) result.push([dimmer, percentToDmx(globalMaster, settings.masterLimit)]);
+      // Color recall preserves intensity; it must never bring a dark fixture live.
       return result;
     });
     void setChannels(updates, true, source);
@@ -1718,6 +1719,7 @@ export default function App() {
   }
 
   async function dispatchStudioBridgeCommand(id: string, command: StudioBridgeCommand) {
+    let createdSnapshot: ShowProjectSnapshot | undefined;
     const dispatcher = new StudioBridgeDispatcher({
       createShow: (identity: StudioSongIdentity) => {
         const existing = showLibrary.find((item) => item.name.toLowerCase() === identity.songTitle.toLowerCase());
@@ -1755,13 +1757,14 @@ export default function App() {
           },
           looks: [...savedLooks]
         };
+        createdSnapshot = snapshot;
         setShowLibrary((current) =>
           [snapshot, ...current.filter((item) => item.id !== snapshot.id)].slice(0, 40)
         );
         return snapshot.id;
       },
       loadShow: (showId) => {
-        const snapshot = showLibrary.find((item) => item.id === showId);
+        const snapshot = createdSnapshot?.id === showId ? createdSnapshot : showLibrary.find((item) => item.id === showId);
         if (!snapshot) throw new Error('The linked LumaRig show is missing from this device.');
         loadShowProject(snapshot);
       },
@@ -1815,37 +1818,30 @@ export default function App() {
     return dispatcher.dispatch(id, command);
   }
 
+  const studioDispatchRef = useRef(dispatchStudioBridgeCommand);
+  studioDispatchRef.current = dispatchStudioBridgeCommand;
+  const studioPollBusyRef = useRef(false);
   useEffect(() => {
     let cancelled = false;
     const poll = async () => {
-      if (cancelled) return;
+      if (cancelled || studioPollBusyRef.current) return;
+      studioPollBusyRef.current = true;
       try {
-        const requests = await invoke<Array<{ id: string; command: StudioBridgeCommand }>>(
-          'drain_studio_bridge'
-        );
+        const requests = await invoke<Array<{ id: string; command: StudioBridgeCommand }>>('drain_studio_bridge');
         for (const request of requests) {
-          const response = await dispatchStudioBridgeCommand(request.id, request.command);
-          await invoke('reply_studio_bridge', response);
+          if (cancelled) break;
+          const response = await studioDispatchRef.current(request.id, request.command);
+          try { await invoke('reply_studio_bridge', response); }
+          catch (error) { setStudioBridgeStatus(current => ({ ...current, lastError: `Studio reply failed: ${String(error)}` })); }
         }
-      } catch {
-        // Native Studio bridge is optional in browser/Vite development.
-      }
+      } catch (error) {
+        if ('__TAURI_INTERNALS__' in window) setStudioBridgeStatus(current => ({ ...current, lastError: `Studio bridge failed: ${String(error)}` }));
+      } finally { studioPollBusyRef.current = false; }
     };
     const timer = window.setInterval(() => void poll(), 25);
     void poll();
-    return () => {
-      cancelled = true;
-      window.clearInterval(timer);
-    };
-  }, [
-    showLibrary,
-    showFile,
-    patch,
-    stageElements,
-    stageSettings,
-    savedLooks,
-    nextCue
-  ]);
+    return () => { cancelled = true; window.clearInterval(timer); };
+  }, []);
 
   function addFixture() {
     const mode = newProfile.modes.find((item) => item.id === newModeId) ?? newProfile.modes[0];
@@ -3084,10 +3080,10 @@ export default function App() {
     ? lumaVizPreview
     : null;
 
-  const consoleColorPresets = COLOR_PRESETS.map((preset) => ({
+  const consoleColorPresets = [...COLOR_PRESETS.map((preset) => ({
     name: preset.name,
     color: rgbToHex(preset.rgb[0], preset.rgb[1], preset.rgb[2])
-  }));
+  })), ...(showFile.colorPalettes ?? [])];
   const allLooks = [...STARTER_LOOKS, ...savedLooks];
   const programEffectFixtures = selectedFixtureTargets;
   const programEffectName = selectedFixtureTargets.length === 1
@@ -3315,7 +3311,7 @@ export default function App() {
             </section>
           </div>}
 
-          {programMode === 'colors' && <div className="create-focus-view"><header><div><span>COLOR PALETTES</span><h2>Fixture-aware color programming</h2></div></header><ColorDeck title="SELECTED COLOR" subtitle={selectedFixtureTargets.length ? `${selectedFixtureTargets.length} selected fixtures` : 'Select fixtures'} color={globalColor} disabled={selectedCompatibleColors.length === 0} presets={consoleColorPresets} onChange={applyGlobalColor} /><section className="palette-library-v3"><header><span>QUICK PALETTES</span><small>Applies to selected compatible fixtures</small></header><div>{consoleColorPresets.map((preset) => <button key={preset.name} disabled={selectedCompatibleColors.length === 0} onClick={() => applyGlobalColor(preset.color)}><i style={{background:preset.color}}/><strong>{preset.name}</strong><small>{preset.color.toUpperCase()}</small></button>)}</div></section></div>}
+          {programMode === 'colors' && <div className="create-focus-view"><header><div><span>COLOR PALETTES</span><h2>Fixture-aware color programming</h2></div></header><ColorDeck title="SELECTED COLOR" subtitle={selectedFixtureTargets.length ? `${selectedFixtureTargets.length} selected fixtures` : 'Select fixtures'} color={globalColor} disabled={selectedCompatibleColors.length === 0} presets={consoleColorPresets} onChange={applyGlobalColor} /><ColorPaletteLibrary palettes={showFile.colorPalettes ?? []} color={globalColor} disabled={!selectedCompatibleColors.length} onChange={palettes=>setShowFile(current=>({...current,colorPalettes:palettes}))} onRecall={applyGlobalColor}/><section className="palette-library-v3"><header><span>QUICK PALETTES</span><small>Applies to selected compatible fixtures</small></header><div>{consoleColorPresets.map((preset, index) => <button key={`${index}-${preset.name}`} disabled={selectedCompatibleColors.length === 0} onClick={() => applyGlobalColor(preset.color)}><i style={{background:preset.color}}/><strong>{preset.name}</strong><small>{preset.color.toUpperCase()}</small></button>)}</div></section></div>}
 
           {programMode === 'media' && <div className="create-focus-view media-programmer"><header><div><span>MEDIA</span><h2>LumaViz + LumaStudio</h2></div><b className={directStatus.clients > 0 || studioBridgeStatus.connectedClients > 0 ? 'healthy' : ''}>{directStatus.clients + studioBridgeStatus.connectedClients > 0 ? 'LINKED' : 'WAITING'}</b></header><div className="media-link-grid"><section><span>LUMAVIZ DIRECT</span><strong>{directStatus.clients > 0 ? 'Connected' : 'Ready'}</strong><small>Semantic fixture + stage preview</small><div className="media-stage-preview">{renderStagePreview()}</div></section><section><span>LUMASTUDIO</span><strong>{studioBridgeStatus.connectedClients > 0 ? 'Connected' : 'Ready'}</strong><small>Studio transport authority · Rig lighting authority</small><div className="media-status-stack"><p>Port {studioBridgeStatus.port}</p><p>{externalTransportRunning ? 'Transport following' : externalTrack.armed ? 'External sync armed' : 'Local transport'}</p><p>{externalTrack.songName || showTrackName || 'No active media track'}</p></div><button onClick={() => { setWorkspace('show'); setShowMode('sync'); }}>OPEN SYNC</button></section></div></div>}
 
@@ -3373,9 +3369,9 @@ export default function App() {
         </div>}
       </section>}
 
-      {workspace === 'live' && <section className="live-console live-console-v3">
+      {workspace === 'live' && <section className={`live-console live-console-v3 ${liveView === 'performance' && liveProgrammerOpen ? 'with-palette-dock' : ''}`}>
         <header className="live-command-bar">
-          <div className="live-show-state"><small>LIVE PERFORMANCE</small><strong>{showFile.name}</strong><span>{liveEffectLabel ? `FX · ${liveEffectLabel}` : 'PROGRAM OUTPUT'}</span></div>
+          <div className="live-show-state"><small>LIVE PERFORMANCE</small><strong>{showFile.name}</strong><span>{dmxStatus.blackout ? 'BLACKOUT ACTIVE' : liveEffectLabel ? `FX · ${liveEffectLabel}` : 'LOCAL CONTROL'}</span></div>
           <div className="live-cue-deck">
             <button className="live-back" onClick={goPreviousCue}>BACK</button>
             <div className="live-cue-card current"><small>CURRENT</small><strong>{activeCue?.name ?? 'Ready'}</strong><span>{activeCue ? `Cue ${activeCue.number}` : 'No cue running'}</span></div>
@@ -3395,11 +3391,15 @@ export default function App() {
             <div className="executor-grid">{allLooks.slice(0,12).map((look,index)=><button key={look.id} className="executor-key" onClick={()=>runLook(look)}><i style={{background:lookSwatch(look.values)}}/><small>{String(index+1).padStart(2,'0')}</small><strong>{look.name}</strong></button>)}</div>
             <header><span>PERFORMANCE FX</span><button className={activeEffect?'active':''} onClick={()=>stopEffect()}>STOP FX</button></header>
             <div className="executor-grid fx-executors">{EFFECT_PRESETS.filter((effect)=>['bump','blinder','strobe','pulse','sweep','lightning','finale','chase'].includes(effect.id)&&effectSupportedByFixtures(effect.id,selectedFixtureTargets)).slice(0,8).map((effect)=>renderEffectButton(effect,true))}</div>
+            {!selectedFixtureTargets.length && <p className="live-target-hint">Select fixtures below their faders to enable compatible effects and palettes.</p>}
           </aside>
 
           <main className="live-playback-surface">
-            <div className="live-surface-toolbar"><div><strong>LIVING PLAYBACK SURFACE</strong><small>{liveBank==='fixtures'?`${patch.length} FIXTURES`:`${fixtureGroups.length} GROUPS`} · OUTPUT COLORS + LEVELS</small></div><div className="live-bank-tabs"><button className={liveBank==='fixtures'?'active':''} onClick={()=>setLiveBank('fixtures')}>FIXTURES</button><button className={liveBank==='groups'?'active':''} onClick={()=>setLiveBank('groups')}>GROUPS</button></div><div className="live-select-tools"><button className={liveProgrammerOpen?'active':''} onClick={()=>setLiveProgrammerOpen((value)=>!value)}>PROGRAMMER</button>{liveBank==='fixtures'&&<><button onClick={selectAllFixtures}>ALL</button><button onClick={clearFixtureSelection}>CLEAR</button></>}</div></div>
-            <div className="live-fader-deck">{liveBank==='fixtures' ? patch.map((fixture)=>{const v=fixtureValues(outputUniverse,fixture);const outputColor=(v.red+v.green+v.blue)>0?rgbToHex(v.red,v.green,v.blue):(fixture.labelColor ?? '#55e98d');return <VerticalFader key={fixture.id} id={`live-${fixture.id}`} name={fixture.name} subtitle={activeEffect?`${fixtureBrowserSubtitle(fixture)} · ${activeEffect}`:fixtureBrowserSubtitle(fixture)} color={outputColor} value={fixtureIntensityPercent(universe,fixture)} selected={fixture.selected} onChange={(value)=>void setFixtureAttribute(fixture,'dimmer',percentToDmx(value))} onSelect={()=>selectFixtureFromConsole(fixture.id,true)} onFx={()=>{selectFixtureFromConsole(fixture.id);setWorkspace('create');setProgramMode('fx');}}/>}) : fixtureGroups.map((group)=>{const members=fixturesInGroup(patch,group);const first=members[0];const v=first?fixtureValues(outputUniverse,first):null;const outputColor=v&&(v.red+v.green+v.blue)>0?rgbToHex(v.red,v.green,v.blue):group.labelColor;return <VerticalFader key={group.id} id={`live-${group.id}`} name={group.name} subtitle={activeEffect?`${members.length} fixtures · ${activeEffect}`:`${members.length} fixtures`} color={outputColor} value={Math.round(groupMasters[group.id] ?? group.masterDefault)} selected={selectedGroupId===group.id} onChange={(value)=>applyGroupMaster(group,value)} onSelect={()=>selectFixtureGroup(group.id)} onFx={()=>{selectFixtureGroup(group.id);setWorkspace('create');setProgramMode('fx');}} quickAction={{label:'Chase',onPress:()=>toggleEffect('chase',members.map((fixture)=>fixture.id))}}/>;})}</div>
+            <div className="live-surface-toolbar"><div><strong>PLAYBACK / OUTPUT</strong><small>{liveBank==='fixtures'?`${patch.length} FIXTURES`:`${fixtureGroups.length} GROUPS`} · {selectedFixtureTargets.length} SELECTED</small></div><div className="live-bank-tabs"><button className={liveBank==='fixtures'?'active':''} onClick={()=>setLiveBank('fixtures')}>FIXTURES</button><button className={liveBank==='groups'?'active':''} onClick={()=>setLiveBank('groups')}>GROUPS</button></div><div className="live-select-tools"><button className={liveProgrammerOpen?'active':''} onClick={()=>setLiveProgrammerOpen((value)=>!value)}>PROGRAMMER</button>{liveBank==='fixtures'&&<><button onClick={selectAllFixtures}>ALL</button><button onClick={clearFixtureSelection}>CLEAR</button></>}</div></div>
+            <div className="live-fader-deck">{liveBank==='fixtures' ? patch.slice(Math.min(liveFaderPage, Math.max(0, Math.ceil(patch.length/8)-1))*8, (Math.min(liveFaderPage, Math.max(0, Math.ceil(patch.length/8)-1))+1)*8).map((fixture)=>{const v=fixtureValues(outputUniverse,fixture);const outputColor=(v.red+v.green+v.blue)>0?rgbToHex(v.red,v.green,v.blue):(fixture.labelColor ?? '#55e98d');return <VerticalFader key={fixture.id} id={`live-${fixture.id}`} name={fixture.name} subtitle={activeEffect?`${fixtureBrowserSubtitle(fixture)} · ${activeEffect}`:fixtureBrowserSubtitle(fixture)} color={outputColor} value={fixtureIntensityPercent(universe,fixture)} outputValue={fixtureIntensityPercent(outputUniverse,fixture)} selected={fixture.selected} onChange={(value)=>void setFixtureAttribute(fixture,'dimmer',percentToDmx(value))} onSelect={()=>selectFixtureFromConsole(fixture.id,true)} onFx={()=>{selectFixtureFromConsole(fixture.id);setWorkspace('create');setProgramMode('fx');}}/>}) : fixtureGroups.map((group)=>{const members=fixturesInGroup(patch,group);const first=members[0];const v=first?fixtureValues(outputUniverse,first):null;const outputColor=v&&(v.red+v.green+v.blue)>0?rgbToHex(v.red,v.green,v.blue):group.labelColor;return <VerticalFader key={group.id} id={`live-${group.id}`} name={group.name} subtitle={activeEffect?`${members.length} fixtures · ${activeEffect}`:`${members.length} fixtures`} color={outputColor} value={Math.round(groupMasters[group.id] ?? group.masterDefault)} selected={selectedGroupId===group.id} onChange={(value)=>applyGroupMaster(group,value)} onSelect={()=>selectFixtureGroup(group.id)} onFx={()=>{selectFixtureGroup(group.id);setWorkspace('create');setProgramMode('fx');}} quickAction={{label:'Chase',onPress:()=>toggleEffect('chase',members.map((fixture)=>fixture.id))}}/>;})}</div>
+            {!patch.length && <div className="live-empty-state"><span>01 / BUILD YOUR RIG</span><h2>Your performance starts here.</h2><p>Add your fixtures to reveal live faders, output meters and compatible effects.</p><button className="console-primary" onClick={()=>{setWorkspace('build');setSetupView('fixtures');}}>Patch fixtures</button></div>}
+            {liveBank==='groups' && !fixtureGroups.length && patch.length>0 && <div className="live-empty-state"><h2>Organize your rig.</h2><p>Create fixture groups to control washes, movers and stage areas together.</p><button onClick={()=>{setWorkspace('build');setSetupView('groups');}}>Create groups</button></div>}
+            <div className="live-bank-footer"><span>FADER = PROGRAMMER <i/> METER = RESOLVED OUTPUT</span>{liveBank==='fixtures'&&<div><button aria-label="Previous fixture bank" disabled={liveFaderPage===0} onClick={()=>setLiveFaderPage(p=>Math.max(0,p-1))}>←</button><b>BANK {Math.min(liveFaderPage+1,Math.max(1,Math.ceil(patch.length/8)))} / {Math.max(1,Math.ceil(patch.length/8))}</b><button aria-label="Next fixture bank" disabled={(liveFaderPage+1)*8>=patch.length} onClick={()=>setLiveFaderPage(p=>p+1)}>→</button></div>}</div>
           </main>
 
           <aside className="live-master-rack">
@@ -3419,7 +3419,7 @@ export default function App() {
             {livePaletteFamily==='groups' && <>{fixtureGroups.map((group,index)=><button key={group.id} className={selectedGroupId===group.id?'selected':''} onClick={()=>selectFixtureGroup(group.id)} style={{'--palette-color':group.labelColor} as import('react').CSSProperties}><i/><b>{index+1}</b><span>{group.name}</span><small>{fixturesInGroup(patch,group).length} FIXTURES</small></button>)}</>}
             {livePaletteFamily==='intensity' && <>{[0,25,50,75,100].map((value)=><button key={value} disabled={!selectedFixtureTargets.length} onClick={()=>selectedFixtureTargets.forEach((fixture)=>void setFixtureAttribute(fixture,'dimmer',percentToDmx(value)))}><b>{value===0?'OUT':value}</b><span>{value===100?'FULL':'Intensity'}</span><small>{value}%</small></button>)}</>}
             {livePaletteFamily==='position' && <>{(showFile.positionPalettes??[]).map((palette,index)=><button key={palette.id} disabled={!selectedMovingFixtures.length} onClick={()=>void runPositionPalette(palette)}><b>{index+1}</b><span>{palette.name}</span><small>{palette.kind.toUpperCase()}</small></button>)}{!(showFile.positionPalettes??[]).length&&<div className="live-palette-empty">Save position palettes in CREATE and they appear here.</div>}</>}
-            {livePaletteFamily==='color' && <>{consoleColorPresets.map((preset,index)=><button key={preset.name} className="color-palette" disabled={!selectedCompatibleColors.length} onClick={()=>applyGlobalColor(preset.color)} style={{'--palette-color':preset.color} as import('react').CSSProperties}><i/><b>{index+1}</b><span>{preset.name}</span><small>{preset.color.toUpperCase()}</small></button>)}</>}
+            {livePaletteFamily==='color' && <>{consoleColorPresets.map((preset,index)=><button key={`${index}-${preset.name}`} className="color-palette" disabled={!selectedCompatibleColors.length} onClick={()=>applyGlobalColor(preset.color)} style={{'--palette-color':preset.color} as import('react').CSSProperties}><i/><b>{index+1}</b><span>{preset.name}</span><small>{preset.color.toUpperCase()}</small></button>)}</>}
             {livePaletteFamily==='beam' && <>{([
               ['OPEN',255,255,255],['TIGHT',65,180,210],['WIDE',230,110,255],['SOFT',200,80,170]
             ] as Array<[string,number,number,number]>).map(([name,zoom,focus,iris],index)=><button key={name} disabled={!selectedFixtureTargets.length} onClick={()=>selectedFixtureTargets.forEach((fixture)=>{if(parameterChannel(fixture,'zoom'))void setFixtureAttribute(fixture,'zoom',zoom);if(parameterChannel(fixture,'focus'))void setFixtureAttribute(fixture,'focus',focus);if(parameterChannel(fixture,'iris'))void setFixtureAttribute(fixture,'iris',iris);})}><b>{index+1}</b><span>{name}</span><small>BEAM</small></button>)}</>}
@@ -3429,7 +3429,7 @@ export default function App() {
 
         {liveView === 'overrides' && <div className="live-detail-view">
           <header><div><span>FIXTURE OVERRIDES</span><h2>Direct live control</h2></div><div><button onClick={selectAllFixtures}>ALL</button><button onClick={clearFixtureSelection}>CLEAR</button></div></header>
-          <div className="override-layout"><div className="override-fader-bank">{patch.map((fixture)=>{const v=fixtureValues(outputUniverse,fixture);const outputColor=(v.red+v.green+v.blue)>0?rgbToHex(v.red,v.green,v.blue):(fixture.labelColor ?? '#55e98d');return <VerticalFader key={fixture.id} id={`override-${fixture.id}`} name={fixture.name} subtitle={fixtureBrowserSubtitle(fixture)} color={outputColor} value={fixtureIntensityPercent(universe,fixture)} selected={fixture.selected} onChange={(value)=>void setFixtureAttribute(fixture,'dimmer',percentToDmx(value))} onSelect={()=>selectFixtureFromConsole(fixture.id,true)} onFx={()=>{setWorkspace('create');setProgramMode('fx');}}/>})}</div><aside><ColorDeck title="OVERRIDE COLOR" subtitle={selectedFixtureTargets.length?`${selectedFixtureTargets.length} selected`:'Select fixtures'} color={globalColor} disabled={selectedCompatibleColors.length===0} presets={consoleColorPresets} onChange={applyGlobalColor}/><button className="console-primary" onClick={()=>{setWorkspace('create');setProgramMode('stage');}}>OPEN FULL PROGRAMMER</button></aside></div>
+          <div className="override-layout"><div className="override-fader-bank">{patch.map((fixture)=>{const v=fixtureValues(outputUniverse,fixture);const outputColor=(v.red+v.green+v.blue)>0?rgbToHex(v.red,v.green,v.blue):(fixture.labelColor ?? '#55e98d');return <VerticalFader key={fixture.id} id={`override-${fixture.id}`} name={fixture.name} subtitle={fixtureBrowserSubtitle(fixture)} color={outputColor} value={fixtureIntensityPercent(universe,fixture)} outputValue={fixtureIntensityPercent(outputUniverse,fixture)} selected={fixture.selected} onChange={(value)=>void setFixtureAttribute(fixture,'dimmer',percentToDmx(value))} onSelect={()=>selectFixtureFromConsole(fixture.id,true)} onFx={()=>{setWorkspace('create');setProgramMode('fx');}}/>})}</div><aside><ColorDeck title="OVERRIDE COLOR" subtitle={selectedFixtureTargets.length?`${selectedFixtureTargets.length} selected`:'Select fixtures'} color={globalColor} disabled={selectedCompatibleColors.length===0} presets={consoleColorPresets} onChange={applyGlobalColor}/><button className="console-primary" onClick={()=>{setWorkspace('create');setProgramMode('stage');}}>OPEN FULL PROGRAMMER</button></aside></div>
         </div>}
 
         {liveView === 'groups' && <div className="live-detail-view">

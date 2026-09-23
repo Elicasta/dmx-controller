@@ -1,4 +1,5 @@
-import { memo, useState, type CSSProperties, type PointerEvent as ReactPointerEvent } from 'react';
+import { hexToHsv, hsvToHex, wheelColor } from '../core/color';
+import { memo, useRef, useState, type CSSProperties, type PointerEvent as ReactPointerEvent } from 'react';
 import { EFFECT_PRESETS, type EffectId } from '../lib/effects';
 import { findProfile, type PatchedFixture } from '../lib/fixtures';
 import type { FixtureLook } from '../lib/looks';
@@ -105,15 +106,31 @@ export const ColorDeck = memo(function ColorDeck({ title, subtitle, color, disab
   const red = Number.parseInt(color.slice(1, 3), 16) || 0;
   const green = Number.parseInt(color.slice(3, 5), 16) || 0;
   const blue = Number.parseInt(color.slice(5, 7), 16) || 0;
+  const hsv = hexToHsv(color);
+  const lastHue = useRef(hsv.h);
+  if (hsv.s > 0) lastHue.current = hsv.h;
+  const hue = hsv.s > 0 ? hsv.h : lastHue.current;
+  const choose = (h: number, s: number, v = hsv.v || 1) => { lastHue.current = h; onChange(hsvToHex({h,s,v})); };
+  const pointer = (event: ReactPointerEvent<HTMLDivElement>) => {
+    if (disabled || !event.currentTarget.hasPointerCapture(event.pointerId)) return;
+    const rect = event.currentTarget.getBoundingClientRect();
+    const next = wheelColor((event.clientX - rect.left - rect.width/2)/(rect.width/2), (event.clientY - rect.top - rect.height/2)/(rect.height/2));
+    choose(next.h,next.s);
+  };
   return <section className={`color-deck ${disabled ? 'disabled' : ''}`}>
     <div className="color-deck-title"><span>{title}</span><small>{subtitle}</small></div>
-    <div className="hue-rail" aria-hidden="true"><span style={{ left: `${(red + green + blue) / 765 * 100}%` }} /></div>
-    <label className="color-wheel-control" title="Choose color">
-      <input type="color" value={color} disabled={disabled} onChange={(event) => onChange(event.target.value)} />
-      <span style={{ background: color }} />
-    </label>
+    <label className="hue-control"><span>Hue {Math.round(hue)}°</span><input aria-label={`${title} hue`} type="range" min="0" max="359" value={Math.round(hue)} disabled={disabled} onChange={e=>choose(Number(e.target.value),hsv.s || 1)} /></label>
+    <div className="color-wheel-control interactive-wheel" role="slider" tabIndex={disabled ? -1 : 0} aria-label={`${title} color wheel`} aria-valuemin={0} aria-valuemax={359} aria-valuenow={Math.round(hue)} aria-valuetext={`${Math.round(hue)} degrees, ${Math.round(hsv.s*100)} percent saturation`} aria-disabled={disabled}
+      onPointerDown={e=>{if(disabled || e.button!==0)return;e.preventDefault();e.currentTarget.setPointerCapture(e.pointerId);pointer(e);}}
+      onPointerMove={pointer} onPointerUp={e=>{if(e.currentTarget.hasPointerCapture(e.pointerId))e.currentTarget.releasePointerCapture(e.pointerId);}}
+      onPointerCancel={e=>{if(e.currentTarget.hasPointerCapture(e.pointerId))e.currentTarget.releasePointerCapture(e.pointerId);}}
+      onKeyDown={e=>{if(disabled)return;const delta=e.shiftKey?10:1;if(e.key==='ArrowLeft'||e.key==='ArrowRight'){e.preventDefault();choose((hue+(e.key==='ArrowRight'?delta:-delta)+360)%360,hsv.s||1);}if(e.key==='ArrowUp'||e.key==='ArrowDown'){e.preventDefault();choose(hue,Math.max(0,Math.min(1,hsv.s+(e.key==='ArrowUp'?delta:-delta)/100)));}}}>
+      <span style={{background:color,left:`${50+Math.sin(hue*Math.PI/180)*hsv.s*43}%`,top:`${50-Math.cos(hue*Math.PI/180)*hsv.s*43}%`}} />
+    </div>
+    <label className="color-level">Color level<input aria-label={`${title} color level`} type="range" min="0" max="100" value={Math.round(hsv.v*100)} disabled={disabled} onChange={e=>choose(hue,hsv.s,Number(e.target.value)/100)}/></label>
+    <label className="color-native">Exact color<input aria-label={`${title} exact color`} type="color" value={color} disabled={disabled} onChange={e=>onChange(e.target.value)}/></label>
     <div className="selected-color-readout"><i style={{ background: color }} /><div><span>SELECTED COLOR</span><strong>{color.toUpperCase()}</strong><small>R {red} &nbsp; G {green} &nbsp; B {blue}</small></div></div>
-    <div className="color-preset-row">{presets.map((preset) => <button key={preset.name} disabled={disabled} title={preset.name} aria-label={preset.name} style={{ background: preset.color }} onClick={() => onChange(preset.color)} />)}</div>
+    <div className="color-preset-row">{presets.map((preset, index) => <button key={`${index}-${preset.name}`} disabled={disabled} title={preset.name} aria-label={preset.name} style={{ background: preset.color }} onClick={() => onChange(preset.color)} />)}</div>
   </section>;
 });
 
@@ -123,6 +140,7 @@ type VerticalFaderProps = {
   subtitle: string;
   color: string;
   value: number | null;
+  outputValue?: number | null;
   selected: boolean;
   onChange: (value: number) => void;
   onSelect: () => void;
@@ -130,13 +148,15 @@ type VerticalFaderProps = {
   quickAction?: { label: string; onPress: () => void };
 };
 
-export const VerticalFader = memo(function VerticalFader({ id, name, subtitle, color, value, selected, onChange, onSelect, onFx, quickAction }: VerticalFaderProps) {
+export const VerticalFader = memo(function VerticalFader({ id, name, subtitle, color, value, outputValue, selected, onChange, onSelect, onFx, quickAction }: VerticalFaderProps) {
   return <article className={`console-fader-strip ${selected ? 'selected' : ''}`} style={{ '--strip-color': color } as CSSProperties}>
     <header><strong title={name}>{name}</strong><small>{subtitle}</small><span className="fixture-glyph" aria-hidden="true">{subtitle.toLowerCase().includes('moving') ? '◉' : '✦'}</span></header>
     <div className="vertical-fader-wrap">
+      {outputValue !== undefined && <div className="resolved-output-meter" role="meter" aria-label={`${name} resolved output`} aria-valuemin={0} aria-valuemax={100} aria-valuenow={outputValue ?? 0}><i style={{height:`${outputValue ?? 0}%`}}/></div>}
       <input aria-label={`${name} brightness`} id={`fader-${id}`} className="vertical-fader" type="range" min="0" max="100" value={value ?? 0} disabled={value === null} onChange={(event) => onChange(Number(event.target.value))} />
     </div>
     <output htmlFor={`fader-${id}`}>{value === null ? 'N/A' : `${value}%`}</output>
+    {outputValue !== undefined && <small className="resolved-output-label">OUT {outputValue === null ? 'N/A' : `${outputValue}%`}</small>}
     <button className={`strip-select ${selected ? 'active' : ''}`} onClick={onSelect}>{selected ? 'Selected' : 'Select'}</button>
     <button className="strip-fx" onClick={onFx}>FX</button>
     {quickAction && <button className="strip-quick" onClick={quickAction.onPress}>▶ {quickAction.label}</button>}
