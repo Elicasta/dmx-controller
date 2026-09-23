@@ -20,6 +20,7 @@ export type ShowRuntimeSnapshot = {
   revision: number;
   activeUniverse: number;
   universes: ReadonlyMap<number, readonly number[]>;
+  baseUniverses: ReadonlyMap<number, readonly number[]>;
   patch: readonly PatchedFixture[];
   master: number;
   blackout: boolean;
@@ -89,6 +90,7 @@ export class ShowRuntime {
       revision: this.revision,
       activeUniverse: this.activeUniverse,
       universes: new Map([...this.universes].map(([universe, frame]) => [universe, [...frame]])),
+      baseUniverses: new Map([...this.baseUniverses].map(([universe, frame]) => [universe, [...frame]])),
       patch: this.patch.map((fixture) => ({ ...fixture })),
       master: this.master,
       blackout: this.blackout,
@@ -108,6 +110,7 @@ export class ShowRuntime {
 
   dispatch(envelope: ControlCommandEnvelope): RuntimeDispatchResult {
     const command = envelope.command;
+    if (command.type === 'frame.batch.replace') return this.dispatchBatchReplace(envelope, command.frames);
     const targetUniverses = this.commandUniverses(command);
     const groupUniverses = command.type === 'group.color' || command.type === 'group.master.set'
       ? targetUniverses
@@ -239,7 +242,74 @@ export class ShowRuntime {
     };
   }
 
+  private dispatchBatchReplace(
+    envelope: ControlCommandEnvelope,
+    frames: Array<{ universe: number; values: readonly number[] }>
+  ): RuntimeDispatchResult {
+    const unique = new Map<number, readonly number[]>();
+    for (const frame of frames) {
+      if (!Number.isInteger(frame.universe) || frame.universe < 1) continue;
+      unique.set(frame.universe, frame.values);
+    }
+    if (!unique.size) {
+      const universe = this.activeUniverse;
+      const baseFrame = [...(this.baseUniverses.get(universe) ?? makeUniverse())];
+      const frame = [...(this.universes.get(universe) ?? this.resolveFrame(universe, baseFrame))];
+      return {
+        revision: this.revision,
+        universe,
+        frame,
+        baseFrame,
+        changedChannels: [],
+        outputs: [],
+        patchChanged: false,
+        warnings: ['Multi-universe frame replace contained no valid universes.']
+      };
+    }
+
+    const ordered = [...unique.entries()].sort(([a], [b]) => a - b);
+    this.activeUniverse = ordered[0][0];
+    const trace: AttributeSourceTrace = {
+      source: envelope.source,
+      commandId: envelope.id,
+      commandType: envelope.command.type,
+      timestamp: envelope.timestamp
+    };
+    const outputs: RuntimeOutputFrame[] = [];
+
+    for (const [universe, values] of ordered) {
+      const previous = this.universes.get(universe) ?? makeUniverse();
+      const nextBase = normalizeFrame(values);
+      const next = this.resolveFrame(universe, nextBase);
+      const changed = changedChannels(previous, next);
+      this.baseUniverses.set(universe, nextBase);
+      this.universes.set(universe, next);
+      changed.forEach((channel) => this.sourceTrace.set(`${universe}:${channel}`, trace));
+      outputs.push({
+        universe,
+        frame: [...next],
+        baseFrame: [...nextBase],
+        changedChannels: changed
+      });
+    }
+
+    this.lastCommand = envelope;
+    this.revision += 1;
+    const primary = outputs[0];
+    return {
+      revision: this.revision,
+      universe: primary.universe,
+      frame: [...primary.frame],
+      baseFrame: [...primary.baseFrame],
+      changedChannels: [...primary.changedChannels],
+      outputs,
+      patchChanged: false,
+      warnings: []
+    };
+  }
+
   private commandUniverses(command: ControlCommandEnvelope['command']): number[] {
+    if (command.type === 'frame.batch.replace') return [...new Set(command.frames.map((frame) => frame.universe))].sort((a, b) => a - b);
     if ('universe' in command) return [command.universe];
     let fixtureIds: readonly string[] = [];
     if (command.type === 'fixture.attribute' || command.type === 'fixture.color' || command.type === 'fixture.flash.set' || command.type === 'fixture.target') {
