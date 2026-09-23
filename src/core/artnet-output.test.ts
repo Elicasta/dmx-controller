@@ -18,7 +18,10 @@ describe('ArtNetOutputDriver', () => {
   });
 
   it('sends physical black on Art-Net while preserving the caller frame', async () => {
-    const sender = vi.fn(async () => {});
+    let sent: readonly number[] = [];
+    const sender = vi.fn(async (_target: string, _universe: number, frame: readonly number[]) => {
+      sent = [...frame];
+    });
     const driver = new ArtNetOutputDriver(
       () => ({ enabled: true, target: '127.0.0.1', blackout: true }),
       sender
@@ -28,7 +31,6 @@ describe('ArtNetOutputDriver', () => {
     await driver.sendFrame(2, frame);
 
     expect(frame[0]).toBe(200);
-    const sent = sender.mock.calls[0][2];
     expect(sent).toHaveLength(512);
     expect(sent.every((value) => value === 0)).toBe(true);
   });
