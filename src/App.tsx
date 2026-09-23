@@ -938,6 +938,10 @@ export default function App() {
   useEffect(() => { externalLightingOffsetRef.current = externalTrack.lightingOffsetMs; }, [externalTrack.lightingOffsetMs]);
   useEffect(() => { midiLearnMappingIdRef.current = midiLearnMappingId; }, [midiLearnMappingId]);
   useEffect(() => { audioArmedRef.current = audioArmed; }, [audioArmed]);
+  useEffect(() => () => {
+    if (cueDelayTimerRef.current !== null) window.clearTimeout(cueDelayTimerRef.current);
+    if (cueFollowTimerRef.current !== null) window.clearTimeout(cueFollowTimerRef.current);
+  }, []);
   useEffect(() => { showTrackUrlRef.current = showTrackUrl; }, [showTrackUrl]);
   useEffect(() => {
     if (stageFixture) setOrganizerDraft(stageFixture);
@@ -1817,14 +1821,18 @@ export default function App() {
         const cue = cueId ? showFile.cues.find((item) => item.id === cueId) : nextCue;
         if (!cue) throw new Error('No LumaRig cue is available.');
         const target = cue.universe?.length === 512 ? [...cue.universe] : applyUniverseUpdates(universeRef.current, lookUpdates(cue.values, selectedFixtures(patch)));
+        cancelPendingCueLaunches();
         fadeToUniverse(cue.name, target, cue.fadeMs, 'remote');
+        activeCueIdRef.current = cue.id;
         setActiveCueId(cue.id);
       },
       fireScene: (sceneId) => {
         const cue = showFile.cues.find((item) => item.id === sceneId);
         if (!cue) throw new Error('LumaRig scene was not found.');
         const target = cue.universe?.length === 512 ? [...cue.universe] : applyUniverseUpdates(universeRef.current, lookUpdates(cue.values, selectedFixtures(patch)));
+        cancelPendingCueLaunches();
         fadeToUniverse(cue.name, target, cue.fadeMs, 'remote');
+        activeCueIdRef.current = cue.id;
         setActiveCueId(cue.id);
       },
       startEffect: (effectId) => {
