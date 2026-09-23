@@ -1773,6 +1773,11 @@ export default function App() {
   async function dispatchStudioBridgeCommand(id: string, command: StudioBridgeCommand) {
     let createdSnapshot: ShowProjectSnapshot | undefined;
     const dispatcher = new StudioBridgeDispatcher({
+      getStatus: () => ({
+        blackout: runtimeRef.current?.snapshot.blackout ?? dmxStatus.blackout,
+        currentCueId: activeCueIdRef.current,
+        activeEffectId: activeEffectRef.current
+      }),
       createShow: (identity: StudioSongIdentity) => {
         const existing = showLibrary.find((item) => item.name.toLowerCase() === identity.songTitle.toLowerCase());
         if (existing) return existing.id;
