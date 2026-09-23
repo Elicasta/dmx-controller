@@ -82,6 +82,42 @@ export function renderCustomEffect(effect: CustomEffect, fixtures: readonly Patc
   });
 }
 
+function globalizeFixtureAddress(fixture: PatchedFixture): PatchedFixture {
+  const universe = fixture.universe ?? 1;
+  return { ...fixture, address: fixture.address + (universe - 1) * 512 };
+}
+
+function splitGlobalUpdates(updates: readonly DmxUpdate[]): Map<number, DmxUpdate[]> {
+  const result = new Map<number, DmxUpdate[]>();
+  for (const [globalChannel, value] of updates) {
+    if (!Number.isInteger(globalChannel) || globalChannel < 1) continue;
+    const universe = Math.floor((globalChannel - 1) / 512) + 1;
+    const channel = ((globalChannel - 1) % 512) + 1;
+    const list = result.get(universe) ?? [];
+    list.push([channel, value]);
+    result.set(universe, list);
+  }
+  return result;
+}
+
+export function renderEffectByUniverse(
+  effect: EffectId,
+  fixtures: readonly PatchedFixture[],
+  elapsedMs: number,
+  bpm: number,
+  depth: number
+): Map<number, DmxUpdate[]> {
+  return splitGlobalUpdates(renderEffect(effect, fixtures.map(globalizeFixtureAddress), elapsedMs, bpm, depth));
+}
+
+export function renderCustomEffectByUniverse(
+  effect: CustomEffect,
+  fixtures: readonly PatchedFixture[],
+  elapsedMs: number
+): Map<number, DmxUpdate[]> {
+  return splitGlobalUpdates(renderCustomEffect(effect, fixtures.map(globalizeFixtureAddress), elapsedMs));
+}
+
 export const EFFECT_PRESETS: ReadonlyArray<EffectPreset> = [
   { id: 'pulse', name: 'Pulse', description: 'Smooth intensity breathing', defaultBpm: 80 },
   { id: 'strobe', name: 'Strobe', description: 'Software dimmer strobe', defaultBpm: 150 },
