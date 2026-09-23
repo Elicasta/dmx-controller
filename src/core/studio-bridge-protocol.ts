@@ -8,8 +8,15 @@ export type StudioSongIdentity = {
   bpm: number;
 };
 
+export type StudioBridgeRuntimeStatus = {
+  blackout: boolean;
+  currentCueId: string | null;
+  activeEffectId: string | null;
+};
+
 export type StudioBridgeCommand =
   | { type: 'hello'; protocol: number; clientName: string }
+  | { type: 'status.get' }
   | ({ type: 'song.resolve'; createIfMissing: boolean } & StudioSongIdentity)
   | { type: 'show.load'; lumarigShowId: string }
   | { type: 'cue.go'; cueId?: string }
@@ -52,6 +59,7 @@ export function assertStudioBridgeCommand(value: unknown): asserts value is Stud
   const boolean = (key: string) => { if (typeof command[key] !== 'boolean') throw new Error(`Invalid ${key}.`); };
   switch (command.type) {
     case 'hello': number('protocol', 1); text('clientName'); break;
+    case 'status.get': break;
     case 'song.resolve': text('studioShowId'); text('studioShowName'); text('songId'); text('songTitle'); number('bpm', 0, true); boolean('createIfMissing'); break;
     case 'show.load': text('lumarigShowId'); break;
     case 'cue.go': if (command.cueId !== undefined) text('cueId'); break;
