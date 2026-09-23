@@ -29,14 +29,37 @@ describe('show helpers', () => {
     expect(isShowFile({ version: 1, name: 'Broken', cues: [{}] })).toBe(false);
   });
 
-  it('keeps full-universe snapshots for multi-fixture cues', () => {
+  it('migrates legacy cue snapshots into v4 Universe 1 state', () => {
     const show = {
       version: 1 as const,
       name: 'Patched show',
       cues: [{ ...cue('a', 1), universe: Array(512).fill(300) }]
     };
     expect(isShowFile(show)).toBe(true);
-    expect(sanitizeShow(show).cues[0].universe?.[0]).toBe(255);
+    const sanitized = sanitizeShow(show);
+    expect(sanitized.version).toBe(4);
+    expect(sanitized.cues[0].universe?.[0]).toBe(255);
+    expect(sanitized.cues[0].universes).toEqual([
+      { universe: 1, values: Array(512).fill(255) }
+    ]);
+  });
+
+  it('preserves independent cue snapshots for identical addresses on different universes', () => {
+    const show = {
+      version: 4 as const,
+      name: 'Multi',
+      cues: [{
+        ...cue('a', 1),
+        universes: [
+          { universe: 1, values: [10, ...Array(511).fill(0)] },
+          { universe: 2, values: [220, ...Array(511).fill(0)] }
+        ]
+      }]
+    };
+    expect(isShowFile(show)).toBe(true);
+    const snapshots = sanitizeShow(show).cues[0].universes!;
+    expect(snapshots.find((item) => item.universe === 1)?.values[0]).toBe(10);
+    expect(snapshots.find((item) => item.universe === 2)?.values[0]).toBe(220);
   });
 
   it('preserves show notes and limits oversized note fields', () => {
@@ -66,7 +89,42 @@ describe('show helpers', () => {
       }]
     };
     expect(isShowFile(show)).toBe(true);
-    expect(sanitizeShow(show).recordings?.[0]).toMatchObject({ name: 'Take One', frames: [{ updates: [[1, 255]] }] });
+    expect(sanitizeShow(show).recordings?.[0]).toMatchObject({
+      name: 'Take One',
+      frames: [{
+        updates: [[1, 255]],
+        universeUpdates: [{ universe: 1, updates: [[1, 255]] }]
+      }]
+    });
+  });
+
+  it('preserves multi-universe recording updates in v4', () => {
+    const show = {
+      version: 4 as const,
+      name: 'Multi take',
+      cues: [],
+      recordings: [{
+        id: 'take-multi',
+        name: 'Multi',
+        trackName: '',
+        durationMs: 1000,
+        createdAt: new Date(0).toISOString(),
+        frames: [{
+          timeMs: 0,
+          updates: [[1, 10] as const],
+          universeUpdates: [
+            { universe: 1, updates: [[1, 10] as const] },
+            { universe: 2, updates: [[1, 240] as const] }
+          ]
+        }]
+      }]
+    };
+    expect(isShowFile(show)).toBe(true);
+    const frame = sanitizeShow(show).recordings?.[0].frames[0];
+    expect(frame?.universeUpdates).toEqual([
+      { universe: 1, updates: [[1, 10]] },
+      { universe: 2, updates: [[1, 240]] }
+    ]);
   });
 
   it('stores an external DAW song assignment and converts MIDI song position', () => {
@@ -85,7 +143,7 @@ describe('show helpers', () => {
 
   it('migrates v1 shows and preserves spatial and absolute position palettes in v3', () => {
     const legacy = { version: 1 as const, name: 'Legacy', cues: [] };
-    expect(sanitizeShow(legacy)).toMatchObject({ version: 3, groups: [], positionPalettes: [] });
+    expect(sanitizeShow(legacy)).toMatchObject({ version: 4, groups: [], positionPalettes: [] });
     const show = {
       version: 2 as const,
       name: 'Positions',
