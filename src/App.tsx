@@ -79,6 +79,7 @@ import { DesktopLiveController } from './components/DesktopLiveController';
 import { MidiMappingPanel } from './components/MidiMappingPanel';
 import './desktop-live-controller.css';
 import './workspace-polish.css';
+import './pro-desktop-pass.css';
 import {
   STAGE_ELEMENT_LIBRARY,
   clampStageElement,
@@ -3753,7 +3754,7 @@ export default function App() {
         </header>}
 
         <nav className="live-view-tabs">{([
-          ['performance','Controller'],['overrides','Fixture Overrides'],['groups','Groups'],['masters','Master Controls'],['shortcuts','Shortcuts'],['settings','Settings']
+          ['performance','Controller'],['overrides','Fixtures'],['groups','Groups'],['masters','Masters'],['shortcuts','Shortcuts'],['settings','System']
         ] as Array<[LiveView,string]>).map(([id,label])=><button key={id} className={liveView===id?'active':''} onClick={()=>setLiveView(id)}>{label}</button>)}</nav>
 
         {liveView === 'performance' && <DesktopLiveController

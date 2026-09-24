@@ -17,6 +17,27 @@ const props: DesktopLiveControllerProps = {
 afterEach(() => { localStorage.clear(); vi.restoreAllMocks(); });
 
 describe('desktop live view', () => {
+  it('uses Shift for fine fader adjustment and double click resets the fader', () => {
+    (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+    const host = document.createElement('div');
+    document.body.append(host);
+    const onFixtureLevel = vi.fn();
+    const root = createRoot(host);
+    act(() => root.render(<DesktopLiveController {...props}
+      showName="Fader Interaction Test"
+      fixtures={[{ id: 'front-1', name: 'Front 1', subtitle: 'U1 · 001', intensity: 50, outputIntensity: 50, color: '#ffffff', selected: false }]}
+      onFixtureLevel={onFixtureLevel}
+    />));
+    const slider = host.querySelector('[role="slider"]') as HTMLElement | null;
+    expect(slider).toBeTruthy();
+    act(() => slider!.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowUp', shiftKey: true, bubbles: true })));
+    expect(onFixtureLevel).toHaveBeenLastCalledWith('front-1', 50.1);
+    act(() => slider!.dispatchEvent(new MouseEvent('dblclick', { bubbles: true })));
+    expect(onFixtureLevel).toHaveBeenLastCalledWith('front-1', 0);
+    act(() => root.unmount());
+    host.remove();
+  });
+
   it('returns to the same mode and remembers separate pages after the board unmounts', () => {
     (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
     const host = document.createElement('div');
