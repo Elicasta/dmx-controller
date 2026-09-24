@@ -113,7 +113,7 @@ export class ShowRuntime {
     if (command.type === 'frame.batch.replace') return this.dispatchBatchReplace(envelope, command.frames, false);
     if (command.type === 'frame.batch.output.replace') return this.dispatchBatchReplace(envelope, command.frames, true);
     const targetUniverses = this.commandUniverses(command);
-    const groupUniverses = command.type === 'group.color' || command.type === 'group.master.set'
+    const groupUniverses = command.type === 'group.color' || command.type === 'group.master.set' || command.type === 'group.level.adjust'
       ? targetUniverses
       : [];
     const universe = 'universe' in command
@@ -126,6 +126,7 @@ export class ShowRuntime {
     let outputOverride: number[] | null = null;
     let patchChanged = false;
     const warnings: string[] = [];
+    const groupLevelMultiplier = command.type === 'group.level.adjust' ? this.groupMasters.get(command.groupName) ?? 1 : 1;
 
     if (command.type === 'frame.replace') {
       nextBase = normalizeFrame(command.values);
@@ -185,6 +186,11 @@ export class ShowRuntime {
       nextBase = applyUniverseUpdates(previousBase, updates);
     } else if (command.type === 'group.master.set') {
       this.groupMasters.set(command.groupName, Math.max(0, Math.min(1, command.value)));
+    } else if (command.type === 'group.level.adjust') {
+      const previousLevel = Math.max(0, Math.min(100, command.previous));
+      const nextLevel = Math.max(0, Math.min(100, command.value));
+      nextBase = this.adjustGroupLevel(command.groupName, universe, previousBase, previousLevel, nextLevel, groupLevelMultiplier);
+      this.groupMasters.set(command.groupName, 1);
 
     } else if (command.type === 'master.set') {
       this.master = Math.max(0, Math.min(1, command.value));
@@ -217,7 +223,9 @@ export class ShowRuntime {
       if (secondaryUniverse === universe) continue;
       const secondaryPrevious = this.universes.get(secondaryUniverse) ?? makeUniverse();
       const secondaryBase = this.baseUniverses.get(secondaryUniverse) ?? makeUniverse();
-      const secondaryNextBase = this.applyCommandToUniverseBase(command, secondaryUniverse, secondaryBase, warnings);
+      const secondaryNextBase = command.type === 'group.level.adjust'
+        ? this.adjustGroupLevel(command.groupName, secondaryUniverse, secondaryBase, command.previous, command.value, groupLevelMultiplier)
+        : this.applyCommandToUniverseBase(command, secondaryUniverse, secondaryBase, warnings);
       const secondaryNext = this.resolveFrame(secondaryUniverse, secondaryNextBase);
       const secondaryChanged = changedChannels(secondaryPrevious, secondaryNext);
       this.baseUniverses.set(secondaryUniverse, secondaryNextBase);
@@ -318,7 +326,7 @@ export class ShowRuntime {
       fixtureIds = command.fixtureIds;
     } else if (command.type === 'fixture.position') {
       fixtureIds = command.positions.map((position) => position.fixtureId);
-    } else if (command.type === 'group.color' || command.type === 'group.master.set') {
+    } else if (command.type === 'group.color' || command.type === 'group.master.set' || command.type === 'group.level.adjust') {
       return [...new Set(this.patch.filter((fixture) => fixture.group === command.groupName).map((fixture) => fixture.universe ?? 1))].sort((a, b) => a - b);
     } else if (command.type === 'master.set' || command.type === 'blackout.set') {
       return [...new Set([this.activeUniverse, ...this.baseUniverses.keys(), ...this.patch.map((fixture) => fixture.universe ?? 1)])].sort((a, b) => a - b);
@@ -413,6 +421,20 @@ export class ShowRuntime {
         next[dimmer - 1] = clampDmx(sourceDimmer * groupMaster * this.master);
       });
     return next;
+  }
+
+  private adjustGroupLevel(groupName: string, universe: number, base: readonly number[], previous: number, value: number, multiplier: number): number[] {
+    const delta = Math.max(0, Math.min(100, value)) - Math.max(0, Math.min(100, previous));
+    const updates = this.patch
+      .filter((fixture) => (fixture.universe ?? 1) === universe && fixture.group === groupName)
+      .flatMap((fixture) => {
+        const channel = parameterChannel(fixture, 'dimmer');
+        if (!channel) return [];
+        const current = (base[channel - 1] ?? 0) * multiplier / 255 * 100;
+        const adjusted = value >= 100 ? 100 : Math.max(0, Math.min(100, current + delta));
+        return [[channel, clampDmx(adjusted / 100 * 255)] as const];
+      });
+    return applyUniverseUpdates(base, updates);
   }
 
   private fixtureUpdates(

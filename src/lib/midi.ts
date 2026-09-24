@@ -10,6 +10,8 @@ export type MidiMapping = {
   kind: MidiSourceKind | null;
   channel: number | null;
   number: number | null;
+  /** CC value required to press a button-style control. Notes ignore this value. */
+  triggerValue: number;
 };
 
 export type MidiAssignableControl = {
@@ -22,10 +24,10 @@ export type MidiAssignableControl = {
 };
 
 export const DEFAULT_MIDI_MAPPINGS: MidiMapping[] = [
-  { id: 'midi-previous', target: 'previous', kind: 'note', channel: 1, number: 35 },
-  { id: 'midi-go', target: 'go', kind: 'note', channel: 1, number: 36 },
-  { id: 'midi-blackout', target: 'blackout', kind: 'note', channel: 1, number: 37 },
-  { id: 'midi-master', target: 'master', kind: 'cc', channel: 1, number: 7 }
+  { id: 'midi-go', target: 'go', kind: 'cc', channel: 1, number: 1, triggerValue: 100 },
+  { id: 'midi-previous', target: 'previous', kind: 'cc', channel: 1, number: 2, triggerValue: 100 },
+  { id: 'midi-blackout', target: 'blackout', kind: 'cc', channel: 1, number: 3, triggerValue: 100 },
+  { id: 'midi-master', target: 'master', kind: 'cc', channel: 1, number: 7, triggerValue: 100 }
 ];
 
 export const BASE_MIDI_CONTROLS: ReadonlyArray<MidiAssignableControl> = [
@@ -108,7 +110,8 @@ export function sanitizeMidiMappings(value: unknown, fallback = DEFAULT_MIDI_MAP
       target: mapping.target,
       kind: bound ? kind : null,
       channel: bound ? channel : null,
-      number: bound ? number : null
+      number: bound ? number : null,
+      triggerValue: Math.max(1, Math.min(127, Number.isFinite(mapping.triggerValue) ? Math.round(Number(mapping.triggerValue)) : 100))
     }];
   });
 }
@@ -120,5 +123,6 @@ export function midiValueToRange(value: number, min: number, max: number) {
 
 export function midiBindingLabel(mapping: MidiMapping) {
   if (!mapping.kind || mapping.channel == null || mapping.number == null) return 'Waiting for input';
-  return `${mapping.kind === 'cc' ? 'CC' : 'Note'} ${mapping.number} · Ch ${mapping.channel}`;
+  const trigger = mapping.kind === 'cc' ? ` · trigger ≥ ${mapping.triggerValue}` : '';
+  return `${mapping.kind === 'cc' ? 'CC' : 'Note'} ${mapping.number} · Ch ${mapping.channel}${trigger}`;
 }
