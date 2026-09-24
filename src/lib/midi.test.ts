@@ -5,7 +5,7 @@ import { buildMidiControls, midiBindingLabel, midiValueToRange, sanitizeMidiMapp
 describe('MIDI assignment helpers', () => {
   it('migrates the original mapping format and keeps its binding', () => {
     const [mapping] = sanitizeMidiMappings([{ target: 'go', kind: 'note', channel: 2, number: 64 }]);
-    expect(mapping).toMatchObject({ target: 'go', kind: 'note', channel: 2, number: 64 });
+    expect(mapping).toMatchObject({ target: 'go', kind: 'note', channel: 2, number: 64, triggerValue: 100 });
     expect(mapping.id).toContain('go');
   });
 
@@ -19,6 +19,7 @@ describe('MIDI assignment helpers', () => {
 
   it('scales MIDI values and labels unassigned controls', () => {
     expect(midiValueToRange(64, 30, 240)).toBeCloseTo(135.83, 1);
-    expect(midiBindingLabel({ id: 'new', target: 'tempo', kind: null, channel: null, number: null })).toBe('Waiting for input');
+    expect(midiBindingLabel({ id: 'new', target: 'tempo', kind: null, channel: null, number: null, triggerValue: 100 })).toBe('Waiting for input');
+    expect(midiBindingLabel({ id: 'go', target: 'go', kind: 'cc', channel: 1, number: 1, triggerValue: 100 })).toContain('trigger ≥ 100');
   });
 });

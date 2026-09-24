@@ -1,6 +1,6 @@
 [package]
 name = "dmx-controller-mac-v1"
-version = "0.2.0"
+version = "0.3.0"
 description = "Mac-first DMX controller with Anyma uDMX test output"
 authors = ["EC Creative Studios"]
 edition = "2021"

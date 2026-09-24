@@ -1,33 +1,77 @@
-import { useMemo, useState } from 'react';
+import { useMemo, useState, type CSSProperties } from 'react';
 import type { ColorPalette } from '../core/color';
 
-export function ColorPaletteLibrary({palettes,color,disabled,onChange,onRecall}:{palettes:ColorPalette[];color:string;disabled:boolean;onChange:(p:ColorPalette[])=>void;onRecall:(color:string)=>void}) {
-  const [name,setName]=useState('');
-  const [folder,setFolder]=useState('');
-  const [filter,setFilter]=useState('');
-  const update=(id:string,patch:Partial<ColorPalette>)=>onChange(palettes.map(p=>p.id===id?{...p,...patch}:p));
-  const move=(id:string,delta:number)=>{const copy=[...palettes],i=copy.findIndex(p=>p.id===id),j=i+delta;if(j<0||j>=copy.length)return;[copy[i],copy[j]]=[copy[j],copy[i]];onChange(copy);};
-  const visible=palettes.filter(p=>(p.name+' '+p.folder).toLowerCase().includes(filter.toLowerCase()));
-  const folders=useMemo(()=>{const grouped=new Map<string,ColorPalette[]>();for(const palette of visible){const key=palette.folder.trim()||'Unfiled';grouped.set(key,[...(grouped.get(key)||[]),palette]);}return [...grouped.entries()].sort(([a],[b])=>a==='Unfiled'?1:b==='Unfiled'?-1:a.localeCompare(b));},[visible]);
-  return <section className="color-library">
-    <header><div><strong>SHOW COLOR PALETTES</strong><small>Foldered palettes stored with this show.</small></div><b>{palettes.length} COLORS</b></header>
-    <form onSubmit={e=>{e.preventDefault();if(!name.trim()||disabled||palettes.length>=256)return;onChange([...palettes,{id:crypto.randomUUID(),name:name.trim(),folder:folder.trim(),color}]);setName('');}}>
-      <input aria-label="New color palette name" placeholder="Palette name" maxLength={64} value={name} onChange={e=>setName(e.target.value)}/>
-      <input aria-label="New color palette folder" placeholder="Folder, e.g. Worship / Warm" maxLength={64} value={folder} onChange={e=>setFolder(e.target.value)}/>
-      <button disabled={disabled||!name.trim()||palettes.length>=256}>Store Color</button>
+const UNFILED = 'Unfiled';
+
+export function groupColorPalettes(palettes: readonly ColorPalette[]) {
+  const groups = new Map<string, ColorPalette[]>();
+  palettes.forEach((palette) => {
+    const folder = palette.folder.trim() || UNFILED;
+    groups.set(folder, [...(groups.get(folder) ?? []), palette]);
+  });
+  return [...groups.entries()].sort(([a], [b]) => {
+    if (a === UNFILED) return 1;
+    if (b === UNFILED) return -1;
+    return a.localeCompare(b);
+  });
+}
+
+export function ColorPaletteLibrary({ palettes, color, disabled, onChange, onRecall }: {
+  palettes: ColorPalette[];
+  color: string;
+  disabled: boolean;
+  onChange: (palettes: ColorPalette[]) => void;
+  onRecall: (color: string) => void;
+}) {
+  const [name, setName] = useState('');
+  const [folder, setFolder] = useState('');
+  const [filter, setFilter] = useState('');
+  const [activeFolder, setActiveFolder] = useState('All folders');
+  const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
+  const folders = useMemo(() => [...new Set(palettes.map((palette) => palette.folder.trim()).filter(Boolean))].sort((a, b) => a.localeCompare(b)), [palettes]);
+  const visible = palettes.filter((palette) => {
+    const matchesSearch = `${palette.name} ${palette.folder}`.toLowerCase().includes(filter.toLowerCase());
+    const matchesFolder = activeFolder === 'All folders' || (activeFolder === UNFILED ? !palette.folder.trim() : palette.folder.trim() === activeFolder);
+    return matchesSearch && matchesFolder;
+  });
+  const grouped = groupColorPalettes(visible);
+  const update = (id: string, patch: Partial<ColorPalette>) => onChange(palettes.map((palette) => palette.id === id ? { ...palette, ...patch } : palette));
+  const move = (id: string, direction: -1 | 1) => {
+    const index = palettes.findIndex((palette) => palette.id === id);
+    const target = index + direction;
+    if (index < 0 || target < 0 || target >= palettes.length) return;
+    const next = [...palettes];
+    [next[index], next[target]] = [next[target], next[index]];
+    onChange(next);
+  };
+  const remove = (palette: ColorPalette) => {
+    if (window.confirm(`Delete color palette “${palette.name}”?`)) onChange(palettes.filter((item) => item.id !== palette.id));
+  };
+
+  return <section className="color-library color-folder-library">
+    <header><div><strong>SHOW COLOR LIBRARY</strong><small>Saved inside this show and organized into folders.</small></div><b>{palettes.length} COLORS · {folders.length} FOLDERS</b></header>
+    <form onSubmit={(event) => {
+      event.preventDefault();
+      if (!name.trim() || disabled || palettes.length >= 256) return;
+      onChange([...palettes, { id: crypto.randomUUID(), name: name.trim(), folder: folder.trim(), color }]);
+      setName('');
+    }}>
+      <label><span>PALETTE NAME</span><input aria-label="New color palette name" placeholder="Warm stage wash" maxLength={64} value={name} onChange={(event) => setName(event.target.value)} /></label>
+      <label><span>FOLDER</span><input aria-label="New color palette folder" placeholder="Washes, songs, specials…" list="color-folder-options" maxLength={64} value={folder} onChange={(event) => setFolder(event.target.value)} /></label>
+      <datalist id="color-folder-options">{folders.map((item) => <option value={item} key={item} />)}</datalist>
+      <button className="console-primary" disabled={disabled || !name.trim() || palettes.length >= 256}>＋ Store Color</button>
     </form>
-    <input className="palette-filter" aria-label="Filter color palettes" placeholder="Search palettes or folders…" value={filter} onChange={e=>setFilter(e.target.value)}/>
-    <div className="color-folder-stack">
-      {folders.map(([folderName,items])=><details className="color-folder" key={folderName} open>
-        <summary><span>▾</span><strong>{folderName}</strong><b>{items.length}</b></summary>
-        <div className="color-folder-grid">{items.map(p=><article key={p.id}>
-          <button className="palette-recall" aria-label={`Recall ${p.name}`} disabled={disabled} onClick={()=>onRecall(p.color)}><i style={{background:p.color}}/><span><strong>{p.name}</strong><small>{p.color.toUpperCase()}</small></span></button>
-          <div className="palette-edit-row"><input aria-label={`Rename ${p.name}`} maxLength={64} value={p.name} onChange={e=>update(p.id,{name:e.target.value})} onBlur={()=>{if(!p.name.trim())update(p.id,{name:'Color palette'});}}/><input aria-label={`Folder for ${p.name}`} maxLength={64} value={p.folder} placeholder="Folder" onChange={e=>update(p.id,{folder:e.target.value})}/></div>
-          <div className="palette-actions"><button disabled={disabled} onClick={()=>update(p.id,{color})}>Update</button><button aria-label={`Move ${p.name} up`} disabled={palettes[0]?.id===p.id} onClick={()=>move(p.id,-1)}>↑</button><button aria-label={`Move ${p.name} down`} disabled={palettes.at(-1)?.id===p.id} onClick={()=>move(p.id,1)}>↓</button><button aria-label={`Delete ${p.name}`} onClick={()=>{if(window.confirm(`Delete color palette “${p.name}”?`))onChange(palettes.filter(x=>x.id!==p.id));}}>Delete</button></div>
-        </article>)}</div>
-      </details>)}
-    </div>
-    {!visible.length&&<p>{palettes.length?'No palettes match that filter.':'No show colors stored yet. Choose a color, name it, and optionally place it in a folder.'}</p>}
-    {disabled&&<p>Select an RGB-capable fixture to apply or store color.</p>}
+    <div className="color-library-toolbar"><input aria-label="Filter color palettes" placeholder="Search colors or folders" value={filter} onChange={(event) => setFilter(event.target.value)} /><nav><button className={activeFolder === 'All folders' ? 'active' : ''} onClick={() => setActiveFolder('All folders')}>ALL</button>{folders.map((item) => <button key={item} className={activeFolder === item ? 'active' : ''} onClick={() => setActiveFolder(item)}>{item}</button>)}{palettes.some((palette) => !palette.folder.trim()) && <button className={activeFolder === UNFILED ? 'active' : ''} onClick={() => setActiveFolder(UNFILED)}>UNFILED</button>}</nav></div>
+    <div className="color-folder-stack">{grouped.map(([folderName, items]) => <section className="color-folder" key={folderName}>
+      <header><button onClick={() => setCollapsed((current) => { const next = new Set(current); if (next.has(folderName)) next.delete(folderName); else next.add(folderName); return next; })}><span>{collapsed.has(folderName) ? '▸' : '▾'}</span><strong>{folderName}</strong><small>{items.length} {items.length === 1 ? 'color' : 'colors'}</small></button></header>
+      {!collapsed.has(folderName) && <div className="color-folder-grid">{items.map((palette) => <article key={palette.id} style={{ '--palette-color': palette.color } as CSSProperties}>
+        <button className="palette-recall" aria-label={`Recall ${palette.name}`} disabled={disabled} onClick={() => onRecall(palette.color)}><i /><span>RECALL</span></button>
+        <label><span>NAME</span><input aria-label={`Rename ${palette.name}`} maxLength={64} value={palette.name} onChange={(event) => update(palette.id, { name: event.target.value })} onBlur={() => { if (!palette.name.trim()) update(palette.id, { name: 'Color palette' }); }} /></label>
+        <label><span>FOLDER</span><input aria-label={`Folder for ${palette.name}`} list="color-folder-options" maxLength={64} value={palette.folder} placeholder="Unfiled" onChange={(event) => update(palette.id, { folder: event.target.value })} /></label>
+        <div><button aria-label={`Move ${palette.name} up`} disabled={palettes.findIndex((item) => item.id === palette.id) === 0} onClick={() => move(palette.id, -1)}>↑</button><button aria-label={`Move ${palette.name} down`} disabled={palettes.findIndex((item) => item.id === palette.id) === palettes.length - 1} onClick={() => move(palette.id, 1)}>↓</button><button disabled={disabled} onClick={() => update(palette.id, { color })}>Update color</button><button className="danger-button" onClick={() => remove(palette)}>Delete</button></div>
+      </article>)}</div>}
+    </section>)}</div>
+    {!visible.length && <p>{palettes.length ? 'No colors match this folder or search.' : 'No show colors stored yet. Choose a color, name it, and store it here.'}</p>}
+    {disabled && <p>Select an RGB-capable fixture to apply or store a color.</p>}
   </section>;
 }
