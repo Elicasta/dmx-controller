@@ -2,7 +2,7 @@
 :root{--luma-bg:#090c10;--luma-panel:#11161c;--luma-raised:#171e26;--luma-line:#2b3540;--luma-text:#edf2f5;--luma-muted:#a0acb8;--luma-live:#68edac;--luma-preview:#82aaff;--luma-alert:#f4bb65}
 button:focus-visible,input:focus-visible,select:focus-visible{outline:2px solid var(--luma-preview);outline-offset:3px}
 button:disabled{cursor:not-allowed;opacity:.4}input[type=range]{touch-action:none}
-.live-console-v3{height:calc(100dvh - 112px);min-height:650px;grid-template-rows:88px 42px minmax(290px,1fr) 34px!important;background:var(--luma-bg);padding:0;gap:0}
+.live-console-v3{height:calc(100dvh - 112px);min-height:650px;grid-template-columns:minmax(0,1fr)!important;grid-template-rows:88px 42px minmax(290px,1fr) 34px!important;background:var(--luma-bg);padding:0;gap:0}\n.live-console-v3>.live-command-bar,.live-console-v3>.live-view-tabs,.live-console-v3>.live-operator-grid,.live-console-v3>.live-detail-view,.live-console-v3>.live-programmer-drawer,.live-console-v3>.live-system-strip{grid-column:1/-1!important;min-width:0}
 .live-console-v3.with-palette-dock{grid-template-rows:88px 42px minmax(290px,1fr) 166px 34px!important}
 .live-command-bar{padding:12px 16px;gap:20px;background:#11161c;border-bottom:1px solid var(--luma-line)}
 .live-show-state{border-left:2px solid var(--luma-live);background:transparent;padding-left:14px}.live-show-state strong{font-size:17px;line-height:1.4}.live-show-state small{letter-spacing:.16em;font-size:10px}
