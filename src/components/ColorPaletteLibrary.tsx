@@ -16,22 +16,25 @@ export function groupColorPalettes(palettes: readonly ColorPalette[]) {
   });
 }
 
-export function ColorPaletteLibrary({ palettes, color, disabled, onChange, onRecall }: {
+export function ColorPaletteLibrary({ palettes, color, disabled, onChange, onRecall, activeFolder, onFolderChange }: {
   palettes: ColorPalette[];
   color: string;
   disabled: boolean;
   onChange: (palettes: ColorPalette[]) => void;
   onRecall: (color: string) => void;
+  activeFolder?: string;
+  onFolderChange?: (folder: string) => void;
 }) {
   const [name, setName] = useState('');
   const [folder, setFolder] = useState('');
   const [filter, setFilter] = useState('');
-  const [activeFolder, setActiveFolder] = useState('All folders');
+  const [localFolder, setLocalFolder] = useState('All folders');
+  const selectedFolder = activeFolder ?? localFolder;
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
   const folders = useMemo(() => [...new Set(palettes.map((palette) => palette.folder.trim()).filter(Boolean))].sort((a, b) => a.localeCompare(b)), [palettes]);
   const visible = palettes.filter((palette) => {
     const matchesSearch = `${palette.name} ${palette.folder}`.toLowerCase().includes(filter.toLowerCase());
-    const matchesFolder = activeFolder === 'All folders' || (activeFolder === UNFILED ? !palette.folder.trim() : palette.folder.trim() === activeFolder);
+    const matchesFolder = selectedFolder === 'All folders' || (selectedFolder === UNFILED ? !palette.folder.trim() : palette.folder.trim() === selectedFolder);
     return matchesSearch && matchesFolder;
   });
   const grouped = groupColorPalettes(visible);
@@ -61,7 +64,7 @@ export function ColorPaletteLibrary({ palettes, color, disabled, onChange, onRec
       <datalist id="color-folder-options">{folders.map((item) => <option value={item} key={item} />)}</datalist>
       <button className="console-primary" disabled={disabled || !name.trim() || palettes.length >= 256}>＋ Store Color</button>
     </form>
-    <div className="color-library-toolbar"><input aria-label="Filter color palettes" placeholder="Search colors or folders" value={filter} onChange={(event) => setFilter(event.target.value)} /><nav><button className={activeFolder === 'All folders' ? 'active' : ''} onClick={() => setActiveFolder('All folders')}>ALL</button>{folders.map((item) => <button key={item} className={activeFolder === item ? 'active' : ''} onClick={() => setActiveFolder(item)}>{item}</button>)}{palettes.some((palette) => !palette.folder.trim()) && <button className={activeFolder === UNFILED ? 'active' : ''} onClick={() => setActiveFolder(UNFILED)}>UNFILED</button>}</nav></div>
+    <div className="color-library-toolbar"><input aria-label="Filter color palettes" placeholder="Search colors or folders" value={filter} onChange={(event) => setFilter(event.target.value)} />{!onFolderChange && <nav><button className={selectedFolder === 'All folders' ? 'active' : ''} onClick={() => setLocalFolder('All folders')}>ALL</button>{folders.map((item) => <button key={item} className={selectedFolder === item ? 'active' : ''} onClick={() => setLocalFolder(item)}>{item}</button>)}{palettes.some((palette) => !palette.folder.trim()) && <button onClick={() => setLocalFolder(UNFILED)}>UNFILED</button>}</nav>}</div>
     <div className="color-folder-stack">{grouped.map(([folderName, items]) => <section className="color-folder" key={folderName}>
       <header><button onClick={() => setCollapsed((current) => { const next = new Set(current); if (next.has(folderName)) next.delete(folderName); else next.add(folderName); return next; })}><span>{collapsed.has(folderName) ? '▸' : '▾'}</span><strong>{folderName}</strong><small>{items.length} {items.length === 1 ? 'color' : 'colors'}</small></button></header>
       {!collapsed.has(folderName) && <div className="color-folder-grid">{items.map((palette) => <article key={palette.id} style={{ '--palette-color': palette.color } as CSSProperties}>

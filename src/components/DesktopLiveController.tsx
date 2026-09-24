@@ -73,6 +73,7 @@ export type DesktopLiveControllerProps = {
 };
 
 const STORAGE_PREFIX = 'lumarig.desktop-live.assignments.v1';
+const VIEW_STORAGE_PREFIX = 'lumarig.desktop-live.view.v1';
 const PAGE_COUNT = 4;
 const FADER_COUNT = 8;
 
@@ -113,6 +114,17 @@ function safeStorageKey(showName: string) {
 function loadAssignments(showName: string): AssignmentMap {
   try { return sanitizeLiveAssignments(JSON.parse(localStorage.getItem(safeStorageKey(showName)) || '{}')); }
   catch { return {}; }
+}
+
+type SurfaceView = { mode: LiveSurfaceMode; pages: Record<LiveSurfaceMode, number> };
+function loadSurfaceView(showName: string): SurfaceView {
+  const fallback: SurfaceView = { mode: 'faders', pages: { faders: 1, ma: 1, busk: 1 } };
+  try {
+    const saved = JSON.parse(localStorage.getItem(`${VIEW_STORAGE_PREFIX}:${showName.trim().toLowerCase()}`) || '{}');
+    const mode = (['faders', 'ma', 'busk'] as const).includes(saved.mode) ? saved.mode as LiveSurfaceMode : fallback.mode;
+    const pages = Object.fromEntries((['faders', 'ma', 'busk'] as const).map((item) => [item, Number.isInteger(saved.pages?.[item]) && saved.pages[item] >= 1 && saved.pages[item] <= PAGE_COUNT ? saved.pages[item] : 1])) as Record<LiveSurfaceMode, number>;
+    return { mode, pages };
+  } catch { return fallback; }
 }
 
 function clampPercent(value: number) {
@@ -208,8 +220,10 @@ function SurfaceFader({ assignment, value, outputValue, enabled, onActivate, onC
 }
 
 export function DesktopLiveController(props: DesktopLiveControllerProps) {
-  const [mode, setMode] = useState<LiveSurfaceMode>('faders');
-  const [page, setPage] = useState(1);
+  const [view, setView] = useState<SurfaceView>(() => loadSurfaceView(props.showName));
+  const { mode } = view;
+  const page = view.pages[mode];
+  const setPage = (next: number | ((current: number) => number)) => setView((current) => ({ ...current, pages: { ...current.pages, [current.mode]: Math.max(1, Math.min(PAGE_COUNT, typeof next === 'number' ? next : next(current.pages[current.mode]))) } }));
   const [poolMode, setPoolMode] = useState<PoolMode>('groups');
   const [edit, setEdit] = useState(false);
   const [assigning, setAssigning] = useState<string | null>(null);
@@ -218,6 +232,7 @@ export function DesktopLiveController(props: DesktopLiveControllerProps) {
   const onEffectReleaseRef = useRef(props.onEffectRelease);
 
   useEffect(() => { try { localStorage.setItem(safeStorageKey(props.showName), JSON.stringify(assignments)); } catch { /* keep the live surface operational if storage is full */ } }, [assignments, props.showName]);
+  useEffect(() => { try { localStorage.setItem(`${VIEW_STORAGE_PREFIX}:${props.showName.trim().toLowerCase()}`, JSON.stringify(view)); } catch { /* controls remain available without storage */ } }, [props.showName, view]);
   useEffect(() => { onEffectReleaseRef.current = props.onEffectRelease; }, [props.onEffectRelease]);
   useEffect(() => () => { heldEffects.current.forEach((effectId) => onEffectReleaseRef.current(effectId)); heldEffects.current.clear(); }, []);
 
@@ -234,6 +249,11 @@ export function DesktopLiveController(props: DesktopLiveControllerProps) {
         map[liveSlotKey('ma', Math.floor(index / FADER_COUNT) + 1, index % FADER_COUNT)] = source;
       }
     }
+    const quickSources: LiveSurfaceAssignment[] = [
+      ...props.effects.map((effect) => ({ id: effect.id, kind: 'effect' as const, targetId: effect.id, label: effect.name, color: effect.color, momentary: effect.momentary })),
+      ...props.looks.map((look) => ({ id: look.id, kind: 'look' as const, targetId: look.id, label: look.name, color: look.color }))
+    ];
+    quickSources.slice(0, FADER_COUNT).forEach((source, index) => { map[liveSlotKey('faders', 1, FADER_COUNT + index)] = source; });
     const buskSources: LiveSurfaceAssignment[] = [
       ...props.looks.map((look) => ({ id: look.id, kind: 'look' as const, targetId: look.id, label: look.name, color: look.color })),
       ...props.effects.map((effect) => ({ id: effect.id, kind: 'effect' as const, targetId: effect.id, label: effect.name, color: effect.color, momentary: effect.momentary }))
@@ -303,7 +323,7 @@ export function DesktopLiveController(props: DesktopLiveControllerProps) {
     setAssigning(null);
   };
   const tapSlot = (index: number, item: LiveSurfaceAssignment) => edit ? openAssignment(index) : activate(item);
-  const switchMode = (next: LiveSurfaceMode) => { releaseHeldEffects(); setMode(next); setPage(1); setAssigning(null); };
+  const switchMode = (next: LiveSurfaceMode) => { releaseHeldEffects(); setView((current) => ({ ...current, mode: next })); setAssigning(null); };
 
   const assignmentChoices = useMemo<LiveSurfaceAssignment[]>(() => [
     emptyLiveAssignment('empty'),
@@ -337,10 +357,10 @@ export function DesktopLiveController(props: DesktopLiveControllerProps) {
 
     <div className="desk-surface-status"><span className={props.outputHealthy ? 'ok' : ''}>OUTPUT</span><span className={props.dmxConnected ? 'ok' : ''}>DMX</span><b>{Math.round(props.bpm)} <small>BPM</small></b><strong>{props.currentCueNumber ? `${props.currentCueNumber} · ` : ''}{props.currentCue}</strong><button disabled={!props.nextCue} onClick={props.onGo}>GO</button></div>
 
-    {mode === 'faders' && <div className="desk-classic-scroll"><div className="desk-classic-surface">{Array.from({ length: FADER_COUNT }, (_, index) => {
+    {mode === 'faders' && <div className="desk-faders-body"><div className="desk-classic-scroll"><div className="desk-classic-surface">{Array.from({ length: FADER_COUNT }, (_, index) => {
       const item = assignment(index);
       return <SurfaceFader key={index} assignment={item} value={valueFor(item)} outputValue={outputFor(item)} enabled={['fixture', 'group', 'master'].includes(item.kind)} onActivate={() => tapSlot(index, item)} onChange={(value) => changeLevel(item, value)} onFlash={(active) => flash(item, active)} />;
-    })}</div></div>}
+    })}</div></div><div className="desk-quick-actions"><span>FX · COLOR · LOOKS <small>{edit ? 'TAP A BUTTON TO ASSIGN' : 'HOLD EFFECTS / TAP COLORS'}</small></span><div>{Array.from({ length: FADER_COUNT }, (_, index) => { const item = assignment(FADER_COUNT + index); return <button key={index} className={activeFor(item) ? 'active' : ''} style={{ '--slot': item.color || '#55646b' } as CSSProperties} onPointerDown={(event) => { if (event.pointerType === 'mouse' && event.button !== 0) return; event.preventDefault(); event.currentTarget.setPointerCapture(event.pointerId); if (edit) openAssignment(FADER_COUNT + index); else activate(item); }} onPointerUp={(event) => { if (event.currentTarget.hasPointerCapture(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId); release(item); }} onPointerCancel={() => release(item)} onLostPointerCapture={() => release(item)}><i /><strong>{item.label}</strong><small>{item.kind}</small></button>; })}</div></div></div>}
 
     {mode === 'ma' && <div className="desk-ma-scroll"><div className="desk-ma-surface">
       <aside className="desk-ma-command"><button className={poolMode === 'groups' ? 'active' : ''} onClick={() => setPoolMode('groups')}>GROUP</button><button className={poolMode === 'fixtures' ? 'active' : ''} onClick={() => setPoolMode('fixtures')}>FIXTURE</button><button className={poolMode === 'intensity' ? 'active' : ''} onClick={() => setPoolMode('intensity')}>AT</button><button onClick={() => props.onSelectedLevel(100)}>FULL</button><button onClick={() => props.onSelectFixtures([], 'replace')}>CLEAR</button><button onClick={props.onStopFx}>OFF</button></aside>

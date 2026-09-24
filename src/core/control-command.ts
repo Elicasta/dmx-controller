@@ -30,6 +30,7 @@ export type ControlCommand =
   | { type: 'fixture.target'; fixtureIds: string[]; target: Vec3; arrangement?: TargetArrangement; spreadMeters?: number }
   | { type: 'group.color'; groupName: string; color: { red: number; green: number; blue: number } }
   | { type: 'group.master.set'; groupName: string; value: number }
+  | { type: 'group.level.adjust'; groupName: string; previous: number; value: number }
   | { type: 'effect.start'; effectId: EffectId }
   | { type: 'effect.press'; effectId: EffectId }
   | { type: 'effect.release'; effectId: EffectId }

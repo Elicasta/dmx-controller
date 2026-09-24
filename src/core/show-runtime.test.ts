@@ -125,6 +125,40 @@ describe('ShowRuntime', () => {
     expect(restored.frame[4]).toBe(200);
   });
 
+  it('moves group fixture levels by the fader delta, caps bright fixtures, and sets FULL across universes', () => {
+    const fixtures = [
+      { ...DEFAULT_PATCH[0], id: 'left', address: 1, group: 'Front Wash' },
+      { ...DEFAULT_PATCH[0], id: 'center', address: 11, group: 'Front Wash' },
+      { ...DEFAULT_PATCH[0], id: 'right', address: 21, group: 'Front Wash', universe: 2 },
+      { ...DEFAULT_PATCH[0], id: 'unrelated', address: 31, group: 'Other' }
+    ];
+    const runtime = new ShowRuntime({ patch: fixtures });
+    runtime.dispatch(controlCommand('ui', { type: 'frame.update', universe: 1, updates: [[5, 128], [15, 179], [35, 77]] }));
+    runtime.dispatch(controlCommand('ui', { type: 'frame.update', universe: 2, updates: [[25, 255]] }));
+    const increased = runtime.dispatch(controlCommand('surface', { type: 'group.level.adjust', groupName: 'Front Wash', previous: 50, value: 60 }));
+    expect(increased.outputs.map((output) => output.universe)).toEqual([1, 2]);
+    expect(increased.outputs[0].baseFrame[4]).toBe(154);
+    expect(increased.outputs[0].baseFrame[14]).toBe(204);
+    expect(increased.outputs[1].baseFrame[24]).toBe(255);
+    expect(increased.outputs[0].baseFrame[34]).toBe(77);
+    const full = runtime.dispatch(controlCommand('surface', { type: 'group.level.adjust', groupName: 'Front Wash', previous: 60, value: 100 }));
+    expect(full.outputs[0].baseFrame[4]).toBe(255);
+    expect(full.outputs[0].baseFrame[14]).toBe(255);
+    expect(full.outputs[1].baseFrame[24]).toBe(255);
+    const lowered = runtime.dispatch(controlCommand('surface', { type: 'group.level.adjust', groupName: 'Front Wash', previous: 100, value: 90 }));
+    expect(lowered.outputs[0].baseFrame[4]).toBeCloseTo(230, 0);
+    expect(lowered.outputs[1].baseFrame[24]).toBeCloseTo(230, 0);
+  });
+
+  it('takes over an existing output group master without multiplying the new fader levels twice', () => {
+    const runtime = new ShowRuntime({ patch: DEFAULT_PATCH });
+    runtime.dispatch(controlCommand('ui', { type: 'frame.update', universe: 1, updates: [[5, 200]] }));
+    runtime.dispatch(controlCommand('ui', { type: 'group.master.set', groupName: 'Front Wash', value: .5 }));
+    const adjusted = runtime.dispatch(controlCommand('surface', { type: 'group.level.adjust', groupName: 'Front Wash', previous: 50, value: 60 }));
+    expect(adjusted.frame[4]).toBeGreaterThan(100);
+    expect(adjusted.frame[4]).toBe(adjusted.baseFrame[4]);
+  });
+
   it('flashes fixture intensity without changing its programmer base value', () => {
     const runtime = new ShowRuntime({ patch: DEFAULT_PATCH });
     runtime.dispatch(controlCommand('ui', {
