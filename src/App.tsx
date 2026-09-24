@@ -79,6 +79,7 @@ import { DesktopLiveController } from './components/DesktopLiveController';
 import { MidiMappingPanel } from './components/MidiMappingPanel';
 import './desktop-live-controller.css';
 import './workspace-polish.css';
+import './pro-desktop-pass.css';
 import {
   STAGE_ELEMENT_LIBRARY,
   clampStageElement,
