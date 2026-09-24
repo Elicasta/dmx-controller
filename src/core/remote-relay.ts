@@ -58,7 +58,7 @@ export class RemoteRelay {
     let session = (await client.auth.getSession()).data.session;
     const desiredEmail = config.email.trim().toLowerCase();
     if (!session || session.user.email?.toLowerCase() !== desiredEmail) {
-      if (!config.password) throw new Error('Enter the relay account password the first time this Mac connects.');
+      if (!config.password) throw new Error('Enter the relay account password the first time this computer connects.');
       const result = await client.auth.signInWithPassword({ email: desiredEmail, password: config.password });
       if (result.error) throw result.error;
       session = result.data.session;
