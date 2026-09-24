@@ -250,8 +250,8 @@ export function DesktopLiveController(props: DesktopLiveControllerProps) {
       }
     }
     const quickSources: LiveSurfaceAssignment[] = [
-      ...props.effects.map((effect) => ({ id: effect.id, kind: 'effect' as const, targetId: effect.id, label: effect.name, color: effect.color, momentary: effect.momentary })),
-      ...props.looks.map((look) => ({ id: look.id, kind: 'look' as const, targetId: look.id, label: look.name, color: look.color }))
+      ...props.effects.slice(0, 4).map((effect) => ({ id: effect.id, kind: 'effect' as const, targetId: effect.id, label: effect.name, color: effect.color, momentary: effect.momentary })),
+      ...([['WHITE', '#ffffff'], ['RED', '#ff2945'], ['BLUE', '#286cff'], ['MAGENTA', '#e737c7']] as const).map(([label, color]) => ({ id: `color-${label}`, kind: 'color' as const, label, color }))
     ];
     quickSources.slice(0, FADER_COUNT).forEach((source, index) => { map[liveSlotKey('faders', 1, FADER_COUNT + index)] = source; });
     const buskSources: LiveSurfaceAssignment[] = [
