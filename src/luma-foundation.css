@@ -129,3 +129,75 @@ body { background: var(--luma-canvas); }
   border-radius: var(--luma-radius);
   background: var(--luma-panel);
 }
+
+
+/* 2026-09-24 operator-fit pass: controller-parity LIVE + resilient Create/Show layouts */
+.console-workspace,.create-console,.show-console{min-width:0}
+.create-console-v3{grid-template-columns:minmax(220px,18vw) minmax(520px,1fr) minmax(260px,22vw)!important}
+.create-console-v3>*{min-width:0}
+.programmer-main,.create-focus-view,.console-inspector{min-width:0;overflow:auto}
+.programmer-main .vertical-fader-deck{grid-template-columns:repeat(auto-fit,minmax(76px,1fr))!important;min-width:0}
+.console-fader-strip{min-width:72px!important}
+.looks-strip{align-items:flex-start!important}
+.looks-bank{display:grid!important;grid-template-columns:repeat(auto-fit,minmax(118px,1fr))!important;width:100%!important;overflow:visible!important;gap:8px!important}
+.looks-bank>button{width:100%!important;min-width:0!important}
+.create-focus-view>.looks-strip{display:grid!important;grid-template-columns:150px minmax(0,1fr)!important;align-items:start!important}
+.create-focus-view>.looks-strip .looks-bank{grid-template-columns:repeat(auto-fill,minmax(150px,1fr))!important}
+.color-library{display:grid;gap:12px}
+.color-library>header{display:flex;align-items:end;justify-content:space-between;gap:12px}
+.color-library>header div{display:grid;gap:4px}.color-library>header small{color:var(--luma-muted)}
+.color-library form{display:grid!important;grid-template-columns:minmax(160px,1fr) minmax(160px,1fr) auto!important;gap:8px}
+.color-library .palette-filter{max-width:420px}
+.color-folder-stack{display:grid;gap:10px}
+.color-folder{border:1px solid var(--luma-line);border-radius:6px;background:var(--luma-panel);overflow:hidden}
+.color-folder summary{display:grid;grid-template-columns:auto 1fr auto;align-items:center;gap:9px;padding:10px 12px;cursor:pointer;list-style:none;background:var(--luma-chrome)}
+.color-folder summary::-webkit-details-marker{display:none}.color-folder summary b{color:var(--luma-muted);font-size:10px}
+.color-folder-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:8px;padding:8px}
+.color-folder-grid article{display:grid;gap:7px;padding:8px;border:1px solid var(--luma-line);border-radius:5px;background:var(--luma-canvas)}
+.palette-recall{display:grid!important;grid-template-columns:28px 1fr!important;align-items:center!important;text-align:left!important;gap:9px!important}
+.palette-recall i{width:28px;height:28px;border-radius:4px;border:1px solid rgba(255,255,255,.16)}
+.palette-recall span{display:grid}.palette-recall small{color:var(--luma-muted);font-size:9px}
+.palette-edit-row{display:grid;grid-template-columns:1fr 1fr;gap:6px}.palette-actions{display:flex;gap:5px}.palette-actions button{height:28px;padding:0 8px;font-size:9px}
+.preset-bank-v3>div:first-child h3:after{content:" · mover aim / pan-tilt";color:var(--luma-muted);font-weight:500}
+.midi-mapping-console{max-height:min(620px,72vh);overflow:auto!important}
+.midi-mapping-console>header{position:sticky;top:0;z-index:2;background:var(--luma-panel)}
+.midi-header-actions{display:flex;align-items:center;gap:8px}.midi-header-actions button{height:30px}
+.midi-map-list{max-height:420px!important;overflow:auto!important;padding-right:3px}
+.cue-list-console article .cue-line i{box-shadow:0 0 0 1px rgba(255,255,255,.12)}
+.cue-preview-meta{display:grid!important;grid-template-columns:1fr 1fr!important;gap:1px!important;background:var(--luma-line)!important}
+.cue-preview-meta>span{min-width:0!important;margin:0!important;padding:11px 13px!important;background:var(--luma-panel)!important}
+.cue-preview-meta strong{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.show-library-v3{display:grid;gap:12px}
+.show-library-v3>header{position:sticky;top:0;z-index:3;background:var(--luma-canvas);padding-bottom:10px;border-bottom:1px solid var(--luma-line)}
+.show-library-v3>header>div:last-child{display:flex;flex-wrap:wrap;justify-content:flex-end;gap:6px}
+.show-library-grid{display:grid!important;grid-template-columns:repeat(auto-fit,minmax(360px,1fr))!important;gap:8px!important}
+.show-library-grid article{min-height:76px!important;border-left:3px solid var(--luma-line-strong)!important}
+.show-library-grid article:has(.template){border-left-color:var(--luma-preview)!important}
+.show-library-grid article:has(.draft){border-left-color:var(--luma-cued)!important}
+.show-library-grid article:has(.show){border-left-color:var(--luma-live)!important}
+
+/* LIVE is intentionally the same mental model as LumaRig Remote Controller. */
+.live-console-v3{background:var(--luma-canvas)!important}
+.live-command-bar{min-height:76px!important}
+.live-view-tabs{justify-content:flex-end!important;padding:7px 14px!important;background:var(--luma-chrome)!important;border-bottom:1px solid var(--luma-line)!important}
+.live-view-tabs button{flex:0 0 auto!important;min-width:88px!important;height:36px!important;border:1px solid var(--luma-line)!important;border-radius:5px!important;background:var(--luma-panel)!important}
+.live-view-tabs button:nth-child(4),.live-view-tabs button:nth-child(5){display:none!important}
+.live-view-tabs button.active{border-color:var(--luma-focus)!important;box-shadow:inset 0 -2px var(--luma-focus)!important;background:var(--luma-raised-strong)!important;color:var(--luma-text)!important}
+.live-operator-grid{grid-template-columns:minmax(0,1fr)!important}
+.live-executor-rail{display:none!important}
+.live-playback-surface{grid-column:1/-1!important;min-width:0!important}
+.live-fader-deck,.fader-deck{grid-template-columns:repeat(auto-fit,minmax(92px,1fr))!important;gap:5px!important}
+.live-fader-deck .console-fader-strip,.fader-deck .console-fader-strip{min-width:88px!important}
+.live-bank-tabs button{min-width:92px!important}
+.live-programmer-drawer{border-top:1px solid var(--luma-line)!important;background:var(--luma-chrome)!important}
+
+@media(max-width:1050px){
+  .create-console-v3{grid-template-columns:minmax(190px,24vw) minmax(430px,1fr)!important}
+  .create-console-v3>.console-inspector{grid-column:1/-1!important;max-height:310px}
+  .color-library form{grid-template-columns:1fr 1fr}.color-library form button{grid-column:1/-1}
+}
+@media(max-width:850px){
+  .create-console-v3{grid-template-columns:190px minmax(390px,1fr)!important}
+  .create-focus-view>.looks-strip{grid-template-columns:1fr!important}
+  .show-library-grid{grid-template-columns:1fr!important}
+}
