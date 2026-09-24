@@ -68,6 +68,24 @@ describe('show helpers', () => {
     expect(sanitizeShow(show).notes).toHaveLength(4000);
   });
 
+  it('round trips every channel in multi-universe cue snapshots through saved JSON', () => {
+    const show = sanitizeShow({ version: 4, name: 'Round trip', cues: [{ ...cue('a', 1), universes: [
+      { universe: 1, values: Array.from({ length: 512 }, (_, index) => index % 256) },
+      { universe: 7, values: Array.from({ length: 512 }, (_, index) => 255 - index % 256) }
+    ] }] });
+    const reopened: unknown = JSON.parse(JSON.stringify(show));
+    expect(isShowFile(reopened)).toBe(true);
+    if (!isShowFile(reopened)) throw new Error('Saved show failed validation');
+    expect(sanitizeShow(reopened).cues[0].universes).toEqual(show.cues[0].universes);
+  });
+
+  it('rejects conflicting snapshots for the same universe instead of silently losing one', () => {
+    expect(isShowFile({ version: 4, name: 'Ambiguous', cues: [{ ...cue('a', 1), universes: [
+      { universe: 1, values: Array(512).fill(0) },
+      { universe: 1, values: Array(512).fill(255) }
+    ] }] })).toBe(false);
+  });
+
   it('stores compact show-recording changes and sanitizes recorded values', () => {
     const before = Array(512).fill(0);
     const after = [...before];

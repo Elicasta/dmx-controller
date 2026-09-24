@@ -163,6 +163,7 @@ export function isShowFile(value: unknown): value is ShowFile {
       && (item.universes === undefined || (
         Array.isArray(item.universes)
         && item.universes.length <= 64
+        && new Set(item.universes.map((snapshot) => snapshot?.universe)).size === item.universes.length
         && item.universes.every((snapshot) => (
           snapshot && typeof snapshot === 'object'
           && Number.isInteger(snapshot.universe)
