@@ -1,0 +1,33 @@
+/* LUMA operator foundation v1. Keep tokens aligned across desktop apps. */
+:root {
+  --luma-canvas: #0d1218;
+  --luma-panel: #151e27;
+  --luma-raised: #1b2732;
+  --luma-line: #344451;
+  --luma-text: #e2eaf1;
+  --luma-muted: #a5b5c3;
+  --luma-focus: #a6caff;
+  --luma-live: #8fe2b5;
+  --luma-cued: #e8c281;
+  --luma-danger: #f1a3a8;
+}
+:is(.app-shell, .app) { color: var(--luma-text); }
+:is(.app-shell, .app) :is(button, input, select, textarea):focus-visible {
+  outline: 2px solid var(--luma-focus);
+  outline-offset: 2px;
+}
+:is(.app-shell, .app) :is(input, select, textarea) { font-variant-numeric: tabular-nums; }
+:is(.app-shell, .app) button:disabled { cursor: not-allowed; }
+:is(.app-shell, .app) button { transition: border-color 100ms ease, background-color 100ms ease; }
+@media (prefers-reduced-motion: reduce) {
+  :is(.app-shell, .app) button { transition: none; }
+}
+
+/* Rig: retain console density and show colors, improve working labels. */
+.live-status-strip { border-color:var(--luma-line); border-radius:7px; }
+.live-status-strip > div { background:var(--luma-panel); padding:10px 12px; }
+.live-status-strip span { font-size:10px; letter-spacing:.06em; color:var(--luma-muted); font-weight:600; }
+.live-status-strip strong { font-size:12px; margin-top:6px; font-variant-numeric:tabular-nums; }
+.eyebrow { color:var(--luma-muted); letter-spacing:.1em; }
+.panel-heading { border-color:var(--luma-line); }
+.status-pill { border-radius:5px; border-color:var(--luma-line); letter-spacing:.04em; }
