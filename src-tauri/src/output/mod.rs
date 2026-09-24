@@ -18,3 +18,6 @@ pub trait DmxOutput {
 }
 
 pub mod lumaviz_direct;
+
+pub mod fixture_frame;
+pub mod direct_server;

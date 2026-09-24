@@ -37,6 +37,13 @@ describe('console domain adapters', () => {
     expect(removed.patch.every((fixture) => fixture.group === '')).toBe(true);
   });
 
+  it('refuses duplicate group names at the domain boundary', () => {
+    const groups = [makeFixtureGroup('Front Wash'), makeFixtureGroup('Movers', 1)];
+    const result = renameFixtureGroup(groups, [DEFAULT_PATCH[0], mover], groups[1].id, 'front wash');
+    expect(result.groups.map((group) => group.name)).toEqual(['Front Wash', 'Movers']);
+    expect(result.patch).toEqual([DEFAULT_PATCH[0], mover]);
+  });
+
   it('reads semantic intensity, footprint, and effect capability', () => {
     const frame = Array(512).fill(0);
     frame[4] = 128;

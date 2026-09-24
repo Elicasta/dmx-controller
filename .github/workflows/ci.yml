@@ -39,5 +39,19 @@ jobs:
       - name: Frontend production build
         run: npm run build
 
+      - name: Bridge disconnect and malformed-traffic tests
+        run: cargo test --manifest-path tests/bridge-harness/Cargo.toml
+
       - name: Native tests
         run: cargo test --manifest-path src-tauri/Cargo.toml
+
+      - name: Build macOS test DMG
+        run: npm run tauri build -- --bundles dmg
+
+      - name: Upload LumaRig test DMG
+        uses: actions/upload-artifact@v4
+        with:
+          name: LumaRig-macOS-test-DMG
+          path: src-tauri/target/release/bundle/dmg/*.dmg
+          if-no-files-found: error
+          retention-days: 14

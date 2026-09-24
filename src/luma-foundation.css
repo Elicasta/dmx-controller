@@ -1,0 +1,203 @@
+/* LUMA operator foundation v2. Keep tokens aligned across the ecosystem. */
+:root {
+  color-scheme: dark;
+  --luma-canvas: #0b1117;
+  --luma-chrome: #101820;
+  --luma-panel: #141e27;
+  --luma-raised: #1b2731;
+  --luma-raised-strong: #22323e;
+  --luma-line: #30414d;
+  --luma-line-strong: #455d6b;
+  --luma-text: #e4edf3;
+  --luma-muted: #9aadb9;
+  --luma-dim: #70828f;
+  --luma-focus: #9dc6ea;
+  --luma-live: #78dda9;
+  --luma-preview: #8fb9e3;
+  --luma-cued: #d9b878;
+  --luma-danger: #eda0a5;
+  --luma-radius: 6px;
+}
+
+body { background: var(--luma-canvas); }
+:is(.app-shell, .app) { color: var(--luma-text); }
+:is(.app-shell, .app) :is(button, input, select, textarea):focus-visible {
+  outline: 2px solid var(--luma-focus);
+  outline-offset: 2px;
+}
+:is(.app-shell, .app) :is(input, select, textarea) { font-variant-numeric: tabular-nums; }
+:is(.app-shell, .app) button:disabled { cursor: not-allowed; }
+:is(.app-shell, .app) button {
+  transition: border-color 100ms ease, background-color 100ms ease, color 100ms ease;
+}
+:is(.app-shell, .app) * { scrollbar-color: var(--luma-line-strong) var(--luma-chrome); }
+@media (prefers-reduced-motion: reduce) {
+  :is(.app-shell, .app) button { transition: none; }
+}
+
+/* Rig: console density, quiet chrome, strong operational state. */
+.app-shell .topbar {
+  padding-bottom: 17px;
+  border-bottom: 1px solid color-mix(in srgb, var(--luma-line) 70%, transparent);
+}
+.app-shell .workspace-tabs {
+  padding: 3px;
+  border-color: var(--luma-line);
+  border-radius: 7px;
+  background: var(--luma-chrome);
+}
+.app-shell .workspace-tabs button {
+  min-height: 36px;
+  border-radius: 5px;
+  color: var(--luma-muted);
+  letter-spacing: .035em;
+}
+.app-shell .workspace-tabs button.active {
+  color: var(--luma-text);
+  background: var(--luma-raised-strong);
+  box-shadow: inset 0 -2px var(--luma-focus);
+}
+.app-shell .panel {
+  border-color: var(--luma-line);
+  border-radius: 8px;
+  background: var(--luma-panel);
+}
+.app-shell :is(.controls-heading, .fixture-heading) {
+  border-color: var(--luma-line);
+  background: var(--luma-chrome);
+}
+.app-shell :is(select, .device-meta, .color-library) {
+  border-color: var(--luma-line);
+  background: var(--luma-chrome);
+}
+.app-shell .secondary {
+  border-color: var(--luma-line);
+  background: var(--luma-raised);
+}
+.app-shell .secondary:hover { border-color: var(--luma-line-strong); background: var(--luma-raised-strong); }
+.app-shell .eyebrow { color: var(--luma-muted); letter-spacing: .1em; }
+.app-shell .panel-heading { border-color: var(--luma-line); }
+.app-shell .status-pill {
+  border-color: var(--luma-line);
+  border-radius: 5px;
+  background: var(--luma-chrome);
+  letter-spacing: .04em;
+}
+.app-shell .status-pill.online {
+  color: #d8f7e6;
+  border-color: color-mix(in srgb, var(--luma-live) 46%, var(--luma-line));
+  background: color-mix(in srgb, var(--luma-live) 10%, var(--luma-chrome));
+}
+.app-shell .live-status-strip {
+  border-color: var(--luma-line);
+  border-radius: 7px;
+  background: var(--luma-line);
+  box-shadow: 0 8px 24px rgba(0,0,0,.22);
+}
+.app-shell .live-status-strip > div { padding: 10px 12px; background: var(--luma-panel); }
+.app-shell .live-status-strip span {
+  color: var(--luma-muted);
+  font-size: 10px;
+  font-weight: 650;
+  letter-spacing: .06em;
+}
+.app-shell .live-status-strip strong {
+  margin-top: 6px;
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+.app-shell .live-command-bar,
+.app-shell .live-surface-toolbar,
+.app-shell .live-programmer-drawer > header {
+  border-color: var(--luma-line);
+}
+.app-shell :is(.live-executor-rail, .live-playback-surface, .live-master-rack, .live-programmer-drawer) {
+  border-color: var(--luma-line);
+}
+.app-shell .executor-key {
+  border-color: var(--luma-line) !important;
+  background: var(--luma-raised) !important;
+}
+.app-shell .executor-key:hover { border-color: var(--luma-line-strong) !important; }
+.app-shell .live-fader-deck > .console-fader-strip {
+  border-color: var(--luma-line) !important;
+  background: linear-gradient(180deg, var(--luma-raised-strong), var(--luma-panel)) !important;
+}
+.app-shell .live-bank-footer { border-color: var(--luma-line); }
+.app-shell .live-empty-state {
+  border: 1px solid var(--luma-line);
+  border-radius: var(--luma-radius);
+  background: var(--luma-panel);
+}
+
+
+/* 2026-09-24 operator-fit pass: controller-parity LIVE + resilient Create/Show layouts */
+.console-workspace,.create-console,.show-console{min-width:0}
+.create-console-v3{grid-template-columns:minmax(220px,18vw) minmax(520px,1fr) minmax(260px,22vw)!important}
+.create-console-v3>*{min-width:0}
+.programmer-main,.create-focus-view,.console-inspector{min-width:0;overflow:auto}
+.programmer-main .vertical-fader-deck{grid-template-columns:repeat(auto-fit,minmax(76px,1fr))!important;min-width:0}
+.console-fader-strip{min-width:72px!important}
+.looks-strip{align-items:flex-start!important}
+.looks-bank{display:grid!important;grid-template-columns:repeat(auto-fit,minmax(118px,1fr))!important;width:100%!important;overflow:visible!important;gap:8px!important}
+.looks-bank>button{width:100%!important;min-width:0!important}
+.create-focus-view>.looks-strip{display:grid!important;grid-template-columns:150px minmax(0,1fr)!important;align-items:start!important}
+.create-focus-view>.looks-strip .looks-bank{grid-template-columns:repeat(auto-fill,minmax(150px,1fr))!important}
+.color-library{display:grid;gap:12px}
+.color-library>header{display:flex;align-items:end;justify-content:space-between;gap:12px}
+.color-library>header div{display:grid;gap:4px}.color-library>header small{color:var(--luma-muted)}
+.color-library form{display:grid!important;grid-template-columns:minmax(160px,1fr) minmax(160px,1fr) auto!important;gap:8px}
+.color-library .palette-filter{max-width:420px}
+.color-folder-stack{display:grid;gap:10px}
+.color-folder{border:1px solid var(--luma-line);border-radius:6px;background:var(--luma-panel);overflow:hidden}
+.color-folder summary{display:grid;grid-template-columns:auto 1fr auto;align-items:center;gap:9px;padding:10px 12px;cursor:pointer;list-style:none;background:var(--luma-chrome)}
+.color-folder summary::-webkit-details-marker{display:none}.color-folder summary b{color:var(--luma-muted);font-size:10px}
+.color-folder-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:8px;padding:8px}
+.color-folder-grid article{display:grid;gap:7px;padding:8px;border:1px solid var(--luma-line);border-radius:5px;background:var(--luma-canvas)}
+.palette-recall{display:grid!important;grid-template-columns:28px 1fr!important;align-items:center!important;text-align:left!important;gap:9px!important}
+.palette-recall i{width:28px;height:28px;border-radius:4px;border:1px solid rgba(255,255,255,.16)}
+.palette-recall span{display:grid}.palette-recall small{color:var(--luma-muted);font-size:9px}
+.palette-edit-row{display:grid;grid-template-columns:1fr 1fr;gap:6px}.palette-actions{display:flex;gap:5px}.palette-actions button{height:28px;padding:0 8px;font-size:9px}
+.preset-bank-v3>div:first-child h3:after{content:" · mover aim / pan-tilt";color:var(--luma-muted);font-weight:500}
+.midi-mapping-console{max-height:min(620px,72vh);overflow:auto!important}
+.midi-mapping-console>header{position:sticky;top:0;z-index:2;background:var(--luma-panel)}
+.midi-header-actions{display:flex;align-items:center;gap:8px}.midi-header-actions button{height:30px}
+.midi-map-list{max-height:420px!important;overflow:auto!important;padding-right:3px}
+.cue-list-console article .cue-line i{box-shadow:0 0 0 1px rgba(255,255,255,.12)}
+.cue-preview-meta{display:grid!important;grid-template-columns:1fr 1fr!important;gap:1px!important;background:var(--luma-line)!important}
+.cue-preview-meta>span{min-width:0!important;margin:0!important;padding:11px 13px!important;background:var(--luma-panel)!important}
+.cue-preview-meta strong{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.show-library-v3{display:grid;gap:12px}
+.show-library-v3>header{position:sticky;top:0;z-index:3;background:var(--luma-canvas);padding-bottom:10px;border-bottom:1px solid var(--luma-line)}
+.show-library-v3>header>div:last-child{display:flex;flex-wrap:wrap;justify-content:flex-end;gap:6px}
+.show-library-grid{display:grid!important;grid-template-columns:repeat(auto-fit,minmax(360px,1fr))!important;gap:8px!important}
+.show-library-grid article{min-height:76px!important;border-left:3px solid var(--luma-line-strong)!important}
+.show-library-grid article:has(.template){border-left-color:var(--luma-preview)!important}
+.show-library-grid article:has(.draft){border-left-color:var(--luma-cued)!important}
+.show-library-grid article:has(.show){border-left-color:var(--luma-live)!important}
+
+/* LIVE is intentionally the same mental model as LumaRig Remote Controller. */
+.live-console-v3{background:var(--luma-canvas)!important}
+.live-command-bar{min-height:76px!important}
+.live-view-tabs{justify-content:flex-end!important;padding:7px 14px!important;background:var(--luma-chrome)!important;border-bottom:1px solid var(--luma-line)!important}
+.live-view-tabs button{flex:0 0 auto!important;min-width:88px!important;height:36px!important;border:1px solid var(--luma-line)!important;border-radius:5px!important;background:var(--luma-panel)!important}
+.live-view-tabs button:nth-child(4),.live-view-tabs button:nth-child(5){display:none!important}
+.live-view-tabs button.active{border-color:var(--luma-focus)!important;box-shadow:inset 0 -2px var(--luma-focus)!important;background:var(--luma-raised-strong)!important;color:var(--luma-text)!important}
+.live-operator-grid{grid-template-columns:minmax(0,1fr)!important}
+.live-executor-rail{display:none!important}
+.live-playback-surface{grid-column:1/-1!important;min-width:0!important}
+.live-fader-deck,.fader-deck{grid-template-columns:repeat(auto-fit,minmax(92px,1fr))!important;gap:5px!important}
+.live-fader-deck .console-fader-strip,.fader-deck .console-fader-strip{min-width:88px!important}
+.live-bank-tabs button{min-width:92px!important}
+.live-programmer-drawer{border-top:1px solid var(--luma-line)!important;background:var(--luma-chrome)!important}
+
+@media(max-width:1050px){
+  .create-console-v3{grid-template-columns:minmax(190px,24vw) minmax(430px,1fr)!important}
+  .create-console-v3>.console-inspector{grid-column:1/-1!important;max-height:310px}
+  .color-library form{grid-template-columns:1fr 1fr}.color-library form button{grid-column:1/-1}
+}
+@media(max-width:850px){
+  .create-console-v3{grid-template-columns:190px minmax(390px,1fr)!important}
+  .create-focus-view>.looks-strip{grid-template-columns:1fr!important}
+  .show-library-grid{grid-template-columns:1fr!important}
+}

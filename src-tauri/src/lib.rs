@@ -8,7 +8,8 @@ use dmx::{DmxEngine, DmxStatus};
 use midi::{MidiEngine, MidiEvent, MidiInputInfo, MidiStatus};
 use output::{artnet::ArtNetEngine, lumaviz_direct::LumaVizDirectEngine, udmx::UdmxDeviceInfo};
 use studio_bridge::{StudioBridge, StudioBridgeEnvelope, StudioBridgeResponse, StudioBridgeStatus};
-use tauri::State;
+use tauri::{Manager, State};
+use std::fs;
 
 #[tauri::command]
 fn list_udmx_devices(engine: State<'_, DmxEngine>) -> Result<Vec<UdmxDeviceInfo>, String> {
@@ -92,6 +93,27 @@ fn reply_studio_bridge(
     bridge.reply(StudioBridgeResponse { id, ok, error, payload })
 }
 
+#[tauri::command]
+fn save_show_library(app: tauri::AppHandle, library: serde_json::Value) -> Result<String, String> {
+    let dir = app.path().app_data_dir().map_err(|e| e.to_string())?.join("Show Library");
+    fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+    let path = dir.join("library.json");
+    let bytes = serde_json::to_vec_pretty(&library).map_err(|e| e.to_string())?;
+    let tmp = dir.join("library.json.tmp");
+    fs::write(&tmp, bytes).map_err(|e| e.to_string())?;
+    fs::rename(&tmp, &path).map_err(|e| e.to_string())?;
+    Ok(dir.to_string_lossy().into_owned())
+}
+
+#[tauri::command]
+fn open_show_library_folder(app: tauri::AppHandle) -> Result<String, String> {
+    let dir = app.path().app_data_dir().map_err(|e| e.to_string())?.join("Show Library");
+    fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+    #[cfg(target_os = "macos")]
+    std::process::Command::new("open").arg(&dir).spawn().map_err(|e| e.to_string())?;
+    Ok(dir.to_string_lossy().into_owned())
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -126,7 +148,9 @@ pub fn run() {
             drain_midi_events,
             updates::app_version,
             updates::check_for_update,
-            updates::install_update
+            updates::install_update,
+            save_show_library,
+            open_show_library_folder
         ])
         .run(tauri::generate_context!())
         .expect("error while running DMX Controller");

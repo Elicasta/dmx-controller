@@ -1,3 +1,4 @@
+import { isColorPalette, type ColorPalette } from '../core/color';
 import { clampDmx } from './dmx';
 import type { DmxUpdate } from './dmx';
 import type { FixtureLookValues } from './looks';
@@ -53,12 +54,16 @@ export type ShowCue = {
   linkedEffectId?: string;
   trackName?: string;
   values: FixtureLookValues;
+  /** Legacy v1-v3 Universe 1 snapshot. Kept for backward compatibility. */
   universe?: number[];
+  universes?: Array<{ universe: number; values: number[] }>;
 };
 
 export type ShowRecordingFrame = {
   timeMs: number;
+  /** Legacy v1-v3 Universe 1 updates. Kept for backward compatibility. */
   updates: DmxUpdate[];
+  universeUpdates?: Array<{ universe: number; updates: DmxUpdate[] }>;
 };
 
 export type ShowRecording = {
@@ -79,12 +84,13 @@ export type ExternalTrackSync = {
 };
 
 export type ShowFile = {
-  version: 1 | 2 | 3;
+  version: 1 | 2 | 3 | 4;
   name: string;
   notes?: string;
   cues: ShowCue[];
   groups?: FixtureGroup[];
   positionPalettes?: PositionPalette[];
+  colorPalettes?: ColorPalette[];
   recordings?: ShowRecording[];
   externalTrack?: ExternalTrackSync;
 };
@@ -98,7 +104,7 @@ export const DEFAULT_EXTERNAL_TRACK_SYNC: ExternalTrackSync = {
 };
 
 export const EMPTY_SHOW: ShowFile = {
-  version: 3,
+  version: 4,
   name: 'My First Show',
   notes: '',
   cues: [],
@@ -130,7 +136,7 @@ export function moveCue(
 export function isShowFile(value: unknown): value is ShowFile {
   if (!value || typeof value !== 'object') return false;
   const candidate = value as Partial<ShowFile>;
-  if (![1, 2, 3].includes(candidate.version ?? 0) || typeof candidate.name !== 'string' || !Array.isArray(candidate.cues)) {
+  if (![1, 2, 3, 4].includes(candidate.version ?? 0) || typeof candidate.name !== 'string' || !Array.isArray(candidate.cues)) {
     return false;
   }
   const cuesValid = candidate.cues.every((cue) => {
@@ -152,7 +158,20 @@ export function isShowFile(value: unknown): value is ShowFile {
       && (item.universe === undefined || (
         Array.isArray(item.universe)
         && item.universe.length === 512
-        && item.universe.every((channel) => typeof channel === 'number')
+        && item.universe.every((channel) => typeof channel === 'number' && Number.isFinite(channel))
+      ))
+      && (item.universes === undefined || (
+        Array.isArray(item.universes)
+        && item.universes.length <= 64
+        && new Set(item.universes.map((snapshot) => snapshot?.universe)).size === item.universes.length
+        && item.universes.every((snapshot) => (
+          snapshot && typeof snapshot === 'object'
+          && Number.isInteger(snapshot.universe)
+          && snapshot.universe >= 1
+          && Array.isArray(snapshot.values)
+          && snapshot.values.length === 512
+          && snapshot.values.every((channel) => typeof channel === 'number' && Number.isFinite(channel))
+        ))
       ))
       && Boolean(values)
       && ['red', 'green', 'blue', 'uv', 'dimmer'].every((key) => (
@@ -169,6 +188,7 @@ export function isShowFile(value: unknown): value is ShowFile {
   );
   return cuesValid
     && externalTrackValid
+    && (candidate.colorPalettes === undefined || (Array.isArray(candidate.colorPalettes) && candidate.colorPalettes.every(isColorPalette)))
     && (candidate.groups === undefined || (Array.isArray(candidate.groups) && candidate.groups.every(isFixtureGroup)))
     && (candidate.positionPalettes === undefined || (Array.isArray(candidate.positionPalettes) && candidate.positionPalettes.every(isPositionPalette)))
     && (candidate.recordings === undefined || (
@@ -245,6 +265,26 @@ export function isShowRecording(value: unknown): value is ShowRecording {
         && update[0] >= 1
         && update[0] <= 512
         && typeof update[1] === 'number'
+        && Number.isFinite(update[1])
+      ))
+      && (frame.universeUpdates === undefined || (
+        Array.isArray(frame.universeUpdates)
+        && frame.universeUpdates.length <= 64
+        && frame.universeUpdates.every((entry) => (
+          entry && typeof entry === 'object'
+          && Number.isInteger(entry.universe)
+          && entry.universe >= 1
+          && Array.isArray(entry.updates)
+          && entry.updates.every((update) => (
+            Array.isArray(update)
+            && update.length === 2
+            && Number.isInteger(update[0])
+            && update[0] >= 1
+            && update[0] <= 512
+            && typeof update[1] === 'number'
+            && Number.isFinite(update[1])
+          ))
+        ))
       ))
     ));
 }
@@ -272,7 +312,8 @@ export function applyLightingOffset(positionMs: number, offsetMs: number) {
 
 export function sanitizeShow(show: ShowFile): ShowFile {
   return {
-    version: 3,
+    version: 4,
+    colorPalettes: (show.colorPalettes ?? []).filter(isColorPalette).slice(0, 256).map(p => ({id:p.id.slice(0,100),name:p.name.trim().slice(0,64),color:p.color.toLowerCase(),folder:p.folder.trim().slice(0,64)})),
     name: show.name.trim().slice(0, 64) || EMPTY_SHOW.name,
     notes: typeof show.notes === 'string' ? show.notes.slice(0, 4000) : '',
     groups: (show.groups ?? []).slice(0, 64).map((group) => ({
@@ -310,7 +351,22 @@ export function sanitizeShow(show: ShowFile): ShowFile {
         uv: clampDmx(cue.values.uv),
         dimmer: clampDmx(cue.values.dimmer)
       },
-      universe: cue.universe?.slice(0, 512).map(clampDmx)
+      universe: cue.universe?.slice(0, 512).map(clampDmx),
+      universes: (
+        cue.universes?.length
+          ? cue.universes
+          : cue.universe ? [{ universe: 1, values: cue.universe }] : []
+      )
+        .filter((snapshot, index, snapshots) => (
+          Number.isInteger(snapshot.universe)
+          && snapshot.universe >= 1
+          && snapshots.findIndex((item) => item.universe === snapshot.universe) === index
+        ))
+        .slice(0, 64)
+        .map((snapshot) => ({
+          universe: snapshot.universe,
+          values: Array.from({ length: 512 }, (_, index) => clampDmx(snapshot.values[index] ?? 0))
+        }))
     }))),
     positionPalettes: (show.positionPalettes ?? []).slice(0, 64).map((palette): PositionPalette => palette.kind === 'spatial' ? {
       id: palette.id.slice(0, 100),
@@ -342,13 +398,34 @@ export function sanitizeShow(show: ShowFile): ShowFile {
       trackName: recording.trackName.trim().slice(0, 180),
       durationMs: Math.max(0, Math.min(3_600_000, Math.round(recording.durationMs))),
       createdAt: recording.createdAt,
-      frames: recording.frames.slice(0, MAX_RECORDING_FRAMES).map((frame) => ({
-        timeMs: Math.max(0, Math.min(3_600_000, Math.round(frame.timeMs))),
-        updates: frame.updates.slice(0, 512).map(([channel, value]) => [
+      frames: recording.frames.slice(0, MAX_RECORDING_FRAMES).map((frame) => {
+        const legacyUpdates = frame.updates.slice(0, 512).map(([channel, value]) => [
           Math.max(1, Math.min(512, Math.round(channel))),
           clampDmx(value)
-        ] as const)
-      }))
+        ] as DmxUpdate);
+        const sourceUniverseUpdates = frame.universeUpdates?.length
+          ? frame.universeUpdates
+          : legacyUpdates.length ? [{ universe: 1, updates: legacyUpdates }] : [];
+        const universeUpdates = sourceUniverseUpdates
+          .filter((entry, index, entries) => (
+            Number.isInteger(entry.universe)
+            && entry.universe >= 1
+            && entries.findIndex((item) => item.universe === entry.universe) === index
+          ))
+          .slice(0, 64)
+          .map((entry) => ({
+            universe: entry.universe,
+            updates: entry.updates.slice(0, 512).map(([channel, value]) => [
+              Math.max(1, Math.min(512, Math.round(channel))),
+              clampDmx(value)
+            ] as DmxUpdate)
+          }));
+        return {
+          timeMs: Math.max(0, Math.min(3_600_000, Math.round(frame.timeMs))),
+          updates: universeUpdates.find((entry) => entry.universe === 1)?.updates ?? legacyUpdates,
+          universeUpdates
+        };
+      })
     }))
   };
 }

@@ -4,6 +4,7 @@ import type { OutputDriver, OutputDriverStatus } from './output-router';
 export type ArtNetOutputConfig = {
   enabled: boolean;
   target: string;
+  blackout?: boolean;
 };
 
 export type ArtNetFrameSender = (
@@ -41,7 +42,8 @@ export class ArtNetOutputDriver implements OutputDriver {
     if (!config.enabled) return;
 
     try {
-      await this.sender(config.target, universe, frame);
+      const output = config.blackout ? Array.from({ length: 512 }, () => 0) : frame;
+      await this.sender(config.target, universe, output);
       this.framesSent += 1;
       this.lastError = undefined;
     } catch (error) {

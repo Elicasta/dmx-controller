@@ -5,6 +5,7 @@ on:
     branches:
       - main
       - build/artnet-smoke
+      - review/ecosystem-reliability
 
 permissions:
   contents: read

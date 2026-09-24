@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { EFFECT_PRESETS, effectWaveValue, renderCustomEffect, renderEffect, type CustomEffect } from './effects';
+import { EFFECT_PRESETS, effectWaveValue, renderCustomEffect, renderCustomEffectByUniverse, renderEffect, renderEffectByUniverse, type CustomEffect } from './effects';
 import { DEFAULT_PATCH, type PatchedFixture } from './fixtures';
 
 describe('portable effects', () => {
@@ -64,5 +64,31 @@ describe('portable effects', () => {
     const first = { ...DEFAULT_PATCH[0], id: 'first', address: 1, selected: true };
     const second = { ...DEFAULT_PATCH[0], id: 'second', address: 11, selected: true };
     expect(renderEffect('chase', [second, first], 0, 120, 1)).toEqual([[15, 255], [5, 0]]);
+  });
+
+  it('keeps same-address fixtures isolated across universes while preserving global chase order', () => {
+    const first = { ...DEFAULT_PATCH[0], id: 'u1', universe: 1, address: 1, selected: true };
+    const second = { ...DEFAULT_PATCH[0], id: 'u2', universe: 2, address: 1, selected: true };
+    const frames = renderEffectByUniverse('chase', [first, second], 0, 120, 1);
+    expect(frames.get(1)).toEqual([[5, 255]]);
+    expect(frames.get(2)).toEqual([[5, 0]]);
+  });
+
+  it('scopes custom FX updates by universe too', () => {
+    const effect: CustomEffect = {
+      id: 'custom-multi',
+      name: 'Custom Multi',
+      parameter: 'dimmer',
+      waveform: 'square',
+      bpm: 120,
+      depth: 100,
+      phaseSpread: 0,
+      offset: 0
+    };
+    const first = { ...DEFAULT_PATCH[0], id: 'u1', universe: 1, address: 1, selected: true };
+    const second = { ...DEFAULT_PATCH[0], id: 'u2', universe: 2, address: 1, selected: true };
+    const frames = renderCustomEffectByUniverse(effect, [first, second], 0);
+    expect(frames.get(1)).toEqual([[5, 255]]);
+    expect(frames.get(2)).toEqual([[5, 255]]);
   });
 });

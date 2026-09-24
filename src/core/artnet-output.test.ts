@@ -17,6 +17,24 @@ describe('ArtNetOutputDriver', () => {
     expect(driver.status()).toMatchObject({ framesSent: 1 });
   });
 
+  it('sends physical black on Art-Net while preserving the caller frame', async () => {
+    let sent: readonly number[] = [];
+    const sender = vi.fn(async (_target: string, _universe: number, frame: readonly number[]) => {
+      sent = [...frame];
+    });
+    const driver = new ArtNetOutputDriver(
+      () => ({ enabled: true, target: '127.0.0.1', blackout: true }),
+      sender
+    );
+    const frame = Array.from({ length: 512 }, () => 200);
+
+    await driver.sendFrame(2, frame);
+
+    expect(frame[0]).toBe(200);
+    expect(sent).toHaveLength(512);
+    expect(sent.every((value) => value === 0)).toBe(true);
+  });
+
   it('does nothing while the visualizer output is disabled', async () => {
     const sender = vi.fn(async () => {});
     const driver = new ArtNetOutputDriver(

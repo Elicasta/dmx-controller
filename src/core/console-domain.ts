@@ -64,7 +64,7 @@ export function fixtureSupportsParameter(fixture: PatchedFixture, parameter: Fix
 }
 
 export function fixtureSupportsColor(fixture: PatchedFixture): boolean {
-  return ['red', 'green', 'blue', 'white', 'amber', 'uv'].some((parameter) => (
+  return ['red', 'green', 'blue'].every((parameter) => (
     fixtureSupportsParameter(fixture, parameter as FixtureParameter)
   ));
 }
@@ -122,7 +122,8 @@ export function renameFixtureGroup(
 ): { groups: FixtureGroup[]; patch: PatchedFixture[] } {
   const cleanName = nextName.trim().slice(0, 64);
   const current = groups.find((group) => group.id === groupIdToRename);
-  if (!current || !cleanName) return { groups: [...groups], patch: [...patch] };
+  const conflicts = groups.some((group) => group.id !== groupIdToRename && group.name.trim().toLowerCase() === cleanName.toLowerCase());
+  if (!current || !cleanName || conflicts) return { groups: [...groups], patch: [...patch] };
   return {
     groups: groups.map((group) => group.id === groupIdToRename ? { ...group, name: cleanName } : group),
     patch: patch.map((fixture) => fixture.group === current.name ? { ...fixture, group: cleanName } : fixture)

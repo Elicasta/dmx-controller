@@ -1,3 +1,4 @@
+import { ColorPaletteLibrary } from './components/ColorPaletteLibrary';
 import { useCallback, useEffect, useMemo, useRef, useState, type ChangeEvent, type PointerEvent as ReactPointerEvent } from 'react';
 import { lumaVizDirectStatus, pollLumaVizDirectMessages, semanticFrameFromResolvedOutput, sendLumaVizDirectFrame, sendLumaVizDirectMessage, startLumaVizDirect, type LumaVizDirectStatus, type SharedShowPatchMutation } from './core/lumaviz-direct';
 import type { SharedLocationPreset } from './core/shared-locations';
@@ -11,7 +12,7 @@ import {
   VISIBLE_CHANNELS,
   type DmxUpdate
 } from './lib/dmx';
-import { EFFECT_PRESETS, EFFECT_SHAPES, effectWaveValue, renderEffect, renderCustomEffect, type CustomEffect, type EffectId, type EffectParameter, type EffectPreset, type EffectWaveform } from './lib/effects';
+import { EFFECT_PRESETS, EFFECT_SHAPES, effectWaveValue, renderEffectByUniverse, renderCustomEffectByUniverse, type CustomEffect, type EffectId, type EffectParameter, type EffectPreset, type EffectWaveform } from './lib/effects';
 import {
   DEFAULT_PATCH,
   FIXTURE_LIBRARY,
@@ -115,6 +116,7 @@ import {
 import { CallbackOutputDriver, OutputRouter, VirtualOutputDriver } from './core/output-router';
 import { ArtNetOutputDriver } from './core/artnet-output';
 import { ShowRuntime, type RuntimeDispatchResult } from './core/show-runtime';
+import { CueLaunchGuard } from './core/cue-launch-guard';
 import { projectStagePoint, unprojectStagePoint, type StagePoint2D, type StageView } from './core/stage-projection';
 import { arrangeTargetPoints, buildStageTargets, type TargetArrangement, type TargetPoint } from './core/targets';
 import { RemoteRelay, type RelayCommandEnvelope, type RemoteRelayConfig, type RemoteRelayStatus } from './core/remote-relay';
@@ -551,7 +553,8 @@ export default function App() {
   const [showFile, setShowFile] = useState<ShowFile>(loadShowFile);
   const [showLibrary, setShowLibrary] = useState<ShowProjectSnapshot[]>(loadShowLibrary);
   const [liveBank, setLiveBank] = useState<LiveBank>('fixtures');
-  const [liveProgrammerOpen, setLiveProgrammerOpen] = useState(false);
+  const [liveProgrammerOpen, setLiveProgrammerOpen] = useState(true);
+  const [liveFaderPage, setLiveFaderPage] = useState(0);
   const [livePaletteFamily, setLivePaletteFamily] = useState<LivePaletteFamily>('groups');
   const [settings, setSettings] = useState<AppSettings>(loadSettings);
   const settingsRef = useRef(settings);
@@ -706,10 +709,10 @@ export default function App() {
   const effectTargetIdsRef = useRef<string[]>([]);
   const effectAnimationRef = useRef<number | null>(null);
   const effectStartedRef = useRef(0);
-  const effectBaseUniverseRef = useRef<number[]>(makeUniverse());
+  const effectBaseUniversesRef = useRef<Map<number, number[]>>(new Map([[1, makeUniverse()]]));
   const momentaryEffectRef = useRef<{
     effect: EffectId;
-    baseUniverse: number[];
+    baseUniverses: Map<number, number[]>;
     previousEffect: EffectId | null;
     previousTargetIds: string[];
   } | null>(null);
@@ -727,6 +730,9 @@ export default function App() {
   const [cueName, setCueName] = useState('');
   const [cueFadeMs, setCueFadeMs] = useState(1000);
   const [activeCueId, setActiveCueId] = useState<string | null>(null);
+  const activeCueIdRef = useRef<string | null>(null);
+  const cueLaunchGuardRef = useRef(new CueLaunchGuard());
+  const cueDelayTimerRef = useRef<number | null>(null);
   const cueFollowTimerRef = useRef<number | null>(null);
 
   const [showTrackUrl, setShowTrackUrl] = useState('');
@@ -817,7 +823,8 @@ export default function App() {
     }));
     router.register(new ArtNetOutputDriver(() => ({
       enabled: settingsRef.current.visualizerArtNetEnabled,
-      target: settingsRef.current.visualizerArtNetTarget.trim() || '127.0.0.1'
+      target: settingsRef.current.visualizerArtNetTarget.trim() || '127.0.0.1',
+      blackout: runtimeRef.current?.snapshot.blackout ?? false
     })));
     outputRouterRef.current = router;
   }
@@ -931,6 +938,10 @@ export default function App() {
   useEffect(() => { externalLightingOffsetRef.current = externalTrack.lightingOffsetMs; }, [externalTrack.lightingOffsetMs]);
   useEffect(() => { midiLearnMappingIdRef.current = midiLearnMappingId; }, [midiLearnMappingId]);
   useEffect(() => { audioArmedRef.current = audioArmed; }, [audioArmed]);
+  useEffect(() => () => {
+    if (cueDelayTimerRef.current !== null) window.clearTimeout(cueDelayTimerRef.current);
+    if (cueFollowTimerRef.current !== null) window.clearTimeout(cueFollowTimerRef.current);
+  }, []);
   useEffect(() => { showTrackUrlRef.current = showTrackUrl; }, [showTrackUrl]);
   useEffect(() => {
     if (stageFixture) setOrganizerDraft(stageFixture);
@@ -949,6 +960,7 @@ export default function App() {
   useEffect(() => {
     try { window.localStorage.setItem(SHOW_LIBRARY_STORAGE_KEY, JSON.stringify(showLibrary)); }
     catch { setMessage('Show library storage is full. Delete an older saved show or large recording.'); }
+    void invoke<string>('save_show_library', { library: showLibrary }).catch(() => { /* browser preview keeps local library */ });
   }, [showLibrary]);
   useEffect(() => window.localStorage.setItem(MIDI_STORAGE_KEY, JSON.stringify(midiMappings)), [midiMappings]);
   useEffect(() => window.localStorage.setItem(SETTINGS_STORAGE_KEY, JSON.stringify(settings)), [settings]);
@@ -1031,19 +1043,26 @@ export default function App() {
     setUniverse(result.baseFrame);
     outputUniverseRef.current = result.frame;
     setOutputUniverse(result.frame);
-    try { await outputRouterRef.current?.route(result.universe, result.frame); }
-    catch (error) { setMessage(`Output update failed: ${String(error)}`); }
-    directSequenceRef.current += 1;
-    const directFrame = semanticFrameFromResolvedOutput(
-      directSequenceRef.current,
-      result.frame,
-      patchRef.current,
-      result.universe,
-      showFile.name
-    );
-    void sendLumaVizDirectFrame(directFrame).catch(() => {
-      // Direct visualization is non-fatal and must never interrupt physical output.
-    });
+    try {
+      await Promise.all(result.outputs.map((output) => outputRouterRef.current?.route(output.universe, output.frame)));
+    } catch (error) {
+      setMessage(`Output update failed: ${String(error)}`);
+    }
+    const blackout = runtimeRef.current?.snapshot.blackout ?? false;
+    for (const output of result.outputs) {
+      directSequenceRef.current += 1;
+      const visualFrame = blackout ? makeUniverse() : output.frame;
+      const directFrame = semanticFrameFromResolvedOutput(
+        directSequenceRef.current,
+        visualFrame,
+        patchRef.current,
+        output.universe,
+        showFile.name
+      );
+      void sendLumaVizDirectFrame(directFrame).catch(() => {
+        // Direct visualization is non-fatal and must never interrupt physical output.
+      });
+    }
   }
 
   async function dispatchControl(command: ControlCommand, source: ControlSource = 'ui') {
@@ -1062,8 +1081,128 @@ export default function App() {
     await dispatchControl({ type: 'frame.replace', universe: 1, values: next }, source);
   }
 
+  function cloneEffectBaseFrames(fixtures?: readonly PatchedFixture[]) {
+    const snapshot = runtimeRef.current!.snapshot;
+    const universes = fixtures?.length
+      ? [...new Set(fixtures.map((fixture) => fixture.universe ?? 1))]
+      : [...new Set([...snapshot.baseUniverses.keys(), ...patchRef.current.map((fixture) => fixture.universe ?? 1)])];
+    if (!universes.length) universes.push(1);
+    return new Map(
+      universes
+        .sort((a, b) => a - b)
+        .map((universe) => [universe, [...(snapshot.baseUniverses.get(universe) ?? makeUniverse())]])
+    );
+  }
+
+  function clonePatchedOutputFrames() {
+    const snapshot = runtimeRef.current!.snapshot;
+    const universes = [...new Set([...snapshot.universes.keys(), ...patchRef.current.map((fixture) => fixture.universe ?? 1)])].sort((a, b) => a - b);
+    if (!universes.length) universes.push(1);
+    return new Map(universes.map((universe) => [universe, [...(snapshot.universes.get(universe) ?? makeUniverse())]]));
+  }
+
+  function cueUniverseFrames(cue: ShowCue) {
+    if (cue.universes?.length) {
+      return new Map(cue.universes.map((snapshot) => [snapshot.universe, [...snapshot.values]]));
+    }
+    if (cue.universe?.length === 512) return new Map([[1, [...cue.universe]]]);
+    const selected = selectedFixtures(patchRef.current);
+    const baseFrames = cloneEffectBaseFrames(selected);
+    const frames = new Map<number, number[]>();
+    for (const [universe, base] of baseFrames) {
+      const fixtures = selected.filter((fixture) => (fixture.universe ?? 1) === universe);
+      frames.set(universe, applyUniverseUpdates(base, lookUpdates(cue.values, fixtures)));
+    }
+    return frames;
+  }
+
+  function lookTargetFrames(look: FixtureLook) {
+    const selected = selectedFixtures(patchRef.current);
+    const baseFrames = cloneEffectBaseFrames(selected);
+    const frames = new Map<number, number[]>();
+    for (const [universe, base] of baseFrames) {
+      const fixtures = selected.filter((fixture) => (fixture.universe ?? 1) === universe);
+      frames.set(universe, applyUniverseUpdates(base, lookUpdates(look.values, fixtures)));
+    }
+    return frames;
+  }
+
+  function serializeUniverseFrames(frames: ReadonlyMap<number, readonly number[]>) {
+    return [...frames.entries()]
+      .sort(([a], [b]) => a - b)
+      .map(([universe, values]) => ({ universe, values: [...values] }));
+  }
+
+  function capEffectUpdatesByUniverse(updatesByUniverse: ReadonlyMap<number, ReadonlyArray<DmxUpdate>>) {
+    const masterCap = percentToDmx(settingsRef.current.masterLimit);
+    const result = new Map<number, DmxUpdate[]>();
+    for (const [universe, updates] of updatesByUniverse) {
+      const dimmerChannels = new Set(
+        patchRef.current
+          .filter((fixture) => (fixture.universe ?? 1) === universe)
+          .map((fixture) => parameterChannel(fixture, 'dimmer'))
+          .filter((channel): channel is number => channel !== null)
+      );
+      result.set(
+        universe,
+        updates.map(([channel, value]) => [channel, dimmerChannels.has(channel) ? Math.min(value, masterCap) : value] as DmxUpdate)
+      );
+    }
+    return result;
+  }
+
+  function effectFramesFromUpdates(
+    baseUniverses: ReadonlyMap<number, readonly number[]>,
+    updatesByUniverse: ReadonlyMap<number, ReadonlyArray<DmxUpdate>>
+  ) {
+    const frames = new Map<number, number[]>();
+    for (const [universe, base] of baseUniverses) {
+      frames.set(universe, applyUniverseUpdates(base, updatesByUniverse.get(universe) ?? []));
+    }
+    return frames;
+  }
+
+  async function commitUniverseFrames(frames: ReadonlyMap<number, readonly number[]>, source: ControlSource = 'fx') {
+    if (!frames.size) return;
+    await dispatchControl({
+      type: 'frame.batch.replace',
+      frames: [...frames.entries()]
+        .sort(([a], [b]) => a - b)
+        .map(([universe, values]) => ({ universe, values: [...values] }))
+    }, source);
+  }
+
+  async function clearFixtureFrames(fixtures: readonly PatchedFixture[], source: ControlSource = 'ui') {
+    if (!fixtures.length) return;
+    stopFade();
+    if (activeEffectRef.current) stopEffect(false);
+    if (audioArmedRef.current) setAudioArmed(false);
+    const frames = cloneEffectBaseFrames(fixtures);
+    for (const fixture of fixtures) {
+      const universe = fixture.universe ?? 1;
+      const base = frames.get(universe) ?? makeUniverse();
+      const mode = findMode(fixture);
+      const updates = Array.from(
+        { length: mode?.channelCount ?? 0 },
+        (_, index) => [fixture.address + index, 0] as DmxUpdate
+      );
+      frames.set(universe, applyUniverseUpdates(base, updates));
+    }
+    await commitUniverseFrames(frames, source);
+  }
+
   async function commitOutputUniverse(next: number[], source: ControlSource = 'recorder') {
     await dispatchControl({ type: 'frame.output.replace', universe: 1, values: next }, source);
+  }
+
+  async function commitOutputUniverseFrames(frames: ReadonlyMap<number, readonly number[]>, source: ControlSource = 'recorder') {
+    if (!frames.size) return;
+    await dispatchControl({
+      type: 'frame.batch.output.replace',
+      frames: [...frames.entries()]
+        .sort(([a], [b]) => a - b)
+        .map(([universe, values]) => ({ universe, values: [...values] }))
+    }, source);
   }
 
   async function setChannels(updates: ReadonlyArray<DmxUpdate>, interrupt = true, source: ControlSource = 'ui') {
@@ -1095,12 +1234,27 @@ export default function App() {
     void dispatchControl({ type: 'fixture.select', fixtureIds: [fixtureId], mode: 'toggle' }, source);
   }
 
-  function fadeToUniverse(name: string, target: number[], duration: number, source: ControlSource = 'ui') {
+  function fadeToUniverseFrames(
+    name: string,
+    targets: ReadonlyMap<number, readonly number[]>,
+    duration: number,
+    source: ControlSource = 'ui'
+  ) {
     stopFade();
     if (activeEffectRef.current) stopEffect(false);
-    const from = [...universeRef.current];
+    if (!targets.size) {
+      setMessage(`${name} has no target universes.`);
+      return;
+    }
+    const snapshot = runtimeRef.current!.snapshot;
+    const from = new Map<number, number[]>(
+      [...targets.keys()].map((universe) => [
+        universe,
+        [...(snapshot.baseUniverses.get(universe) ?? makeUniverse())]
+      ])
+    );
     if (duration === 0) {
-      void commitUniverse(target, source);
+      void commitUniverseFrames(targets, source);
       setMessage(`${name} is live.`);
       return;
     }
@@ -1112,7 +1266,11 @@ export default function App() {
       const eased = raw < .5 ? 4 * raw * raw * raw : 1 - Math.pow(-2 * raw + 2, 3) / 2;
       if (now - fadeLastFrameRef.current >= FRAME_MS || raw === 1) {
         fadeLastFrameRef.current = now;
-        void commitUniverse(interpolateUniverse(from, target, eased), source);
+        const frames = new Map<number, number[]>();
+        for (const [universe, target] of targets) {
+          frames.set(universe, interpolateUniverse(from.get(universe) ?? makeUniverse(), target, eased));
+        }
+        void commitUniverseFrames(frames, source);
       }
       if (raw < 1) fadeAnimationRef.current = requestAnimationFrame(tick);
       else {
@@ -1124,22 +1282,28 @@ export default function App() {
     fadeAnimationRef.current = requestAnimationFrame(tick);
   }
 
+  function fadeToUniverse(name: string, target: number[], duration: number, source: ControlSource = 'ui') {
+    fadeToUniverseFrames(name, new Map([[1, target]]), duration, source);
+  }
+
   function runLook(look: FixtureLook, duration = fadeMs) {
-    const target = applyUniverseUpdates(universeRef.current, lookUpdates(look.values, selectedFixtures(patch)));
-    fadeToUniverse(look.name, target, duration);
+    fadeToUniverseFrames(look.name, lookTargetFrames(look), duration);
   }
 
   function applyGlobalColor(hex: string, source: ControlSource = 'ui') {
     setGlobalColor(hex);
     const rgb = hexToRgb(hex);
-    const targets = selectedFixtures(patch);
-    const updates = targets.flatMap((fixture) => {
-      const result = fixtureColorUpdates(fixture, rgb);
-      const dimmer = parameterChannel(fixture, 'dimmer');
-      if (dimmer && universeRef.current[dimmer - 1] === 0) result.push([dimmer, percentToDmx(globalMaster, settings.masterLimit)]);
-      return result;
-    });
-    void setChannels(updates, true, source);
+    const targets = compatibleColorFixtures(selectedFixtures(patch));
+    stopFade();
+    if (activeEffectRef.current) stopEffect(false);
+    if (audioArmedRef.current) setAudioArmed(false);
+    if (targets.length) {
+      void dispatchControl({
+        type: 'fixture.color',
+        fixtureIds: targets.map((fixture) => fixture.id),
+        color: { red: rgb[0], green: rgb[1], blue: rgb[2] }
+      }, source);
+    }
     setMessage(`Color applied to ${targets.length} light${targets.length === 1 ? '' : 's'}.`);
   }
 
@@ -1166,7 +1330,7 @@ export default function App() {
     }
     const preset = EFFECT_PRESETS.find((item) => item.id === effect);
     effectTargetIdsRef.current = targets.map((fixture) => fixture.id);
-    effectBaseUniverseRef.current = [...universeRef.current];
+    effectBaseUniversesRef.current = cloneEffectBaseFrames(targets);
     effectStartedRef.current = performance.now();
     activeEffectRef.current = effect;
     setActiveEffect(effect);
@@ -1178,21 +1342,18 @@ export default function App() {
         .map((fixture) => ({ ...fixture, selected: true }));
       const bpm = tempoSourceRef.current === 'midi' && midiBpmRef.current ? midiBpmRef.current : effectBpmRef.current;
       const elapsed = now - effectStartedRef.current;
-      if (effect === 'finale' && elapsed >= (60000 / bpm) * 8) {
-        const finaleHold = renderEffect('blinder', effectFixtures, elapsed, bpm, 1);
-        const dimmerChannels = new Set(patchRef.current.map((fixture) => parameterChannel(fixture, 'dimmer')).filter(Boolean));
-        const masterCap = percentToDmx(settingsRef.current.masterLimit);
-        const cappedHold = finaleHold.map(([channel, value]) => [channel, dimmerChannels.has(channel) ? Math.min(value, masterCap) : value] as const);
-        void commitUniverse(applyUniverseUpdates(effectBaseUniverseRef.current, cappedHold), 'fx');
+      const effectToRender = effect === 'finale' && elapsed >= (60000 / bpm) * 8 ? 'blinder' : effect;
+      const depth = effectToRender === 'blinder' ? 1 : effectDepthRef.current / 100;
+      const updatesByUniverse = capEffectUpdatesByUniverse(
+        renderEffectByUniverse(effectToRender, effectFixtures, elapsed, bpm, depth)
+      );
+      const frames = effectFramesFromUpdates(effectBaseUniversesRef.current, updatesByUniverse);
+      void commitUniverseFrames(frames, 'fx');
+      if (effect === 'finale' && effectToRender === 'blinder') {
         stopEffect(false);
         setMessage('Finale complete — holding the full-white finish.');
         return;
       }
-      const dimmerChannels = new Set(patchRef.current.map((fixture) => parameterChannel(fixture, 'dimmer')).filter(Boolean));
-      const masterCap = percentToDmx(settingsRef.current.masterLimit);
-      const updates = renderEffect(effect, effectFixtures, elapsed, bpm, effectDepthRef.current / 100)
-        .map(([channel, value]) => [channel, dimmerChannels.has(channel) ? Math.min(value, masterCap) : value] as const);
-      void commitUniverse(applyUniverseUpdates(effectBaseUniverseRef.current, updates), 'fx');
       effectAnimationRef.current = requestAnimationFrame(tick);
     };
     effectAnimationRef.current = requestAnimationFrame(tick);
@@ -1209,11 +1370,11 @@ export default function App() {
 
   function startMomentaryEffect(effect: EffectId, targetIds?: readonly string[]) {
     if (momentaryEffectRef.current?.effect === effect) return;
-    const baseUniverse = [...universeRef.current];
+    const baseUniverses = cloneEffectBaseFrames();
     const previousEffect = activeEffectRef.current;
     const previousTargetIds = [...effectTargetIdsRef.current];
     startEffect(effect, targetIds);
-    momentaryEffectRef.current = { effect, baseUniverse, previousEffect, previousTargetIds };
+    momentaryEffectRef.current = { effect, baseUniverses, previousEffect, previousTargetIds };
     const preset = EFFECT_PRESETS.find((item) => item.id === effect);
     setMessage(`${preset?.name ?? effect} held — release to restore the previous output.`);
   }
@@ -1224,7 +1385,7 @@ export default function App() {
     momentaryEffectRef.current = null;
     stopEffect(false);
     const preset = EFFECT_PRESETS.find((item) => item.id === effect);
-    void commitUniverse(held.baseUniverse, 'fx').finally(() => {
+    void commitUniverseFrames(held.baseUniverses, 'fx').finally(() => {
       if (held.previousEffect) startEffect(held.previousEffect, held.previousTargetIds);
       else setMessage(`${preset?.name ?? effect} released. Previous output restored.`);
     });
@@ -1257,52 +1418,105 @@ export default function App() {
   function captureCue() {
     const number = showFile.cues.length + 1;
     const name = cueName.trim() || `Cue ${number}`;
-    const cue: ShowCue = { id: `cue-${Date.now().toString(36)}`, number, name, fadeMs: cueFadeMs, fadeOutMs: cueFadeMs, delayMs: 0, followMs: 0, color: globalColor, description: '', linkedLookId: '', linkedEffectId: '', trackName: '', values: { ...primaryValues }, universe: [...universeRef.current] };
-    setShowFile((current) => ({ ...current, cues: [...current.cues, cue] }));
+    const frames = cloneEffectBaseFrames();
+    const cue: ShowCue = {
+      id: `cue-${Date.now().toString(36)}`,
+      number,
+      name,
+      fadeMs: cueFadeMs,
+      fadeOutMs: cueFadeMs,
+      delayMs: 0,
+      followMs: 0,
+      color: globalColor,
+      description: '',
+      linkedLookId: '',
+      linkedEffectId: '',
+      trackName: '',
+      values: { ...primaryValues },
+      universe: [...(frames.get(1) ?? makeUniverse())],
+      universes: serializeUniverseFrames(frames)
+    };
+    setShowFile((current) => ({ ...current, version: 4, cues: [...current.cues, cue] }));
     setCueName('');
-    setMessage(`${name} captured with all ${patch.length} patched lights.`);
+    setMessage(`${name} captured across ${frames.size} universe${frames.size === 1 ? '' : 's'}.`);
+  }
+
+  function clearCueTimers() {
+    if (cueDelayTimerRef.current !== null) window.clearTimeout(cueDelayTimerRef.current);
+    if (cueFollowTimerRef.current !== null) window.clearTimeout(cueFollowTimerRef.current);
+    cueDelayTimerRef.current = null;
+    cueFollowTimerRef.current = null;
+  }
+
+  function cancelPendingCueLaunches() {
+    clearCueTimers();
+    cueLaunchGuardRef.current.cancel();
   }
 
   function runCue(cue: ShowCue) {
-    if (cueFollowTimerRef.current !== null) window.clearTimeout(cueFollowTimerRef.current);
+    const delayed = (cue.delayMs ?? 0) > 0;
+    if (cueLaunchGuardRef.current.pendingCueId === cue.id) return;
+    clearCueTimers();
+    const generation = cueLaunchGuardRef.current.begin(cue.id, delayed);
+    if (generation === null) return;
     const launch = () => {
+      if (!cueLaunchGuardRef.current.markLaunched(generation)) return;
+      cueDelayTimerRef.current = null;
+      activeCueIdRef.current = cue.id;
       setActiveCueId(cue.id);
-      const target = cue.universe?.length === 512 ? [...cue.universe] : applyUniverseUpdates(universeRef.current, lookUpdates(cue.values, selectedFixtures(patch)));
+      const targets = cueUniverseFrames(cue);
       void dispatchControl({ type: 'cue.go', cueId: cue.id }, 'cue');
-      fadeToUniverse(`Cue ${cue.number}: ${cue.name}`, target, cue.fadeMs, 'cue');
+      fadeToUniverseFrames(`Cue ${cue.number}: ${cue.name}`, targets, cue.fadeMs, 'cue');
       if (cue.linkedEffectId && EFFECT_PRESETS.some((effect) => effect.id === cue.linkedEffectId)) {
         startEffect(cue.linkedEffectId as EffectId);
       }
       if ((cue.followMs ?? 0) > 0) {
         const cueIndex = showFile.cues.findIndex((item) => item.id === cue.id);
         const following = showFile.cues[cueIndex + 1];
-        if (following) cueFollowTimerRef.current = window.setTimeout(() => runCue(following), cue.followMs);
+        if (following) {
+          cueFollowTimerRef.current = window.setTimeout(() => {
+            if (cueLaunchGuardRef.current.isCurrent(generation)) runCue(following);
+          }, cue.followMs);
+        }
       }
     };
-    if ((cue.delayMs ?? 0) > 0) window.setTimeout(launch, cue.delayMs);
-    else launch();
+    if ((cue.delayMs ?? 0) > 0) {
+      cueDelayTimerRef.current = window.setTimeout(launch, cue.delayMs);
+    } else launch();
   }
 
   function goNextCue() {
-    if (nextCue) runCue(nextCue);
+    if (cueLaunchGuardRef.current.pendingCueId) return;
+    const currentIndex = showFile.cues.findIndex((cue) => cue.id === activeCueIdRef.current);
+    const next = currentIndex < 0 ? showFile.cues[0] : showFile.cues[currentIndex + 1];
+    if (next) runCue(next);
     else setMessage(showFile.cues.length ? 'End of cue stack.' : 'Capture a cue before pressing GO.');
   }
 
   function goPreviousCue() {
     if (!showFile.cues.length) return;
-    runCue(showFile.cues[activeCueIndex <= 0 ? 0 : activeCueIndex - 1]);
+    const currentIndex = showFile.cues.findIndex((cue) => cue.id === activeCueIdRef.current);
+    runCue(showFile.cues[currentIndex <= 0 ? 0 : currentIndex - 1]);
   }
 
   function updateCue(id: string) {
-    const output = [...outputUniverseRef.current];
-    const outputValues = primaryFixture ? fixtureValues(output, primaryFixture) : primaryValues;
+    const outputs = clonePatchedOutputFrames();
+    const primaryUniverse = primaryFixture?.universe ?? 1;
+    const primaryOutput = outputs.get(primaryUniverse) ?? makeUniverse();
+    const outputValues = primaryFixture ? fixtureValues(primaryOutput, primaryFixture) : primaryValues;
     setShowFile((current) => ({
       ...current,
+      version: 4,
       cues: current.cues.map((cue) => cue.id === id
-        ? { ...cue, values: { ...outputValues }, universe: output }
+        ? {
+            ...cue,
+            values: { ...outputValues },
+            universe: [...(outputs.get(1) ?? makeUniverse())],
+            universes: serializeUniverseFrames(outputs)
+          }
         : cue)
     }));
-    setMessage('Cue look updated from the actual live output.');
+    setMessage(`Cue look updated from live output across ${outputs.size} universe${outputs.size === 1 ? '' : 's'}.`);
   }
 
   function updateCueProperties(id: string, updates: Partial<ShowCue>) {
@@ -1314,7 +1528,11 @@ export default function App() {
 
   function deleteCue(id: string) {
     setShowFile((current) => ({ ...current, cues: current.cues.filter((cue) => cue.id !== id).map((cue, index) => ({ ...cue, number: index + 1 })) }));
-    if (activeCueId === id) setActiveCueId(null);
+    if (activeCueIdRef.current === id) {
+      cancelPendingCueLaunches();
+      activeCueIdRef.current = null;
+      setActiveCueId(null);
+    }
   }
 
   function saveShowProject(status: 'template' | 'draft' | 'show' = 'show') {
@@ -1346,6 +1564,8 @@ export default function App() {
     setStageElements(snapshot.stageElements.map((element) => migrateStageElement(element, snapshot.stageSettings.dimensions)));
     setStageSettings(snapshot.stageSettings);
     setSavedLooks(snapshot.looks);
+    cancelPendingCueLaunches();
+    activeCueIdRef.current = null;
     setActiveCueId(null);
     setSelectedStageElementId(null);
     setMessage(`${snapshot.name} loaded from the show library.`);
@@ -1362,6 +1582,8 @@ export default function App() {
       nextName = `Untitled Show ${showNumber}`;
     }
     setShowFile({ ...EMPTY_SHOW, name: nextName, cues: [], groups: [], positionPalettes: [], recordings: [], externalTrack: { ...DEFAULT_EXTERNAL_TRACK_SYNC } });
+    cancelPendingCueLaunches();
+    activeCueIdRef.current = null;
     setActiveCueId(null);
     setMessage('New show started. Your fixture patch and stage remain available until you load another saved show.');
   }
@@ -1718,7 +1940,13 @@ export default function App() {
   }
 
   async function dispatchStudioBridgeCommand(id: string, command: StudioBridgeCommand) {
+    let createdSnapshot: ShowProjectSnapshot | undefined;
     const dispatcher = new StudioBridgeDispatcher({
+      getStatus: () => ({
+        blackout: runtimeRef.current?.snapshot.blackout ?? dmxStatus.blackout,
+        currentCueId: activeCueIdRef.current,
+        activeEffectId: activeEffectRef.current
+      }),
       createShow: (identity: StudioSongIdentity) => {
         const existing = showLibrary.find((item) => item.name.toLowerCase() === identity.songTitle.toLowerCase());
         if (existing) return existing.id;
@@ -1755,28 +1983,31 @@ export default function App() {
           },
           looks: [...savedLooks]
         };
+        createdSnapshot = snapshot;
         setShowLibrary((current) =>
           [snapshot, ...current.filter((item) => item.id !== snapshot.id)].slice(0, 40)
         );
         return snapshot.id;
       },
       loadShow: (showId) => {
-        const snapshot = showLibrary.find((item) => item.id === showId);
+        const snapshot = createdSnapshot?.id === showId ? createdSnapshot : showLibrary.find((item) => item.id === showId);
         if (!snapshot) throw new Error('The linked LumaRig show is missing from this device.');
         loadShowProject(snapshot);
       },
       goCue: (cueId) => {
         const cue = cueId ? showFile.cues.find((item) => item.id === cueId) : nextCue;
         if (!cue) throw new Error('No LumaRig cue is available.');
-        const target = cue.universe?.length === 512 ? [...cue.universe] : applyUniverseUpdates(universeRef.current, lookUpdates(cue.values, selectedFixtures(patch)));
-        fadeToUniverse(cue.name, target, cue.fadeMs, 'remote');
+        cancelPendingCueLaunches();
+        fadeToUniverseFrames(cue.name, cueUniverseFrames(cue), cue.fadeMs, 'remote');
+        activeCueIdRef.current = cue.id;
         setActiveCueId(cue.id);
       },
       fireScene: (sceneId) => {
         const cue = showFile.cues.find((item) => item.id === sceneId);
         if (!cue) throw new Error('LumaRig scene was not found.');
-        const target = cue.universe?.length === 512 ? [...cue.universe] : applyUniverseUpdates(universeRef.current, lookUpdates(cue.values, selectedFixtures(patch)));
-        fadeToUniverse(cue.name, target, cue.fadeMs, 'remote');
+        cancelPendingCueLaunches();
+        fadeToUniverseFrames(cue.name, cueUniverseFrames(cue), cue.fadeMs, 'remote');
+        activeCueIdRef.current = cue.id;
         setActiveCueId(cue.id);
       },
       startEffect: (effectId) => {
@@ -1815,37 +2046,30 @@ export default function App() {
     return dispatcher.dispatch(id, command);
   }
 
+  const studioDispatchRef = useRef(dispatchStudioBridgeCommand);
+  studioDispatchRef.current = dispatchStudioBridgeCommand;
+  const studioPollBusyRef = useRef(false);
   useEffect(() => {
     let cancelled = false;
     const poll = async () => {
-      if (cancelled) return;
+      if (cancelled || studioPollBusyRef.current) return;
+      studioPollBusyRef.current = true;
       try {
-        const requests = await invoke<Array<{ id: string; command: StudioBridgeCommand }>>(
-          'drain_studio_bridge'
-        );
+        const requests = await invoke<Array<{ id: string; command: StudioBridgeCommand }>>('drain_studio_bridge');
         for (const request of requests) {
-          const response = await dispatchStudioBridgeCommand(request.id, request.command);
-          await invoke('reply_studio_bridge', response);
+          if (cancelled) break;
+          const response = await studioDispatchRef.current(request.id, request.command);
+          try { await invoke('reply_studio_bridge', response); }
+          catch (error) { setStudioBridgeStatus(current => ({ ...current, lastError: `Studio reply failed: ${String(error)}` })); }
         }
-      } catch {
-        // Native Studio bridge is optional in browser/Vite development.
-      }
+      } catch (error) {
+        if ('__TAURI_INTERNALS__' in window) setStudioBridgeStatus(current => ({ ...current, lastError: `Studio bridge failed: ${String(error)}` }));
+      } finally { studioPollBusyRef.current = false; }
     };
     const timer = window.setInterval(() => void poll(), 25);
     void poll();
-    return () => {
-      cancelled = true;
-      window.clearInterval(timer);
-    };
-  }, [
-    showLibrary,
-    showFile,
-    patch,
-    stageElements,
-    stageSettings,
-    savedLooks,
-    nextCue
-  ]);
+    return () => { cancelled = true; window.clearInterval(timer); };
+  }, []);
 
   function addFixture() {
     const mode = newProfile.modes.find((item) => item.id === newModeId) ?? newProfile.modes[0];
@@ -2100,27 +2324,26 @@ export default function App() {
 
   function homeActiveFixture() {
     if (!stageFixture) return;
-    void setChannels(fixtureMovementUpdates(stageFixture, .5, .5), true, 'ui');
+    stopFade();
+    if (activeEffectRef.current) stopEffect(false);
+    void dispatchControl({
+      type: 'fixture.position',
+      positions: [{ fixtureId: stageFixture.id, panNormalized: .5, tiltNormalized: .5 }]
+    }, 'ui');
     setMessage(`${stageFixture.name} sent to profile home.`);
   }
 
-  function removeFixture(fixture: PatchedFixture) {
+  async function removeFixture(fixture: PatchedFixture) {
     if (patch.length === 1) return setMessage('Keep at least one fixture in the patch.');
-    const mode = findMode(fixture);
-    const updates = Array.from({ length: mode?.channelCount ?? 0 }, (_, index) => [fixture.address + index, 0] as const);
-    void setChannels(updates);
+    await clearFixtureFrames([fixture]);
     setPatch((current) => current.filter((item) => item.id !== fixture.id));
   }
 
-  function deleteSelectedFixtures() {
+  async function deleteSelectedFixtures() {
     const selected = patch.filter((fixture) => fixture.selected);
     if (!selected.length) return setMessage('Select one or more fixtures first.');
     if (selected.length >= patch.length) return setMessage('Keep at least one fixture in the patch.');
-    const updates = selected.flatMap((fixture) => {
-      const mode = findMode(fixture);
-      return Array.from({ length: mode?.channelCount ?? 0 }, (_, index) => [fixture.address + index, 0] as const);
-    });
-    void setChannels(updates);
+    await clearFixtureFrames(selected);
     const selectedIds = new Set(selected.map((fixture) => fixture.id));
     setPatch((current) => current.filter((fixture) => !selectedIds.has(fixture.id)));
     if (stageFixtureId && selectedIds.has(stageFixtureId)) setStageFixtureId('');
@@ -2708,14 +2931,18 @@ export default function App() {
       setMessage('Select fixtures or a group before running the custom FX.');
       return;
     }
-    effectBaseUniverseRef.current = [...universeRef.current];
+    const selectedEffectFixtures = effectFixtures.filter((fixture) => fixture.selected);
+    effectBaseUniversesRef.current = cloneEffectBaseFrames(selectedEffectFixtures);
     const startedAt = performance.now();
     activeCustomEffectIdRef.current = effect.id;
     setActiveCustomEffectId(effect.id);
     const tick = (now: number) => {
       if (activeCustomEffectIdRef.current !== effect.id) return;
-      const updates = renderCustomEffect(effect, effectFixtures, now - startedAt);
-      void commitUniverse(applyUniverseUpdates(effectBaseUniverseRef.current, updates), 'fx');
+      const updatesByUniverse = capEffectUpdatesByUniverse(
+        renderCustomEffectByUniverse(effect, effectFixtures, now - startedAt)
+      );
+      const frames = effectFramesFromUpdates(effectBaseUniversesRef.current, updatesByUniverse);
+      void commitUniverseFrames(frames, 'fx');
       effectAnimationRef.current = requestAnimationFrame(tick);
     };
     effectAnimationRef.current = requestAnimationFrame(tick);
@@ -3084,10 +3311,10 @@ export default function App() {
     ? lumaVizPreview
     : null;
 
-  const consoleColorPresets = COLOR_PRESETS.map((preset) => ({
+  const consoleColorPresets = [...COLOR_PRESETS.map((preset) => ({
     name: preset.name,
     color: rgbToHex(preset.rgb[0], preset.rgb[1], preset.rgb[2])
-  }));
+  })), ...(showFile.colorPalettes ?? [])];
   const allLooks = [...STARTER_LOOKS, ...savedLooks];
   const programEffectFixtures = selectedFixtureTargets;
   const programEffectName = selectedFixtureTargets.length === 1
@@ -3163,7 +3390,7 @@ export default function App() {
           {setupView === 'settings' && <div className="setup-scroll-area settings-console">
             <section className="console-panel connection-console"><header><div><span>DMX OUTPUT</span><h2>Anyma uDMX</h2></div><b className={dmxStatus.connected ? 'healthy' : ''}>{dmxStatus.connected ? 'Connected' : 'Virtual only'}</b></header><label><span>USB Interface</span><select value={selectedDevice} onChange={(event) => setSelectedDevice(event.target.value)} disabled={dmxStatus.connected}><option value="">Select uDMX</option>{devices.map((device) => <option key={device.device_key} value={device.device_key}>{deviceLabel(device)}</option>)}</select></label><div className="settings-actions"><button onClick={scanDevices}>Scan USB</button>{dmxStatus.connected ? <button onClick={disconnectDmx}>Disconnect + zero</button> : <button className="console-primary" disabled={!selectedInfo?.likely_udmx || busy} onClick={connectDmx}>Connect uDMX</button>}<button onClick={zeroAll}>Zero all</button></div></section>
             <section className="console-panel connection-console"><header><div><span>GENERAL MIDI</span><h2>Controller / Network Session</h2></div><b className={midiStatus.connected ? 'healthy' : ''}>{midiStatus.connected ? 'Listening' : 'Offline'}</b></header><label><span>MIDI Input</span><select value={selectedMidiInput} disabled={midiStatus.connected} onChange={(event) => setSelectedMidiInput(event.target.value)}><option value="">Select input</option>{midiInputs.map((input) => <option key={input.id} value={input.id}>{input.name}</option>)}</select></label><div className="settings-actions"><button onClick={scanMidi}>Scan MIDI</button>{midiStatus.connected ? <button onClick={disconnectMidi}>Disconnect</button> : <button className="console-primary" disabled={!selectedMidiInput} onClick={connectMidi}>Connect MIDI</button>}</div><div className="midi-event-monitor"><i className={midiStatus.last_event ? 'active' : ''} /><span><strong>{midiStatus.last_event || 'Waiting for MIDI'}</strong><small>{midiStatus.messages_received} messages · {midiClockSeen ? 'Clock detected' : 'No clock'}</small></span></div></section>
-            <section className="console-panel midi-mapping-console"><header><div><span>MIDI ASSIGNER</span><h2>Map controls</h2></div><b>{midiMappings.length} mappings</b></header><div className="midi-add-row"><select value={newMidiTarget} onChange={(event) => setNewMidiTarget(event.target.value)}>{midiControlGroups.map(([group, controls]) => <optgroup key={group} label={group}>{controls.map((control) => <option key={control.id} value={control.id}>{control.label}</option>)}</optgroup>)}</select><button className="console-primary" onClick={() => beginMidiAssignment()}>Add + Learn</button></div><div className="midi-map-list">{midiMappings.map((mapping) => { const control = midiControls.find((item) => item.id === mapping.target); const learning = midiLearnMappingId === mapping.id; return <div className={`midi-map-row ${learning ? 'is-learning' : ''}`} key={mapping.id}><strong>{control?.label ?? 'Unavailable'}</strong><span>{learning ? 'Move or press a control…' : midiBindingLabel(mapping)}</span><button onClick={() => setMidiLearnMappingId(learning ? null : mapping.id)}>{learning ? 'Cancel' : 'Learn'}</button><button onClick={() => removeMidiAssignment(mapping.id)}>Remove</button></div>; })}</div></section>
+            <section className="console-panel midi-mapping-console"><header><div><span>MIDI ASSIGNER</span><h2>Map controls</h2><small>GO, Previous, Blackout and Grand Master ship with defaults. Every patched fixture parameter is assignable below.</small></div><div className="midi-header-actions"><b>{midiMappings.length} mappings</b><button onClick={()=>{setMidiMappings(DEFAULT_MIDI_MAPPINGS.map((mapping)=>({...mapping})));setMessage('MIDI assignments restored to LumaRig defaults.');}}>Restore Defaults</button></div></header><div className="midi-add-row"><select value={newMidiTarget} onChange={(event) => setNewMidiTarget(event.target.value)}>{midiControlGroups.map(([group, controls]) => <optgroup key={group} label={group}>{controls.map((control) => <option key={control.id} value={control.id}>{control.label}</option>)}</optgroup>)}</select><button className="console-primary" onClick={() => beginMidiAssignment()}>Add + Learn</button></div><div className="midi-map-list">{midiMappings.map((mapping) => { const control = midiControls.find((item) => item.id === mapping.target); const learning = midiLearnMappingId === mapping.id; return <div className={`midi-map-row ${learning ? 'is-learning' : ''}`} key={mapping.id}><strong>{control?.label ?? 'Unavailable'}</strong><span>{learning ? 'Move or press a control…' : midiBindingLabel(mapping)}</span><button onClick={() => setMidiLearnMappingId(learning ? null : mapping.id)}>{learning ? 'Cancel' : 'Learn'}</button><button onClick={() => removeMidiAssignment(mapping.id)}>Remove</button></div>; })}</div></section>
             <section className="console-panel connection-console remote-relay-console"><header><div><span>REMOTE CONTROL · SEPARATE NETWORKS</span><h2>Secure Cloud Relay</h2></div><b className={remoteRelayStatus === 'connected' ? 'healthy' : ''}>{remoteRelayStatus}</b></header><p>Both this Mac and the Vercel controller connect outbound to one private Supabase Realtime channel. No router port forwarding is required.</p><label><span>Supabase Project URL</span><input value={remoteRelayConfig.url} placeholder="https://project.supabase.co" onChange={(event) => setRemoteRelayConfig((current) => ({ ...current, url: event.target.value }))} /></label><label><span>Publishable Key</span><input type="password" value={remoteRelayConfig.publishableKey} onChange={(event) => setRemoteRelayConfig((current) => ({ ...current, publishableKey: event.target.value }))} /></label><div className="inspector-pair"><label><span>Account Email</span><input type="email" value={remoteRelayConfig.email} onChange={(event) => setRemoteRelayConfig((current) => ({ ...current, email: event.target.value }))} /></label><label><span>Password · never stored</span><input type="password" value={remoteRelayConfig.password ?? ''} onChange={(event) => setRemoteRelayConfig((current) => ({ ...current, password: event.target.value }))} /></label></div><label><span>Room Code · use the same code on the remote</span><div className="relay-room-row"><input value={remoteRelayConfig.roomCode} onChange={(event) => setRemoteRelayConfig((current) => ({ ...current, roomCode: event.target.value }))} /><button onClick={() => setRemoteRelayConfig((current) => ({ ...current, roomCode: `${crypto.randomUUID().replace(/-/g, '')}${crypto.randomUUID().replace(/-/g, '')}` }))}>Generate</button></div></label>{remoteRelayError && <p className="relay-error">{remoteRelayError}</p>}<div className="settings-actions">{remoteRelayStatus === 'connected' ? <button onClick={disconnectRemoteRelay}>Disconnect relay</button> : <button className="console-primary" onClick={connectRemoteRelay}>Connect remote relay</button>}</div></section>
             <section className="console-panel connection-console studio-bridge-console"><header><div><span>STUDIO LINK · SHOW CONTROL</span><h2>LumaStudio</h2></div><b className={studioBridgeStatus.listening && !studioBridgeStatus.lastError ? 'healthy' : ''}>{studioBridgeStatus.lastError ? 'Error' : studioBridgeStatus.connectedClients > 0 ? 'Connected' : studioBridgeStatus.listening ? 'Ready' : 'Starting'}</b></header><p>Semantic show-control bridge for Studio transport, cue recall, recorded lighting, FX and blackout. Studio never sends raw DMX.</p><div className="artnet-health-grid"><div><span>ENDPOINT</span><strong>ws://127.0.0.1:{studioBridgeStatus.port}/studio</strong></div><div><span>CLIENTS</span><strong>{studioBridgeStatus.connectedClients}</strong></div><div><span>PROTOCOL</span><strong>studio-bridge-v1</strong></div><div><span>AUTHORITY</span><strong>LumaRig</strong></div></div>{studioBridgeStatus.lastError && <p className="artnet-error">Studio Bridge: {studioBridgeStatus.lastError}</p>}<small>The bridge starts automatically. If Studio closes, lighting continues locally in LumaRig.</small></section>
             <section className="console-panel connection-console visualizer-direct-console"><header><div><span>VISUALIZER LINK · SEMANTIC WEBSOCKET</span><h2>LumaRig Direct</h2></div><b className={directStatus.listening && !directStatus.lastError ? 'healthy' : ''}>{directStatus.clients > 0 ? 'Connected' : directStatus.listening ? 'Ready' : 'Error'}</b></header><p>Native semantic link for LumaViz. Sends resolved fixture identity, intensity, color, movement, beam and strobe without making LumaViz decode DMX.</p><div className="artnet-health-grid"><div><span>ENDPOINT</span><strong>ws://127.0.0.1:{directStatus.port}/lumaviz</strong></div><div><span>CLIENTS</span><strong>{directStatus.clients}</strong></div><div><span>FRAMES SENT</span><strong>{directStatus.framesSent.toLocaleString()}</strong></div><div><span>PROTOCOL</span><strong>fixture-frame-v1</strong></div></div>{directStatus.lastError && <p className="artnet-error">Direct: {directStatus.lastError}</p>}<small>LumaRig Direct starts automatically. Art-Net remains available below as the standard DMX-over-network fallback.</small></section>
@@ -3315,11 +3542,11 @@ export default function App() {
             </section>
           </div>}
 
-          {programMode === 'colors' && <div className="create-focus-view"><header><div><span>COLOR PALETTES</span><h2>Fixture-aware color programming</h2></div></header><ColorDeck title="SELECTED COLOR" subtitle={selectedFixtureTargets.length ? `${selectedFixtureTargets.length} selected fixtures` : 'Select fixtures'} color={globalColor} disabled={selectedCompatibleColors.length === 0} presets={consoleColorPresets} onChange={applyGlobalColor} /><section className="palette-library-v3"><header><span>QUICK PALETTES</span><small>Applies to selected compatible fixtures</small></header><div>{consoleColorPresets.map((preset) => <button key={preset.name} disabled={selectedCompatibleColors.length === 0} onClick={() => applyGlobalColor(preset.color)}><i style={{background:preset.color}}/><strong>{preset.name}</strong><small>{preset.color.toUpperCase()}</small></button>)}</div></section></div>}
+          {programMode === 'colors' && <div className="create-focus-view"><header><div><span>COLOR PALETTES</span><h2>Fixture-aware color programming</h2></div></header><ColorDeck title="SELECTED COLOR" subtitle={selectedFixtureTargets.length ? `${selectedFixtureTargets.length} selected fixtures` : 'Select fixtures'} color={globalColor} disabled={selectedCompatibleColors.length === 0} presets={consoleColorPresets} onChange={applyGlobalColor} /><ColorPaletteLibrary palettes={showFile.colorPalettes ?? []} color={globalColor} disabled={!selectedCompatibleColors.length} onChange={palettes=>setShowFile(current=>({...current,colorPalettes:palettes}))} onRecall={applyGlobalColor}/><section className="palette-library-v3"><header><span>QUICK PALETTES</span><small>Applies to selected compatible fixtures</small></header><div>{consoleColorPresets.map((preset, index) => <button key={`${index}-${preset.name}`} disabled={selectedCompatibleColors.length === 0} onClick={() => applyGlobalColor(preset.color)}><i style={{background:preset.color}}/><strong>{preset.name}</strong><small>{preset.color.toUpperCase()}</small></button>)}</div></section></div>}
 
           {programMode === 'media' && <div className="create-focus-view media-programmer"><header><div><span>MEDIA</span><h2>LumaViz + LumaStudio</h2></div><b className={directStatus.clients > 0 || studioBridgeStatus.connectedClients > 0 ? 'healthy' : ''}>{directStatus.clients + studioBridgeStatus.connectedClients > 0 ? 'LINKED' : 'WAITING'}</b></header><div className="media-link-grid"><section><span>LUMAVIZ DIRECT</span><strong>{directStatus.clients > 0 ? 'Connected' : 'Ready'}</strong><small>Semantic fixture + stage preview</small><div className="media-stage-preview">{renderStagePreview()}</div></section><section><span>LUMASTUDIO</span><strong>{studioBridgeStatus.connectedClients > 0 ? 'Connected' : 'Ready'}</strong><small>Studio transport authority · Rig lighting authority</small><div className="media-status-stack"><p>Port {studioBridgeStatus.port}</p><p>{externalTransportRunning ? 'Transport following' : externalTrack.armed ? 'External sync armed' : 'Local transport'}</p><p>{externalTrack.songName || showTrackName || 'No active media track'}</p></div><button onClick={() => { setWorkspace('show'); setShowMode('sync'); }}>OPEN SYNC</button></section></div></div>}
 
-          {programMode === 'presets' && <div className="create-focus-view"><header><div><span>PRESETS</span><h2>Position + look library</h2></div><button onClick={savePositionPalette}>＋ Save Position</button></header><section className="preset-bank-v3"><div><h3>POSITION PALETTES</h3>{showFile.positionPalettes?.length ? showFile.positionPalettes.map((palette) => <button key={palette.id} onClick={() => void runPositionPalette(palette)}><span>{palette.kind}</span><strong>{palette.name}</strong></button>) : <p>No position palettes saved.</p>}</div><div><h3>LOOK PRESETS</h3>{allLooks.map((look) => <button key={look.id} onClick={() => runLook(look)}><i style={{background:lookSwatch(look.values)}}/><strong>{look.name}</strong></button>)}</div></section></div>}
+          {programMode === 'presets' && <div className="create-focus-view"><header><div><span>PRESETS</span><h2>Position + look library</h2><small>Position palettes remember where moving fixtures aim. Looks remember intensity and color. Use positions only for movers.</small></div><button onClick={savePositionPalette}>＋ Save Mover Position</button></header><section className="preset-bank-v3"><div><h3>POSITION PALETTES</h3>{showFile.positionPalettes?.length ? showFile.positionPalettes.map((palette) => <button key={palette.id} onClick={() => void runPositionPalette(palette)}><span>{palette.kind}</span><strong>{palette.name}</strong></button>) : <p>No position palettes saved.</p>}</div><div><h3>LOOK PRESETS</h3>{allLooks.map((look) => <button key={look.id} onClick={() => runLook(look)}><i style={{background:lookSwatch(look.values)}}/><strong>{look.name}</strong></button>)}</div></section></div>}
         </div>
 
         {programMode !== 'fx' && <EffectsPanel title="FX / SELECTED TARGET" targetName={programEffectName} fixtures={programEffectFixtures} activeEffect={activeEffect} bpm={effectBpm} depth={effectDepth} disabled={false} onBpmChange={(value) => { setEffectBpm(value); effectBpmRef.current = value; setTempoSource('manual'); }} onDepthChange={(value) => { setEffectDepth(value); effectDepthRef.current = value; }} onStart={(effect) => toggleEffect(effect, programEffectFixtures.map((fixture) => fixture.id))} onPress={(effect) => startMomentaryEffect(effect, programEffectFixtures.map((fixture) => fixture.id))} onRelease={releaseMomentaryEffect} onStop={() => stopEffect()} />}
@@ -3331,7 +3558,7 @@ export default function App() {
         ] as Array<[ShowMode,string]>).map(([id,label]) => <button key={id} className={showMode === id ? 'active' : ''} onClick={() => setShowMode(id)}>{label}</button>)}</nav>
 
         {showMode === 'cues' && <div className="show-cue-layout">
-          <aside className="cue-list-console"><header><span>CUE LIST</span><button onClick={captureCue}>＋ Capture</button></header>{showFile.cues.length ? showFile.cues.map((cue,index) => <article className={activeCueId === cue.id ? 'active' : ''} key={cue.id}><button className="cue-line" onClick={() => runCue(cue)}><b>{String(cue.number).padStart(2,'0')}</b><i style={{background:lookSwatch(cue.values)}}/><span><strong>{cue.name}</strong><small>{cue.fadeMs ? `${cue.fadeMs/1000}s fade` : 'Snap'}{cue.followMs ? ` · follow ${cue.followMs/1000}s` : ''}</small></span></button><div><button disabled={index===0} onClick={() => setShowFile((current)=>({...current,cues:moveCue(current.cues,cue.id,-1)}))}>↑</button><button disabled={index===showFile.cues.length-1} onClick={() => setShowFile((current)=>({...current,cues:moveCue(current.cues,cue.id,1)}))}>↓</button><button onClick={() => deleteCue(cue.id)}>×</button></div></article>) : <div className="empty-cues"><strong>No cues yet</strong><span>Build a look in CREATE, then capture it here.</span><button onClick={() => setWorkspace('create')}>Open CREATE</button></div>}</aside>
+          <aside className="cue-list-console"><header><span>CUE LIST</span><button onClick={captureCue}>＋ Capture</button></header>{showFile.cues.length ? showFile.cues.map((cue,index) => <article className={activeCueId === cue.id ? 'active' : ''} key={cue.id}><button className="cue-line" onClick={() => runCue(cue)}><b>{String(cue.number).padStart(2,'0')}</b><i style={{background:cue.color ?? lookSwatch(cue.values)}}/><span><strong>{cue.name}</strong><small>{cue.fadeMs ? `${cue.fadeMs/1000}s fade` : 'Snap'}{cue.followMs ? ` · follow ${cue.followMs/1000}s` : ''}</small></span></button><div><button disabled={index===0} onClick={() => setShowFile((current)=>({...current,cues:moveCue(current.cues,cue.id,-1)}))}>↑</button><button disabled={index===showFile.cues.length-1} onClick={() => setShowFile((current)=>({...current,cues:moveCue(current.cues,cue.id,1)}))}>↓</button><button onClick={() => deleteCue(cue.id)}>×</button></div></article>) : <div className="empty-cues"><strong>No cues yet</strong><span>Build a look in CREATE, then capture it here.</span><button onClick={() => setWorkspace('create')}>Open CREATE</button></div>}</aside>
 
           <main className="cue-preview-console"><header><span>{directStatus.clients > 0 ? 'LUMAVIZ LIVE PREVIEW' : 'STAGE / CUE PREVIEW'}</span><b>{activeCue?.name ?? 'Live output'}</b></header><div className={`show-viz-preview ${liveLumaVizPreview ? 'linked external-feed' : directStatus.clients > 0 ? 'linked' : ''}`}>{liveLumaVizPreview ? <img src={liveLumaVizPreview.dataUrl} alt={`LumaViz ${liveLumaVizPreview.view ?? 'live'} preview`} /> : renderStagePreview()}</div><div className="cue-preview-meta"><span>CURRENT<strong>{activeCue ? `${activeCue.number}. ${activeCue.name}` : 'Ready'}</strong></span><span>NEXT<strong>{nextCue ? `${nextCue.number}. ${nextCue.name}` : 'End of show'}</strong></span></div></main>
 
@@ -3356,7 +3583,7 @@ export default function App() {
         </div>}
 
         {showMode === 'library' && <div className="show-library-console show-library-v3">
-          <header><div><span>SHOW LIBRARY</span><h2>{showFile.name}</h2><small>Templates define the rig. Drafts and service shows inherit that structure with cues, tracks, looks and show-specific changes.</small></div><div><button onClick={newShowProject}>＋ New Show</button><button onClick={()=>saveShowProject('template')}>Save Template</button><button onClick={()=>saveShowProject('draft')}>Save Draft</button><button className="console-primary" onClick={()=>saveShowProject('show')}>Save Service Show</button></div></header>
+          <header><div><span>SHOW LIBRARY</span><h2>{showFile.name}</h2><small>Saved shows are mirrored to LumaRig’s macOS Application Support / Show Library folder. Working state still autosaves separately.</small></div><div><button onClick={newShowProject}>＋ New Show</button><button onClick={()=>saveShowProject('template')}>Save Template</button><button onClick={()=>saveShowProject('draft')}>Save Draft</button><button className="console-primary" onClick={()=>saveShowProject('show')}>Save Service Show</button><button onClick={()=>void invoke<string>('open_show_library_folder').then((path)=>setMessage(`Show Library folder opened · ${path}`)).catch((error)=>setMessage(`Could not open Show Library folder: ${String(error)}`))}>Open Library Folder</button></div></header>
           <div className="show-library-grid">{showLibrary.length?showLibrary.map((item)=><article key={item.id}><div><span className={item.status}>{item.status.toUpperCase()}</span><strong>{item.name}</strong><small>{new Date(item.savedAt).toLocaleString()} · R{item.revision ?? 1} · {item.lastEditor ?? 'lumarig'} · {item.show.cues.length} cues · {item.patch.length} fixtures</small></div><div><button onClick={()=>loadShowProject(item)}>Load</button><button className="danger-button" onClick={()=>deleteShowProject(item.id)}>Delete</button></div></article>):<div className="empty-show-library"><strong>No saved shows yet</strong><span>Save the current show or a draft. Your working show continues to autosave separately.</span></div>}</div>
         </div>}
 
@@ -3373,9 +3600,9 @@ export default function App() {
         </div>}
       </section>}
 
-      {workspace === 'live' && <section className="live-console live-console-v3">
+      {workspace === 'live' && <section className={`live-console live-console-v3 ${liveView === 'performance' && liveProgrammerOpen ? 'with-palette-dock' : ''}`}>
         <header className="live-command-bar">
-          <div className="live-show-state"><small>LIVE PERFORMANCE</small><strong>{showFile.name}</strong><span>{liveEffectLabel ? `FX · ${liveEffectLabel}` : 'PROGRAM OUTPUT'}</span></div>
+          <div className="live-show-state"><small>LIVE PERFORMANCE</small><strong>{showFile.name}</strong><span>{dmxStatus.blackout ? 'BLACKOUT ACTIVE' : liveEffectLabel ? `FX · ${liveEffectLabel}` : 'LOCAL CONTROL'}</span></div>
           <div className="live-cue-deck">
             <button className="live-back" onClick={goPreviousCue}>BACK</button>
             <div className="live-cue-card current"><small>CURRENT</small><strong>{activeCue?.name ?? 'Ready'}</strong><span>{activeCue ? `Cue ${activeCue.number}` : 'No cue running'}</span></div>
@@ -3386,7 +3613,7 @@ export default function App() {
         </header>
 
         <nav className="live-view-tabs">{([
-          ['performance','Performance'],['overrides','Fixture Overrides'],['groups','Groups'],['masters','Master Controls'],['shortcuts','Shortcuts'],['settings','Settings']
+          ['performance','FADERS'],['overrides','MA'],['groups','BUSK'],['masters','MASTERS'],['shortcuts','SHORTCUTS'],['settings','ASSIGN']
         ] as Array<[LiveView,string]>).map(([id,label])=><button key={id} className={liveView===id?'active':''} onClick={()=>setLiveView(id)}>{label}</button>)}</nav>
 
         {liveView === 'performance' && <div className="live-operator-grid">
@@ -3395,11 +3622,15 @@ export default function App() {
             <div className="executor-grid">{allLooks.slice(0,12).map((look,index)=><button key={look.id} className="executor-key" onClick={()=>runLook(look)}><i style={{background:lookSwatch(look.values)}}/><small>{String(index+1).padStart(2,'0')}</small><strong>{look.name}</strong></button>)}</div>
             <header><span>PERFORMANCE FX</span><button className={activeEffect?'active':''} onClick={()=>stopEffect()}>STOP FX</button></header>
             <div className="executor-grid fx-executors">{EFFECT_PRESETS.filter((effect)=>['bump','blinder','strobe','pulse','sweep','lightning','finale','chase'].includes(effect.id)&&effectSupportedByFixtures(effect.id,selectedFixtureTargets)).slice(0,8).map((effect)=>renderEffectButton(effect,true))}</div>
+            {!selectedFixtureTargets.length && <p className="live-target-hint">Select fixtures below their faders to enable compatible effects and palettes.</p>}
           </aside>
 
           <main className="live-playback-surface">
-            <div className="live-surface-toolbar"><div><strong>LIVING PLAYBACK SURFACE</strong><small>{liveBank==='fixtures'?`${patch.length} FIXTURES`:`${fixtureGroups.length} GROUPS`} · OUTPUT COLORS + LEVELS</small></div><div className="live-bank-tabs"><button className={liveBank==='fixtures'?'active':''} onClick={()=>setLiveBank('fixtures')}>FIXTURES</button><button className={liveBank==='groups'?'active':''} onClick={()=>setLiveBank('groups')}>GROUPS</button></div><div className="live-select-tools"><button className={liveProgrammerOpen?'active':''} onClick={()=>setLiveProgrammerOpen((value)=>!value)}>PROGRAMMER</button>{liveBank==='fixtures'&&<><button onClick={selectAllFixtures}>ALL</button><button onClick={clearFixtureSelection}>CLEAR</button></>}</div></div>
-            <div className="live-fader-deck">{liveBank==='fixtures' ? patch.map((fixture)=>{const v=fixtureValues(outputUniverse,fixture);const outputColor=(v.red+v.green+v.blue)>0?rgbToHex(v.red,v.green,v.blue):(fixture.labelColor ?? '#55e98d');return <VerticalFader key={fixture.id} id={`live-${fixture.id}`} name={fixture.name} subtitle={activeEffect?`${fixtureBrowserSubtitle(fixture)} · ${activeEffect}`:fixtureBrowserSubtitle(fixture)} color={outputColor} value={fixtureIntensityPercent(universe,fixture)} selected={fixture.selected} onChange={(value)=>void setFixtureAttribute(fixture,'dimmer',percentToDmx(value))} onSelect={()=>selectFixtureFromConsole(fixture.id,true)} onFx={()=>{selectFixtureFromConsole(fixture.id);setWorkspace('create');setProgramMode('fx');}}/>}) : fixtureGroups.map((group)=>{const members=fixturesInGroup(patch,group);const first=members[0];const v=first?fixtureValues(outputUniverse,first):null;const outputColor=v&&(v.red+v.green+v.blue)>0?rgbToHex(v.red,v.green,v.blue):group.labelColor;return <VerticalFader key={group.id} id={`live-${group.id}`} name={group.name} subtitle={activeEffect?`${members.length} fixtures · ${activeEffect}`:`${members.length} fixtures`} color={outputColor} value={Math.round(groupMasters[group.id] ?? group.masterDefault)} selected={selectedGroupId===group.id} onChange={(value)=>applyGroupMaster(group,value)} onSelect={()=>selectFixtureGroup(group.id)} onFx={()=>{selectFixtureGroup(group.id);setWorkspace('create');setProgramMode('fx');}} quickAction={{label:'Chase',onPress:()=>toggleEffect('chase',members.map((fixture)=>fixture.id))}}/>;})}</div>
+            <div className="live-surface-toolbar"><div><strong>PLAYBACK / OUTPUT</strong><small>{liveBank==='fixtures'?`${patch.length} FIXTURES`:`${fixtureGroups.length} GROUPS`} · {selectedFixtureTargets.length} SELECTED</small></div><div className="live-bank-tabs"><button className={liveBank==='fixtures'?'active':''} onClick={()=>setLiveBank('fixtures')}>FIXTURES</button><button className={liveBank==='groups'?'active':''} onClick={()=>setLiveBank('groups')}>GROUPS</button></div><div className="live-select-tools"><button className={liveProgrammerOpen?'active':''} onClick={()=>setLiveProgrammerOpen((value)=>!value)}>PROGRAMMER</button>{liveBank==='fixtures'&&<><button onClick={selectAllFixtures}>ALL</button><button onClick={clearFixtureSelection}>CLEAR</button></>}</div></div>
+            <div className="live-fader-deck">{liveBank==='fixtures' ? patch.slice(Math.min(liveFaderPage, Math.max(0, Math.ceil(patch.length/8)-1))*8, (Math.min(liveFaderPage, Math.max(0, Math.ceil(patch.length/8)-1))+1)*8).map((fixture)=>{const v=fixtureValues(outputUniverse,fixture);const outputColor=(v.red+v.green+v.blue)>0?rgbToHex(v.red,v.green,v.blue):(fixture.labelColor ?? '#55e98d');return <VerticalFader key={fixture.id} id={`live-${fixture.id}`} name={fixture.name} subtitle={activeEffect?`${fixtureBrowserSubtitle(fixture)} · ${activeEffect}`:fixtureBrowserSubtitle(fixture)} color={outputColor} value={fixtureIntensityPercent(universe,fixture)} outputValue={fixtureIntensityPercent(outputUniverse,fixture)} selected={fixture.selected} onChange={(value)=>void setFixtureAttribute(fixture,'dimmer',percentToDmx(value))} onSelect={()=>selectFixtureFromConsole(fixture.id,true)} onFx={()=>{selectFixtureFromConsole(fixture.id);setWorkspace('create');setProgramMode('fx');}}/>}) : fixtureGroups.map((group)=>{const members=fixturesInGroup(patch,group);const first=members[0];const v=first?fixtureValues(outputUniverse,first):null;const outputColor=v&&(v.red+v.green+v.blue)>0?rgbToHex(v.red,v.green,v.blue):group.labelColor;return <VerticalFader key={group.id} id={`live-${group.id}`} name={group.name} subtitle={activeEffect?`${members.length} fixtures · ${activeEffect}`:`${members.length} fixtures`} color={outputColor} value={Math.round(groupMasters[group.id] ?? group.masterDefault)} selected={selectedGroupId===group.id} onChange={(value)=>applyGroupMaster(group,value)} onSelect={()=>selectFixtureGroup(group.id)} onFx={()=>{selectFixtureGroup(group.id);setWorkspace('create');setProgramMode('fx');}} quickAction={{label:'Chase',onPress:()=>toggleEffect('chase',members.map((fixture)=>fixture.id))}}/>;})}</div>
+            {!patch.length && <div className="live-empty-state"><span>01 / BUILD YOUR RIG</span><h2>Your performance starts here.</h2><p>Add your fixtures to reveal live faders, output meters and compatible effects.</p><button className="console-primary" onClick={()=>{setWorkspace('build');setSetupView('fixtures');}}>Patch fixtures</button></div>}
+            {liveBank==='groups' && !fixtureGroups.length && patch.length>0 && <div className="live-empty-state"><h2>Organize your rig.</h2><p>Create fixture groups to control washes, movers and stage areas together.</p><button onClick={()=>{setWorkspace('build');setSetupView('groups');}}>Create groups</button></div>}
+            <div className="live-bank-footer"><span>FADER = PROGRAMMER <i/> METER = RESOLVED OUTPUT</span>{liveBank==='fixtures'&&<div><button aria-label="Previous fixture bank" disabled={liveFaderPage===0} onClick={()=>setLiveFaderPage(p=>Math.max(0,p-1))}>←</button><b>BANK {Math.min(liveFaderPage+1,Math.max(1,Math.ceil(patch.length/8)))} / {Math.max(1,Math.ceil(patch.length/8))}</b><button aria-label="Next fixture bank" disabled={(liveFaderPage+1)*8>=patch.length} onClick={()=>setLiveFaderPage(p=>p+1)}>→</button></div>}</div>
           </main>
 
           <aside className="live-master-rack">
@@ -3419,7 +3650,7 @@ export default function App() {
             {livePaletteFamily==='groups' && <>{fixtureGroups.map((group,index)=><button key={group.id} className={selectedGroupId===group.id?'selected':''} onClick={()=>selectFixtureGroup(group.id)} style={{'--palette-color':group.labelColor} as import('react').CSSProperties}><i/><b>{index+1}</b><span>{group.name}</span><small>{fixturesInGroup(patch,group).length} FIXTURES</small></button>)}</>}
             {livePaletteFamily==='intensity' && <>{[0,25,50,75,100].map((value)=><button key={value} disabled={!selectedFixtureTargets.length} onClick={()=>selectedFixtureTargets.forEach((fixture)=>void setFixtureAttribute(fixture,'dimmer',percentToDmx(value)))}><b>{value===0?'OUT':value}</b><span>{value===100?'FULL':'Intensity'}</span><small>{value}%</small></button>)}</>}
             {livePaletteFamily==='position' && <>{(showFile.positionPalettes??[]).map((palette,index)=><button key={palette.id} disabled={!selectedMovingFixtures.length} onClick={()=>void runPositionPalette(palette)}><b>{index+1}</b><span>{palette.name}</span><small>{palette.kind.toUpperCase()}</small></button>)}{!(showFile.positionPalettes??[]).length&&<div className="live-palette-empty">Save position palettes in CREATE and they appear here.</div>}</>}
-            {livePaletteFamily==='color' && <>{consoleColorPresets.map((preset,index)=><button key={preset.name} className="color-palette" disabled={!selectedCompatibleColors.length} onClick={()=>applyGlobalColor(preset.color)} style={{'--palette-color':preset.color} as import('react').CSSProperties}><i/><b>{index+1}</b><span>{preset.name}</span><small>{preset.color.toUpperCase()}</small></button>)}</>}
+            {livePaletteFamily==='color' && <>{consoleColorPresets.map((preset,index)=><button key={`${index}-${preset.name}`} className="color-palette" disabled={!selectedCompatibleColors.length} onClick={()=>applyGlobalColor(preset.color)} style={{'--palette-color':preset.color} as import('react').CSSProperties}><i/><b>{index+1}</b><span>{preset.name}</span><small>{preset.color.toUpperCase()}</small></button>)}</>}
             {livePaletteFamily==='beam' && <>{([
               ['OPEN',255,255,255],['TIGHT',65,180,210],['WIDE',230,110,255],['SOFT',200,80,170]
             ] as Array<[string,number,number,number]>).map(([name,zoom,focus,iris],index)=><button key={name} disabled={!selectedFixtureTargets.length} onClick={()=>selectedFixtureTargets.forEach((fixture)=>{if(parameterChannel(fixture,'zoom'))void setFixtureAttribute(fixture,'zoom',zoom);if(parameterChannel(fixture,'focus'))void setFixtureAttribute(fixture,'focus',focus);if(parameterChannel(fixture,'iris'))void setFixtureAttribute(fixture,'iris',iris);})}><b>{index+1}</b><span>{name}</span><small>BEAM</small></button>)}</>}
@@ -3429,7 +3660,7 @@ export default function App() {
 
         {liveView === 'overrides' && <div className="live-detail-view">
           <header><div><span>FIXTURE OVERRIDES</span><h2>Direct live control</h2></div><div><button onClick={selectAllFixtures}>ALL</button><button onClick={clearFixtureSelection}>CLEAR</button></div></header>
-          <div className="override-layout"><div className="override-fader-bank">{patch.map((fixture)=>{const v=fixtureValues(outputUniverse,fixture);const outputColor=(v.red+v.green+v.blue)>0?rgbToHex(v.red,v.green,v.blue):(fixture.labelColor ?? '#55e98d');return <VerticalFader key={fixture.id} id={`override-${fixture.id}`} name={fixture.name} subtitle={fixtureBrowserSubtitle(fixture)} color={outputColor} value={fixtureIntensityPercent(universe,fixture)} selected={fixture.selected} onChange={(value)=>void setFixtureAttribute(fixture,'dimmer',percentToDmx(value))} onSelect={()=>selectFixtureFromConsole(fixture.id,true)} onFx={()=>{setWorkspace('create');setProgramMode('fx');}}/>})}</div><aside><ColorDeck title="OVERRIDE COLOR" subtitle={selectedFixtureTargets.length?`${selectedFixtureTargets.length} selected`:'Select fixtures'} color={globalColor} disabled={selectedCompatibleColors.length===0} presets={consoleColorPresets} onChange={applyGlobalColor}/><button className="console-primary" onClick={()=>{setWorkspace('create');setProgramMode('stage');}}>OPEN FULL PROGRAMMER</button></aside></div>
+          <div className="override-layout"><div className="override-fader-bank">{patch.map((fixture)=>{const v=fixtureValues(outputUniverse,fixture);const outputColor=(v.red+v.green+v.blue)>0?rgbToHex(v.red,v.green,v.blue):(fixture.labelColor ?? '#55e98d');return <VerticalFader key={fixture.id} id={`override-${fixture.id}`} name={fixture.name} subtitle={fixtureBrowserSubtitle(fixture)} color={outputColor} value={fixtureIntensityPercent(universe,fixture)} outputValue={fixtureIntensityPercent(outputUniverse,fixture)} selected={fixture.selected} onChange={(value)=>void setFixtureAttribute(fixture,'dimmer',percentToDmx(value))} onSelect={()=>selectFixtureFromConsole(fixture.id,true)} onFx={()=>{setWorkspace('create');setProgramMode('fx');}}/>})}</div><aside><ColorDeck title="OVERRIDE COLOR" subtitle={selectedFixtureTargets.length?`${selectedFixtureTargets.length} selected`:'Select fixtures'} color={globalColor} disabled={selectedCompatibleColors.length===0} presets={consoleColorPresets} onChange={applyGlobalColor}/><button className="console-primary" onClick={()=>{setWorkspace('create');setProgramMode('stage');}}>OPEN FULL PROGRAMMER</button></aside></div>
         </div>}
 
         {liveView === 'groups' && <div className="live-detail-view">
