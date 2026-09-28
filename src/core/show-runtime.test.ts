@@ -174,6 +174,65 @@ describe('ShowRuntime', () => {
     expect(exact.frame).toEqual(colored.frame);
   });
 
+  it('layers FX over the programmer without rewriting the base frame', () => {
+    const runtime = new ShowRuntime({ patch: DEFAULT_PATCH });
+    runtime.dispatch(controlCommand('ui', {
+      type: 'frame.update', universe: 1, updates: [[5, 80]]
+    }));
+    const layered = runtime.dispatch(controlCommand('fx', {
+      type: 'playback.layer.set',
+      universe: 1,
+      layerId: 'fx',
+      priority: 30,
+      mode: 'ltp',
+      updates: [[5, 210]]
+    }));
+    expect(layered.baseFrame[4]).toBe(80);
+    expect(layered.frame[4]).toBe(210);
+
+    const cleared = runtime.dispatch(controlCommand('fx', {
+      type: 'playback.layer.clear', universe: 1, layerId: 'fx'
+    }));
+    expect(cleared.baseFrame[4]).toBe(80);
+    expect(cleared.frame[4]).toBe(80);
+  });
+
+  it('applies group and grand masters after playback layers', () => {
+    const runtime = new ShowRuntime({ patch: DEFAULT_PATCH });
+    runtime.dispatch(controlCommand('fx', {
+      type: 'playback.layer.set',
+      universe: 1,
+      layerId: 'fx',
+      priority: 30,
+      mode: 'ltp',
+      updates: [[5, 200]]
+    }));
+    runtime.dispatch(controlCommand('ui', {
+      type: 'group.master.set', groupName: 'Front Wash', value: .5
+    }));
+    const mastered = runtime.dispatch(controlCommand('ui', {
+      type: 'master.set', value: .5
+    }));
+    expect(mastered.baseFrame[4]).toBe(0);
+    expect(mastered.frame[4]).toBe(50);
+  });
+
+  it('supports HTP hit layers without letting a lower hit pull intensity down', () => {
+    const runtime = new ShowRuntime({ patch: DEFAULT_PATCH });
+    runtime.dispatch(controlCommand('ui', {
+      type: 'frame.update', universe: 1, updates: [[5, 180]]
+    }));
+    const hit = runtime.dispatch(controlCommand('surface', {
+      type: 'playback.layer.set',
+      universe: 1,
+      layerId: 'hit',
+      priority: 80,
+      mode: 'htp',
+      updates: [[5, 100]]
+    }));
+    expect(hit.frame[4]).toBe(180);
+  });
+
   it('changes one fixture intensity without moving another fixture fader', () => {
     const second = { ...DEFAULT_PATCH[0], id: 'fixture-2', address: 11, selected: false };
     const runtime = new ShowRuntime({ patch: [DEFAULT_PATCH[0], second] });
