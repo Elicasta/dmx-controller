@@ -19,8 +19,6 @@ export type ControlSource =
   | 'system';
 
 export type ControlCommand =
-  | { type: 'frame.batch.replace'; frames: Array<{ universe: number; values: readonly number[] }> }
-  | { type: 'frame.batch.output.replace'; frames: Array<{ universe: number; values: readonly number[] }> }
   | { type: 'frame.replace'; universe: number; values: readonly number[] }
   | { type: 'frame.output.replace'; universe: number; values: readonly number[] }
   | { type: 'frame.update'; universe: number; updates: ReadonlyArray<DmxUpdate> }
@@ -34,7 +32,6 @@ export type ControlCommand =
   | { type: 'fixture.target'; fixtureIds: string[]; target: Vec3; arrangement?: TargetArrangement; spreadMeters?: number; orderMode?: FixtureOrderMode }
   | { type: 'group.color'; groupName: string; color: { red: number; green: number; blue: number } }
   | { type: 'group.master.set'; groupName: string; value: number }
-  | { type: 'group.level.adjust'; groupName: string; previous: number; value: number }
   | { type: 'effect.start'; effectId: EffectId }
   | { type: 'effect.press'; effectId: EffectId }
   | { type: 'effect.release'; effectId: EffectId }
