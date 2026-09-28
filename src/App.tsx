@@ -1148,7 +1148,7 @@ export default function App() {
     fadeAnimationRef.current = requestAnimationFrame(tick);
   }
 
-  function fadeCueToUniverse(cue: ShowCue, target: number[], onComplete?: () => void) {
+  function fadeCueToUniverse(cue: ShowCue, target: number[], onComplete?: () => void, source: ControlSource = 'cue') {
     stopFade();
     if (activeEffectRef.current) stopEffect(false);
     const from = [...universeRef.current];
@@ -1168,7 +1168,7 @@ export default function App() {
     });
 
     if (first.durationMs === 0) {
-      void commitUniverse(target, 'cue').finally(() => {
+      void commitUniverse(target, source).finally(() => {
         setMessage(`${label} is live.`);
         onComplete?.();
       });
@@ -1191,7 +1191,7 @@ export default function App() {
       if (now - fadeLastFrameRef.current >= FRAME_MS || rendered.done) {
         fadeLastFrameRef.current = now;
         if (rendered.done) {
-          void commitUniverse(rendered.frame, 'cue').finally(() => {
+          void commitUniverse(rendered.frame, source).finally(() => {
             fadeAnimationRef.current = null;
             setIsFading(false);
             setMessage(`${label} is live.`);
@@ -1199,7 +1199,7 @@ export default function App() {
           });
           return;
         }
-        void commitUniverse(rendered.frame, 'cue');
+        void commitUniverse(rendered.frame, source);
       }
       fadeAnimationRef.current = requestAnimationFrame(tick);
     };
@@ -1371,7 +1371,7 @@ export default function App() {
       : `${name} captured as a blocked cue because the previous legacy cue has no full state.`);
   }
 
-  function runCue(cue: ShowCue) {
+  function runCue(cue: ShowCue, source: ControlSource = 'cue') {
     if (cueFollowTimerRef.current !== null) window.clearTimeout(cueFollowTimerRef.current);
     const launch = () => {
       setActiveCueId(cue.id);
@@ -1380,28 +1380,28 @@ export default function App() {
       const target = hasStoredState && cueIndex >= 0
         ? resolveCueFrame(showFile.cues, cueIndex)
         : applyUniverseUpdates(universeRef.current, lookUpdates(cue.values, selectedFixtures(patch)));
-      void dispatchControl({ type: 'cue.go', cueId: cue.id }, 'cue');
+      void dispatchControl({ type: 'cue.go', cueId: cue.id }, source);
       const launchLinkedEffect = cue.linkedEffectId && EFFECT_PRESETS.some((effect) => effect.id === cue.linkedEffectId)
         ? () => startEffect(cue.linkedEffectId as EffectId)
         : undefined;
-      fadeCueToUniverse(cue, target, launchLinkedEffect);
+      fadeCueToUniverse(cue, target, launchLinkedEffect, source);
       if ((cue.followMs ?? 0) > 0) {
         const following = showFile.cues[cueIndex + 1];
-        if (following) cueFollowTimerRef.current = window.setTimeout(() => runCue(following), cue.followMs);
+        if (following) cueFollowTimerRef.current = window.setTimeout(() => runCue(following, source), cue.followMs);
       }
     };
     if ((cue.delayMs ?? 0) > 0) window.setTimeout(launch, cue.delayMs);
     else launch();
   }
 
-  function goNextCue() {
-    if (nextCue) runCue(nextCue);
+  function goNextCue(source: ControlSource = 'cue') {
+    if (nextCue) runCue(nextCue, source);
     else setMessage(showFile.cues.length ? 'End of cue stack.' : 'Capture a cue before pressing GO.');
   }
 
-  function goPreviousCue() {
+  function goPreviousCue(source: ControlSource = 'cue') {
     if (!showFile.cues.length) return;
-    runCue(showFile.cues[activeCueIndex <= 0 ? 0 : activeCueIndex - 1]);
+    runCue(showFile.cues[activeCueIndex <= 0 ? 0 : activeCueIndex - 1], source);
   }
 
   function updateCue(id: string) {
@@ -1935,16 +1935,12 @@ export default function App() {
       goCue: (cueId) => {
         const cue = cueId ? showFile.cues.find((item) => item.id === cueId) : nextCue;
         if (!cue) throw new Error('No LumaRig cue is available.');
-        const target = cue.universe?.length === 512 ? [...cue.universe] : applyUniverseUpdates(universeRef.current, lookUpdates(cue.values, selectedFixtures(patch)));
-        fadeToUniverse(cue.name, target, cue.fadeMs, 'remote');
-        setActiveCueId(cue.id);
+        runCue(cue, 'remote');
       },
       fireScene: (sceneId) => {
         const cue = showFile.cues.find((item) => item.id === sceneId);
         if (!cue) throw new Error('LumaRig scene was not found.');
-        const target = cue.universe?.length === 512 ? [...cue.universe] : applyUniverseUpdates(universeRef.current, lookUpdates(cue.values, selectedFixtures(patch)));
-        fadeToUniverse(cue.name, target, cue.fadeMs, 'remote');
-        setActiveCueId(cue.id);
+        runCue(cue, 'remote');
       },
       startEffect: (effectId) => {
         if (!EFFECT_PRESETS.some((effect) => effect.id === effectId)) {
@@ -2383,8 +2379,8 @@ export default function App() {
 
   function executeMidiControl(control: MidiAssignableControl, value: number) {
     if (control.type === 'button') {
-      if (control.id === 'go') goNextCue();
-      else if (control.id === 'previous') goPreviousCue();
+      if (control.id === 'go') goNextCue('midi');
+      else if (control.id === 'previous') goPreviousCue('midi');
       else if (control.id === 'blackout') void toggleBlackout();
       else if (control.id === 'tap-tempo') tapTempo();
       else if (control.id === 'stop-effect') stopEffect();
@@ -3106,9 +3102,9 @@ export default function App() {
     try {
       if (type === 'cue.go') {
         const requested = typeof command.cueId === 'string' ? showFile.cues.find((cue) => cue.id === command.cueId) : null;
-        if (requested) runCue(requested); else goNextCue();
+        if (requested) runCue(requested, 'surface'); else goNextCue('surface');
       } else if (type === 'cue.previous') {
-        goPreviousCue();
+        goPreviousCue('surface');
       } else if (type === 'blackout.set') {
         await setBlackoutState(Boolean(command.active), 'surface');
       } else if (type === 'master.set' && typeof command.value === 'number') {
