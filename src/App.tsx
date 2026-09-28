@@ -336,7 +336,11 @@ function isCustomEffect(value: unknown): value is CustomEffect {
     && typeof effect.name === 'string'
     && ['dimmer', 'pan', 'tilt', 'uv'].includes(String(effect.parameter))
     && ['sine', 'triangle', 'square', 'saw', 'reverse-saw', 'step'].includes(String(effect.waveform))
-    && [effect.bpm, effect.depth, effect.phaseSpread, effect.offset].every((part) => typeof part === 'number' && Number.isFinite(part));
+    && [effect.bpm, effect.depth, effect.phaseSpread, effect.offset].every((part) => typeof part === 'number' && Number.isFinite(part))
+    && (effect.orderMode === undefined || ['forward', 'reverse', 'center-out', 'outside-in', 'odd-even', 'even-odd', 'mirror-pairs'].includes(String(effect.orderMode)))
+    && [effect.blocks, effect.groups, effect.wings, effect.shift, effect.cycleBeats].every((part) => part === undefined || (typeof part === 'number' && Number.isFinite(part)))
+    && (effect.direction === undefined || ['forward', 'reverse'].includes(String(effect.direction)))
+    && (effect.mode === undefined || ['absolute', 'relative'].includes(String(effect.mode)));
 }
 
 function loadCustomEffects(): CustomEffect[] {
@@ -702,6 +706,10 @@ export default function App() {
     phaseSpread: 0,
     offset: 0,
     orderMode: 'forward',
+    blocks: 1,
+    groups: 1,
+    wings: 1,
+    shift: 0,
     direction: 'forward',
     cycleBeats: 1,
     mode: 'absolute'
@@ -2664,6 +2672,10 @@ export default function App() {
       phaseSpread: shape.phaseSpread,
       offset: 0,
       orderMode: 'forward',
+      blocks: 1,
+      groups: 1,
+      wings: 1,
+      shift: 0,
       direction: 'forward',
       cycleBeats: 1,
       mode: 'absolute'
@@ -2680,6 +2692,10 @@ export default function App() {
       phaseSpread: Math.max(0, Math.min(200, fxEditor.phaseSpread)),
       offset: Math.max(-100, Math.min(100, fxEditor.offset)),
       orderMode: fxEditor.orderMode ?? 'forward',
+      blocks: Math.max(1, Math.min(64, Math.round(fxEditor.blocks ?? 1))),
+      groups: Math.max(1, Math.min(64, Math.round(fxEditor.groups ?? 1))),
+      wings: Math.max(1, Math.min(16, Math.round(fxEditor.wings ?? 1))),
+      shift: Math.max(-256, Math.min(256, Math.round(fxEditor.shift ?? 0))),
       direction: fxEditor.direction ?? 'forward',
       cycleBeats: Math.max(.125, Math.min(32, fxEditor.cycleBeats ?? 1)),
       mode: fxEditor.mode ?? 'absolute',
@@ -3310,6 +3326,14 @@ export default function App() {
                   <label><span>Direction</span><select value={fxEditor.direction ?? 'forward'} onChange={(event) => setFxEditor((current) => ({ ...current, direction: event.target.value as CustomEffect['direction'] }))}><option value="forward">Forward</option><option value="reverse">Reverse</option></select></label>
                 </div>
                 <div className="inspector-pair">
+                  <label><span>Blocks</span><input type="number" min="1" max="64" value={fxEditor.blocks ?? 1} onChange={(event) => setFxEditor((current) => ({ ...current, blocks: Number(event.target.value) }))}/></label>
+                  <label><span>Groups</span><input type="number" min="1" max="64" value={fxEditor.groups ?? 1} onChange={(event) => setFxEditor((current) => ({ ...current, groups: Number(event.target.value) }))}/></label>
+                </div>
+                <div className="inspector-pair">
+                  <label><span>Wings</span><input type="number" min="1" max="16" value={fxEditor.wings ?? 1} onChange={(event) => setFxEditor((current) => ({ ...current, wings: Number(event.target.value) }))}/></label>
+                  <label><span>Shift</span><input type="number" min="-256" max="256" value={fxEditor.shift ?? 0} onChange={(event) => setFxEditor((current) => ({ ...current, shift: Number(event.target.value) }))}/></label>
+                </div>
+                <div className="inspector-pair">
                   <label><span>Cycle</span><select value={String(fxEditor.cycleBeats ?? 1)} onChange={(event) => setFxEditor((current) => ({ ...current, cycleBeats: Number(event.target.value) }))}><option value=".25">1/4 beat</option><option value=".5">1/2 beat</option><option value="1">1 beat</option><option value="2">2 beats</option><option value="4">1 bar</option><option value="8">2 bars</option><option value="16">4 bars</option></select></label>
                   <label><span>Mode</span><select value={fxEditor.mode ?? 'absolute'} onChange={(event) => setFxEditor((current) => ({ ...current, mode: event.target.value as CustomEffect['mode'] }))}><option value="absolute">Absolute</option><option value="relative">Relative to Look</option></select></label>
                 </div>
@@ -3331,7 +3355,7 @@ export default function App() {
                 {EFFECT_PRESETS.map((effect) => <button key={effect.id} className={`${selectedFxBankId === effect.id ? 'selected' : ''} ${activeEffect === effect.id ? 'running' : ''}`} onClick={() => loadFactoryFx(effect)} onDoubleClick={() => toggleEffect(effect.id, programEffectFixtures.map((fixture) => fixture.id))}><i className={`fx-icon fx-${effect.id}`}/><span><strong>{effect.name}</strong><small>{EFFECT_SHAPES[effect.id].waveform} · {effect.defaultBpm} BPM</small></span><b>{activeEffect === effect.id ? 'LIVE' : 'FACTORY'}</b></button>)}
                 {customEffects.map((effect) => <article key={effect.id} className={`${selectedFxBankId === effect.id ? 'selected' : ''} ${activeCustomEffectId === effect.id ? 'running' : ''}`}><button className="fx-bank-load" onClick={() => { setSelectedFxBankId(effect.id); setFxEditor(effect); }} onDoubleClick={() => runCustomFx(effect, programEffectFixtures.map((fixture) => fixture.id))}><i>∿</i><span><strong>{effect.name}</strong><small>{effect.waveform} · {effect.bpm} BPM</small></span><b>{activeCustomEffectId === effect.id ? 'LIVE' : 'CUSTOM'}</b></button><button className="fx-bank-delete" aria-label={`Delete ${effect.name}`} onClick={() => deleteCustomFx(effect.id)}>×</button></article>)}
               </div>
-              <footer><span>Single click loads an effect into the graph. Double-click a bank item to run it immediately.</span><button onClick={() => { setFxEditor({ id: 'custom-preview', name: 'New FX', parameter: 'dimmer', waveform: 'sine', bpm: 100, depth: 100, phaseSpread: 0, offset: 0, orderMode: 'forward', direction: 'forward', cycleBeats: 1, mode: 'absolute' }); setSelectedFxBankId('custom-preview'); }}>＋ NEW FX</button></footer>
+              <footer><span>Single click loads an effect into the graph. Double-click a bank item to run it immediately.</span><button onClick={() => { setFxEditor({ id: 'custom-preview', name: 'New FX', parameter: 'dimmer', waveform: 'sine', bpm: 100, depth: 100, phaseSpread: 0, offset: 0, orderMode: 'forward', blocks: 1, groups: 1, wings: 1, shift: 0, direction: 'forward', cycleBeats: 1, mode: 'absolute' }); setSelectedFxBankId('custom-preview'); }}>＋ NEW FX</button></footer>
             </section>
           </div>}
 
