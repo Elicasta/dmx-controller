@@ -1164,7 +1164,7 @@ export default function App() {
     if (announce) setMessage('Effects stopped. The underlying cue/programmer look is restored.');
   }
 
-  async function publishRuntimeResult  async function publishRuntimeResult(result: RuntimeDispatchResult) {
+  async function publishRuntimeResult(result: RuntimeDispatchResult) {
     universeRef.current = result.baseFrame;
     setUniverse(result.baseFrame);
     outputUniverseRef.current = result.frame;
@@ -1552,7 +1552,7 @@ export default function App() {
     setMessage(`${preset?.name ?? effect} running on selected lights.`);
   }
 
-  function toggleEffect(effect: EffectId, targetIds?: readonly string[]) {  function toggleEffect(effect: EffectId, targetIds?: readonly string[]) {
+  function toggleEffect(effect: EffectId, targetIds?: readonly string[]) {
     if (activeEffectRef.current === effect) {
       stopEffect();
       return;
@@ -1593,7 +1593,7 @@ export default function App() {
     setMessage(`${preset?.name ?? effect} released. Running FX continues underneath.`);
   }
 
-  function tapTempo() {  function tapTempo() {
+  function tapTempo() {
     const now = performance.now();
     const recent = [...tapTimesRef.current, now].filter((time) => now - time < 2500).slice(-6);
     tapTimesRef.current = recent;
@@ -3228,7 +3228,7 @@ export default function App() {
     setMessage(`${effect.name} running on selected lights.`);
   }
 
-  function renderEffectButton(effect: EffectPreset, compact = false) {  function renderEffectButton(effect: EffectPreset, compact = false) {
+  function renderEffectButton(effect: EffectPreset, compact = false) {
     const className = `${compact ? 'show-fx-button' : 'fx-card'} ${activeEffect === effect.id ? 'active' : ''} ${effect.momentary ? 'momentary' : ''}`;
     if (!effect.momentary) {
       return (
