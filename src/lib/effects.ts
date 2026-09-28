@@ -248,12 +248,15 @@ export function renderEffect(
   }
 
   if (effect === 'sweep') {
-    return active.flatMap((fixture, index) => {
-      const offset = index / active.length;
-      const pan = fixtureParameterUpdate(fixture, 'pan', ((Math.sin((phase + offset) * Math.PI * 2) + 1) / 2) * 255);
-      const tilt = fixtureParameterUpdate(fixture, 'tilt', ((Math.cos((phase + offset * .5) * Math.PI * 2) + 1) / 2) * 255);
-      return [pan, tilt].filter((update): update is DmxUpdate => Boolean(update));
-    });
+    return renderPhaserProgram({
+      bpm,
+      phaseSpread: 100,
+      cycleBeats: 1,
+      lanes: [
+        { parameter: 'pan', waveform: 'sine', depth: 100, offset: 0, mode: 'absolute' },
+        { parameter: 'tilt', waveform: 'sine', depth: 100, offset: 0, phaseOffset: .25, mode: 'absolute' }
+      ]
+    }, active, elapsedMs);
   }
 
   if (effect === 'finale') {
