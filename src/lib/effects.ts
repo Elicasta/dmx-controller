@@ -1,5 +1,5 @@
 import { clampDmx, type DmxUpdate } from './dmx';
-import { phaserWaveValue, renderPhaserEffect, type PhaserDirection, type PhaserMode } from '../core/phaser-engine';
+import { phaserWaveValue, renderPhaserEffect, renderPhaserProgram, type PhaserDirection, type PhaserLane, type PhaserMode } from '../core/phaser-engine';
 import type { FixtureOrderMode } from '../core/fixture-order';
 import {
   fixtureColorUpdates,
@@ -24,6 +24,8 @@ export type EffectId =
 
 export type EffectWaveform = 'sine' | 'triangle' | 'square' | 'saw' | 'reverse-saw' | 'step';
 export type EffectParameter = 'dimmer' | 'pan' | 'tilt' | 'uv';
+export type CustomEffectParameter = EffectParameter | 'position';
+export type MotionShape = 'circle' | 'figure-eight' | 'diagonal' | 'pan-sweep' | 'tilt-sweep';
 
 export type EffectPreset = {
   id: EffectId;
@@ -36,8 +38,9 @@ export type EffectPreset = {
 export type CustomEffect = {
   id: string;
   name: string;
-  parameter: EffectParameter;
+  parameter: CustomEffectParameter;
   waveform: EffectWaveform;
+  motionShape?: MotionShape;
   bpm: number;
   depth: number;
   phaseSpread: number;
@@ -72,14 +75,46 @@ export function effectWaveValue(waveform: EffectWaveform, phase: number): number
   return phaserWaveValue(waveform, phase);
 }
 
+export function motionShapeLanes(
+  shape: MotionShape,
+  effect: Pick<CustomEffect, 'waveform' | 'depth' | 'offset' | 'mode'>
+): PhaserLane[] {
+  const common = {
+    waveform: effect.waveform,
+    depth: effect.depth,
+    offset: effect.offset,
+    mode: effect.mode ?? 'relative'
+  } as const;
+
+  if (shape === 'pan-sweep') return [{ ...common, parameter: 'pan' }];
+  if (shape === 'tilt-sweep') return [{ ...common, parameter: 'tilt' }];
+  if (shape === 'diagonal') {
+    return [
+      { ...common, parameter: 'pan' },
+      { ...common, parameter: 'tilt' }
+    ];
+  }
+  if (shape === 'figure-eight') {
+    return [
+      { ...common, parameter: 'pan' },
+      { ...common, parameter: 'tilt', phaseOffset: .25, rateMultiplier: 2 }
+    ];
+  }
+  return [
+    { ...common, parameter: 'pan' },
+    { ...common, parameter: 'tilt', phaseOffset: .25 }
+  ];
+}
+
 export function renderCustomEffect(
   effect: CustomEffect,
   fixtures: readonly PatchedFixture[],
   elapsedMs: number,
   baseUniverse?: readonly number[]
 ): DmxUpdate[] {
-  return renderPhaserEffect({
-    ...effect,
+  const timing = {
+    bpm: effect.bpm,
+    phaseSpread: effect.phaseSpread,
     orderMode: effect.orderMode ?? 'forward',
     order: {
       mode: effect.orderMode ?? 'forward',
@@ -89,7 +124,25 @@ export function renderCustomEffect(
       shift: effect.shift ?? 0
     },
     direction: effect.direction ?? 'forward',
-    cycleBeats: effect.cycleBeats ?? 1,
+    cycleBeats: effect.cycleBeats ?? 1
+  } as const;
+
+  if (effect.parameter === 'position') {
+    return renderPhaserProgram({
+      ...timing,
+      lanes: motionShapeLanes(effect.motionShape ?? 'circle', {
+        waveform: effect.waveform,
+        depth: effect.depth,
+        offset: effect.offset,
+        mode: effect.mode ?? 'relative'
+      })
+    }, fixtures, elapsedMs, baseUniverse);
+  }
+
+  return renderPhaserEffect({
+    ...effect,
+    ...timing,
+    parameter: effect.parameter,
     mode: effect.mode ?? 'absolute'
   }, fixtures, elapsedMs, baseUniverse);
 }
@@ -195,12 +248,15 @@ export function renderEffect(
   }
 
   if (effect === 'sweep') {
-    return active.flatMap((fixture, index) => {
-      const offset = index / active.length;
-      const pan = fixtureParameterUpdate(fixture, 'pan', ((Math.sin((phase + offset) * Math.PI * 2) + 1) / 2) * 255);
-      const tilt = fixtureParameterUpdate(fixture, 'tilt', ((Math.cos((phase + offset * .5) * Math.PI * 2) + 1) / 2) * 255);
-      return [pan, tilt].filter((update): update is DmxUpdate => Boolean(update));
-    });
+    return renderPhaserProgram({
+      bpm,
+      phaseSpread: 100,
+      cycleBeats: 1,
+      lanes: [
+        { parameter: 'pan', waveform: 'sine', depth: 100, offset: 0, mode: 'absolute' },
+        { parameter: 'tilt', waveform: 'sine', depth: 100, offset: 0, phaseOffset: .25, mode: 'absolute' }
+      ]
+    }, active, elapsedMs);
   }
 
   if (effect === 'finale') {
