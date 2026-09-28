@@ -117,6 +117,7 @@ import { ArtNetOutputDriver } from './core/artnet-output';
 import { ShowRuntime, type RuntimeDispatchResult } from './core/show-runtime';
 import { projectStagePoint, unprojectStagePoint, type StagePoint2D, type StageView } from './core/stage-projection';
 import { arrangeTargetPoints, buildStageTargets, type TargetArrangement, type TargetPoint } from './core/targets';
+import { orderFixtures, type FixtureOrderMode } from './core/fixture-order';
 import { RemoteRelay, type RelayCommandEnvelope, type RemoteRelayConfig, type RemoteRelayStatus } from './core/remote-relay';
 import { StudioBridgeDispatcher } from './core/studio-bridge-dispatcher';
 import type { StudioBridgeCommand, StudioSongIdentity } from './core/studio-bridge-protocol';
@@ -788,6 +789,7 @@ export default function App() {
   const stageDragRef = useRef<{ pointerId: number; kind: 'fixture' | 'element'; id: string; preserved: Vec3; moved: boolean } | null>(null);
   const [selectedTargetId, setSelectedTargetId] = useState('target-center-stage');
   const [aimArrangement, setAimArrangement] = useState<TargetArrangement>('converge');
+  const [aimOrderMode, setAimOrderMode] = useState<FixtureOrderMode>('forward');
   const [aimSpreadMeters, setAimSpreadMeters] = useState(4);
   const [calibrationOpen, setCalibrationOpen] = useState(false);
   const [positionPaletteName, setPositionPaletteName] = useState('');
@@ -1925,8 +1927,9 @@ export default function App() {
       setMessage('Select at least one moving fixture before using AIM.');
       return;
     }
-    const arranged = arrangeTargetPoints(target.position, selectedMovingFixtures.length, aimArrangement, aimSpreadMeters);
-    const unreachable = selectedMovingFixtures.filter((fixture, selectedIndex) => {
+    const orderedFixtures = orderFixtures(selectedMovingFixtures, aimOrderMode);
+    const arranged = arrangeTargetPoints(target.position, orderedFixtures.length, aimArrangement, aimSpreadMeters);
+    const unreachable = orderedFixtures.filter((fixture, selectedIndex) => {
       const patchIndex = patch.findIndex((item) => item.id === fixture.id);
       return !aimFixtureAtTarget(universeRef.current, fixture, arranged[selectedIndex], patchIndex, patch.length, stageSettings.dimensions)?.reachable;
     });
@@ -1936,7 +1939,8 @@ export default function App() {
       fixtureIds: selectedMovingFixtures.map((fixture) => fixture.id),
       target: target.position,
       arrangement: aimArrangement,
-      spreadMeters: aimSpreadMeters
+      spreadMeters: aimSpreadMeters,
+      orderMode: aimOrderMode
     }, 'ui');
     if (!result.warnings.length) {
       setMessage(`${selectedMovingFixtures.length} mover${selectedMovingFixtures.length === 1 ? '' : 's'} aimed at ${target.name} · ${aimArrangement.replace('-', ' ')}.`);
@@ -1961,6 +1965,7 @@ export default function App() {
         targetName: selectedTarget.name,
         fallbackTarget: { ...selectedTarget.position },
         arrangement: aimArrangement,
+        orderMode: aimOrderMode,
         spreadMeters: aimSpreadMeters
       };
     }
@@ -2014,7 +2019,8 @@ export default function App() {
         fixtureIds: movingFixtures.map((fixture) => fixture.id),
         target: target.position,
         arrangement: palette.arrangement,
-        spreadMeters: palette.spreadMeters
+        spreadMeters: palette.spreadMeters,
+        orderMode: palette.orderMode ?? 'forward'
       }, 'ui');
       if (!result.warnings.length) setMessage(`${palette.name} applied to ${movingFixtures.length} selected mover${movingFixtures.length === 1 ? '' : 's'}.`);
       return;
@@ -3174,7 +3180,7 @@ export default function App() {
             <div className="stage-console-toolbar"><div role="toolbar" aria-label="Stage Designer mode">{STAGE_DESIGNER_MODES.map((mode) => <button key={mode.id} className={stageMode === mode.id ? 'active' : ''} onClick={() => setStageMode(mode.id)}>{mode.label}</button>)}</div><span>{stageSettings.unit === 'feet' ? 'FEET' : 'METERS'} · {stageSettings.dimensions.width.toFixed(1)} × {stageSettings.dimensions.depth.toFixed(1)} m</span></div>
             <div className="dominant-stage">{renderStagePreview(true)}</div>
             <div className="stage-bottom-tools">
-              <section><header><strong>TARGETS &amp; AIM</strong><span>{selectedMovingFixtures.length} mover{selectedMovingFixtures.length === 1 ? '' : 's'} selected</span></header><div className="inline-control-grid"><select value={selectedTargetId} onChange={(event) => setSelectedTargetId(event.target.value)}>{stageTargets.map((target) => <option key={target.id} value={target.id}>{target.name}</option>)}</select><select value={aimArrangement} onChange={(event) => setAimArrangement(event.target.value as TargetArrangement)}><option value="converge">Converge</option><option value="fan-horizontal">Horizontal fan</option><option value="fan-vertical">Vertical fan</option><option value="mirror">Mirror</option><option value="cross">Cross</option></select><button className="console-primary" disabled={!selectedTarget || !selectedMovingFixtures.length} onClick={() => selectedTarget && void aimAtTarget(selectedTarget)}>Aim selected</button></div></section>
+              <section><header><strong>TARGETS &amp; AIM</strong><span>{selectedMovingFixtures.length} mover{selectedMovingFixtures.length === 1 ? '' : 's'} selected</span></header><div className="inline-control-grid"><select value={selectedTargetId} onChange={(event) => setSelectedTargetId(event.target.value)}>{stageTargets.map((target) => <option key={target.id} value={target.id}>{target.name}</option>)}</select><select value={aimArrangement} onChange={(event) => setAimArrangement(event.target.value as TargetArrangement)}><option value="converge">Converge</option><option value="fan-horizontal">Horizontal fan</option><option value="fan-vertical">Vertical fan</option><option value="mirror">Mirror</option><option value="cross">Cross</option></select><select value={aimOrderMode} onChange={(event) => setAimOrderMode(event.target.value as FixtureOrderMode)}><option value="forward">Forward</option><option value="reverse">Reverse</option><option value="center-out">Center Out</option><option value="outside-in">Outside In</option><option value="mirror-pairs">Mirror Pairs</option><option value="odd-even">Odd → Even</option><option value="even-odd">Even → Odd</option></select><label className="inline-range"><span>Spread {aimSpreadMeters.toFixed(1)}m</span><input type="range" min=".1" max="20" step=".1" value={aimSpreadMeters} onChange={(event) => setAimSpreadMeters(Number(event.target.value))}/></label><button className="console-primary" disabled={!selectedTarget || !selectedMovingFixtures.length} onClick={() => selectedTarget && void aimAtTarget(selectedTarget)}>Aim selected</button></div></section>
               <section><header><strong>POSITION PALETTES</strong><span>{showFile.positionPalettes?.length ?? 0} saved</span></header><div className="palette-chip-row">{showFile.positionPalettes?.map((palette) => <button key={palette.id} onClick={() => void runPositionPalette(palette)}><span>{palette.kind}</span>{palette.name}</button>)}<button className="add-palette-chip" onClick={savePositionPalette}>＋ Save current</button></div></section>
               <section><header><strong>STAGE ELEMENTS</strong><span>{stageElements.length}</span></header><div className="palette-chip-row">{STAGE_ELEMENT_LIBRARY.map((element) => <button key={element.type} onClick={() => addStageElement(element.type)}>＋ {element.name}</button>)}</div></section>
             </div>
