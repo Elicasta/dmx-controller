@@ -256,7 +256,7 @@ export class ShowRuntime {
         const dimmer = parameterChannel(fixture, 'dimmer');
         if (!dimmer) return;
         const groupMaster = this.groupMasters.get(fixture.group) ?? 1;
-        const sourceDimmer = this.flashFixtureIds.has(fixture.id) ? 255 : (base[dimmer - 1] ?? 0);
+        const sourceDimmer = this.flashFixtureIds.has(fixture.id) ? 255 : (next[dimmer - 1] ?? 0);
         next[dimmer - 1] = clampDmx(sourceDimmer * groupMaster * this.master);
       });
     return next;
