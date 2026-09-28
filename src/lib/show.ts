@@ -327,7 +327,7 @@ export function sanitizeShow(show: ShowFile): ShowFile {
         z: Number.isFinite(palette.fallbackTarget.z) ? palette.fallbackTarget.z : 0
       },
       arrangement: palette.arrangement,
-      orderMode: palette.orderMode ?? 'forward',
+      ...(palette.orderMode ? { orderMode: palette.orderMode } : {}),
       spreadMeters: Math.max(.1, Math.min(100, Number.isFinite(palette.spreadMeters) ? palette.spreadMeters : 4))
     } : {
       id: palette.id.slice(0, 100),
