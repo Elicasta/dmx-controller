@@ -1,6 +1,7 @@
 import type { EffectId } from '../lib/effects';
 import { findMode, parameterChannel, readFixtureParameter, type FixtureParameter, type PatchedFixture } from '../lib/fixtures';
 import type { FixtureGroup } from '../lib/show';
+import { makeSelectionGrid, normalizeSelectionGrid, selectionGridOrder } from './selection-grid';
 
 const GROUP_COLORS = ['#55e98d', '#ff3dbb', '#8b5cf6', '#35a7ff', '#f7be45', '#27d3d8'];
 
@@ -20,7 +21,8 @@ export function makeFixtureGroup(name: string, index = 0): FixtureGroup {
     masterDefault: 100,
     fxEnabled: true,
     notes: '',
-    fixtureOrder: []
+    fixtureOrder: [],
+    selectionGrid: makeSelectionGrid([])
   };
 }
 
@@ -28,7 +30,7 @@ export function reconcileFixtureGroups(
   saved: readonly FixtureGroup[],
   patch: readonly PatchedFixture[]
 ): FixtureGroup[] {
-  const next = saved.map((group) => ({ ...group, fixtureOrder: [...group.fixtureOrder] }));
+  const next: FixtureGroup[] = saved.map((group): FixtureGroup => ({ ...group, fixtureOrder: [...group.fixtureOrder], selectionGrid: group.selectionGrid ? { ...group.selectionGrid, cells: group.selectionGrid.cells.map((cell) => ({ ...cell })) } : undefined }));
   const names = new Set(next.map((group) => group.name));
   patch.forEach((fixture) => {
     const name = fixture.group.trim();
@@ -41,7 +43,8 @@ export function reconcileFixtureGroups(
     const members = patch.filter((fixture) => fixture.group === group.name).map((fixture) => fixture.id);
     const ordered = group.fixtureOrder.filter((id) => members.includes(id));
     members.forEach((id) => { if (!ordered.includes(id)) ordered.push(id); });
-    return { ...group, fixtureOrder: ordered };
+    const selectionGrid = normalizeSelectionGrid(group.selectionGrid, ordered);
+    return { ...group, selectionGrid, fixtureOrder: selectionGridOrder(selectionGrid, ordered) };
   });
 }
 
@@ -64,7 +67,7 @@ export function fixtureSupportsParameter(fixture: PatchedFixture, parameter: Fix
 }
 
 export function fixtureSupportsColor(fixture: PatchedFixture): boolean {
-  return ['red', 'green', 'blue'].every((parameter) => (
+  return ['red', 'green', 'blue', 'white', 'amber', 'uv'].some((parameter) => (
     fixtureSupportsParameter(fixture, parameter as FixtureParameter)
   ));
 }
@@ -122,8 +125,7 @@ export function renameFixtureGroup(
 ): { groups: FixtureGroup[]; patch: PatchedFixture[] } {
   const cleanName = nextName.trim().slice(0, 64);
   const current = groups.find((group) => group.id === groupIdToRename);
-  const conflicts = groups.some((group) => group.id !== groupIdToRename && group.name.trim().toLowerCase() === cleanName.toLowerCase());
-  if (!current || !cleanName || conflicts) return { groups: [...groups], patch: [...patch] };
+  if (!current || !cleanName) return { groups: [...groups], patch: [...patch] };
   return {
     groups: groups.map((group) => group.id === groupIdToRename ? { ...group, name: cleanName } : group),
     patch: patch.map((fixture) => fixture.group === current.name ? { ...fixture, group: cleanName } : fixture)
