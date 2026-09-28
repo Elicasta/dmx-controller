@@ -115,6 +115,14 @@ import {
 import { CallbackOutputDriver, OutputRouter, VirtualOutputDriver } from './core/output-router';
 import { ArtNetOutputDriver } from './core/artnet-output';
 import { ShowRuntime, type RuntimeDispatchResult } from './core/show-runtime';
+import {
+  buildCueChannelFamilies,
+  cueChanges,
+  renderCueTransitionFrame,
+  resolveCueFrame,
+  type CueTimingFamily,
+  type CueTransition
+} from './core/cue-engine';
 import { projectStagePoint, unprojectStagePoint, type StagePoint2D, type StageView } from './core/stage-projection';
 import { arrangeTargetPoints, buildStageTargets, type TargetArrangement, type TargetPoint } from './core/targets';
 import { orderFixtures, type FixtureOrderMode } from './core/fixture-order';
@@ -1140,6 +1148,59 @@ export default function App() {
     fadeAnimationRef.current = requestAnimationFrame(tick);
   }
 
+  function fadeCueToUniverse(cue: ShowCue, target: number[]) {
+    stopFade();
+    if (activeEffectRef.current) stopEffect(false);
+    const from = [...universeRef.current];
+    const channelFamilies = buildCueChannelFamilies(patchRef.current);
+    const startedAt = performance.now();
+    const label = `Cue ${cue.number}: ${cue.name}`;
+
+    const first = renderCueTransitionFrame({
+      from,
+      target,
+      elapsedMs: 0,
+      fadeInMs: cue.fadeMs,
+      fadeOutMs: cue.fadeOutMs ?? cue.fadeMs,
+      transition: cue.transition ?? 's-curve',
+      timing: cue.timing,
+      channelFamilies
+    });
+
+    if (first.durationMs === 0) {
+      void commitUniverse(target, 'cue');
+      setMessage(`${label} is live.`);
+      return;
+    }
+
+    fadeLastFrameRef.current = startedAt - FRAME_MS;
+    setIsFading(true);
+    const tick = (now: number) => {
+      const rendered = renderCueTransitionFrame({
+        from,
+        target,
+        elapsedMs: now - startedAt,
+        fadeInMs: cue.fadeMs,
+        fadeOutMs: cue.fadeOutMs ?? cue.fadeMs,
+        transition: cue.transition ?? 's-curve',
+        timing: cue.timing,
+        channelFamilies
+      });
+      if (now - fadeLastFrameRef.current >= FRAME_MS || rendered.done) {
+        fadeLastFrameRef.current = now;
+        void commitUniverse(rendered.frame, 'cue');
+      }
+      if (!rendered.done) {
+        fadeAnimationRef.current = requestAnimationFrame(tick);
+      } else {
+        fadeAnimationRef.current = null;
+        setIsFading(false);
+        setMessage(`${label} is live.`);
+      }
+    };
+    fadeAnimationRef.current = requestAnimationFrame(tick);
+  }
+
   function runLook(look: FixtureLook, duration = fadeMs) {
     const target = applyUniverseUpdates(universeRef.current, lookUpdates(look.values, selectedFixtures(patch)));
     fadeToUniverse(look.name, target, duration);
@@ -1273,24 +1334,49 @@ export default function App() {
   function captureCue() {
     const number = showFile.cues.length + 1;
     const name = cueName.trim() || `Cue ${number}`;
-    const cue: ShowCue = { id: `cue-${Date.now().toString(36)}`, number, name, fadeMs: cueFadeMs, fadeOutMs: cueFadeMs, delayMs: 0, followMs: 0, color: globalColor, description: '', linkedLookId: '', linkedEffectId: '', trackName: '', values: { ...primaryValues }, universe: [...universeRef.current] };
+    const output = [...universeRef.current];
+    const previous = showFile.cues.length
+      ? resolveCueFrame(showFile.cues, showFile.cues.length - 1)
+      : makeUniverse();
+    const cue: ShowCue = {
+      id: `cue-${Date.now().toString(36)}`,
+      number,
+      name,
+      fadeMs: cueFadeMs,
+      fadeOutMs: cueFadeMs,
+      delayMs: 0,
+      followMs: 0,
+      color: globalColor,
+      description: '',
+      linkedLookId: '',
+      linkedEffectId: '',
+      trackName: '',
+      transition: 's-curve',
+      timing: {},
+      tracking: true,
+      changes: cueChanges(previous, output),
+      values: { ...primaryValues }
+    };
     setShowFile((current) => ({ ...current, cues: [...current.cues, cue] }));
     setCueName('');
-    setMessage(`${name} captured with all ${patch.length} patched lights.`);
+    setMessage(`${name} captured as a tracked cue with ${cue.changes?.length ?? 0} changed channels.`);
   }
 
   function runCue(cue: ShowCue) {
     if (cueFollowTimerRef.current !== null) window.clearTimeout(cueFollowTimerRef.current);
     const launch = () => {
       setActiveCueId(cue.id);
-      const target = cue.universe?.length === 512 ? [...cue.universe] : applyUniverseUpdates(universeRef.current, lookUpdates(cue.values, selectedFixtures(patch)));
+      const cueIndex = showFile.cues.findIndex((item) => item.id === cue.id);
+      const hasStoredState = Boolean(cue.tracking || cue.changes?.length || cue.universe?.length === 512);
+      const target = hasStoredState && cueIndex >= 0
+        ? resolveCueFrame(showFile.cues, cueIndex)
+        : applyUniverseUpdates(universeRef.current, lookUpdates(cue.values, selectedFixtures(patch)));
       void dispatchControl({ type: 'cue.go', cueId: cue.id }, 'cue');
-      fadeToUniverse(`Cue ${cue.number}: ${cue.name}`, target, cue.fadeMs, 'cue');
+      fadeCueToUniverse(cue, target);
       if (cue.linkedEffectId && EFFECT_PRESETS.some((effect) => effect.id === cue.linkedEffectId)) {
         startEffect(cue.linkedEffectId as EffectId);
       }
       if ((cue.followMs ?? 0) > 0) {
-        const cueIndex = showFile.cues.findIndex((item) => item.id === cue.id);
         const following = showFile.cues[cueIndex + 1];
         if (following) cueFollowTimerRef.current = window.setTimeout(() => runCue(following), cue.followMs);
       }
@@ -1312,12 +1398,19 @@ export default function App() {
   function updateCue(id: string) {
     const output = [...outputUniverseRef.current];
     const outputValues = primaryFixture ? fixtureValues(output, primaryFixture) : primaryValues;
-    setShowFile((current) => ({
-      ...current,
-      cues: current.cues.map((cue) => cue.id === id
-        ? { ...cue, values: { ...outputValues }, universe: output }
-        : cue)
-    }));
+    setShowFile((current) => {
+      const cueIndex = current.cues.findIndex((cue) => cue.id === id);
+      if (cueIndex < 0) return current;
+      const previous = cueIndex > 0 ? resolveCueFrame(current.cues, cueIndex - 1) : makeUniverse();
+      return {
+        ...current,
+        cues: current.cues.map((cue) => cue.id === id
+          ? cue.tracking
+            ? { ...cue, values: { ...outputValues }, changes: cueChanges(previous, output), universe: undefined }
+            : { ...cue, values: { ...outputValues }, universe: output, changes: undefined }
+          : cue)
+      };
+    });
     setMessage('Cue look updated from the actual live output.');
   }
 
@@ -1325,6 +1418,43 @@ export default function App() {
     setShowFile((current) => ({
       ...current,
       cues: current.cues.map((cue) => cue.id === id ? { ...cue, ...updates } : cue)
+    }));
+  }
+
+  function setCueTracking(id: string, enabled: boolean) {
+    setShowFile((current) => {
+      const cueIndex = current.cues.findIndex((cue) => cue.id === id);
+      if (cueIndex < 0) return current;
+      const target = resolveCueFrame(current.cues, cueIndex);
+      const previous = cueIndex > 0 ? resolveCueFrame(current.cues, cueIndex - 1) : makeUniverse();
+      return {
+        ...current,
+        cues: current.cues.map((cue) => cue.id === id
+          ? enabled
+            ? { ...cue, tracking: true, changes: cueChanges(previous, target), universe: undefined }
+            : { ...cue, tracking: false, universe: target, changes: undefined }
+          : cue)
+      };
+    });
+    setMessage(enabled ? 'Cue tracking enabled. Unchanged values inherit forward.' : 'Cue blocked to a full snapshot.');
+  }
+
+  function updateCueTiming(
+    id: string,
+    family: CueTimingFamily,
+    key: 'fadeMs' | 'delayMs',
+    value: number
+  ) {
+    const safe = Math.max(0, Math.min(60_000, Math.round(Number.isFinite(value) ? value : 0)));
+    setShowFile((current) => ({
+      ...current,
+      cues: current.cues.map((cue) => cue.id === id ? {
+        ...cue,
+        timing: {
+          ...(cue.timing ?? {}),
+          [family]: { ...(cue.timing?.[family] ?? {}), [key]: safe }
+        }
+      } : cue)
     }));
   }
 
