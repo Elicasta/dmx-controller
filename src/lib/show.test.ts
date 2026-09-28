@@ -29,6 +29,30 @@ describe('show helpers', () => {
     expect(isShowFile({ version: 1, name: 'Broken', cues: [{}] })).toBe(false);
   });
 
+  it('persists tracked cues, transition curves, and per-family timing', () => {
+    const tracked = {
+      ...cue('tracked', 1),
+      transition: 'ease-out' as const,
+      tracking: true,
+      changes: [[5, 999] as const],
+      timing: {
+        intensity: { fadeMs: 1200, delayMs: 50 },
+        position: { fadeMs: 99999, delayMs: -10 }
+      }
+    };
+    const show = { version: 3 as const, name: 'Tracked', cues: [tracked] };
+    expect(isShowFile(show)).toBe(true);
+    expect(sanitizeShow(show).cues[0]).toMatchObject({
+      transition: 'ease-out',
+      tracking: true,
+      changes: [[5, 255]],
+      timing: {
+        intensity: { fadeMs: 1200, delayMs: 50 },
+        position: { fadeMs: 60000, delayMs: 0 }
+      }
+    });
+  });
+
   it('keeps full-universe snapshots for multi-fixture cues', () => {
     const show = {
       version: 1 as const,
