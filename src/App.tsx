@@ -728,7 +728,6 @@ export default function App() {
   const effectStartedRef = useRef(0);
   const effectBaseUniverseRef = useRef<number[]>(makeUniverse());
   const momentaryEffectRef = useRef<{ effect: EffectId } | null>(null);
-  const momentaryTargetIdsRef = useRef<string[]>([]);
   const [effectBpm, setEffectBpm] = useState(120);
   const [effectDepth, setEffectDepth] = useState(100);
   const effectBpmRef = useRef(effectBpm);
@@ -1048,9 +1047,8 @@ export default function App() {
       }, 'fx');
     }
 
-    if (clearHit && momentaryEffectRef.current) {
+    if (clearHit && runtimeRef.current) {
       momentaryEffectRef.current = null;
-      momentaryTargetIdsRef.current = [];
       void dispatchControl({
         type: 'playback.layer.clear',
         universe: 1,
@@ -1329,8 +1327,6 @@ export default function App() {
       .map(([channel, value]) => [channel, dimmerChannels.has(channel) ? Math.min(value, masterCap) : value] as const);
 
     momentaryEffectRef.current = { effect };
-    momentaryTargetIdsRef.current = requested;
-
     void dispatchControl({
       type: 'playback.layer.set',
       universe: 1,
@@ -1348,7 +1344,6 @@ export default function App() {
     if (!held || held.effect !== effect) return;
 
     momentaryEffectRef.current = null;
-    momentaryTargetIdsRef.current = [];
     const preset = EFFECT_PRESETS.find((item) => item.id === effect);
 
     void dispatchControl({
