@@ -84,7 +84,8 @@ export function cuePlaybackDuration(
     const defaultFade = intensityChannels.has(channel) && (target[index] ?? 0) < (from[index] ?? 0)
       ? cue.fadeOutMs ?? cue.fadeMs
       : cue.fadeMs;
-    duration = Math.max(duration, (override?.delayMs ?? 0) + (override?.fadeMs ?? defaultFade));
+    const fadeMs = override?.curve === 'snap' ? 0 : (override?.fadeMs ?? defaultFade);
+    duration = Math.max(duration, (override?.delayMs ?? 0) + fadeMs);
   }
 
   return duration;
