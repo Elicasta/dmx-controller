@@ -47,10 +47,10 @@ describe('phaser engine', () => {
 
   it('lets blocks share phase and wings mirror phase', () => {
     const fixtures = [mover('one', 1), mover('two', 20), mover('three', 40), mover('four', 60)];
-    const blocked = renderPhaserEffect({ ...base, waveform: 'saw', order: { mode: 'forward', blocks: 2 } }, fixtures, 0);
-    const winged = renderPhaserEffect({ ...base, waveform: 'saw', order: { mode: 'forward', wings: 2 } }, fixtures, 0);
-    expect(blocked.map(([, value]) => value)).toEqual([0, 0, 0, 0]);
-    expect(winged.map(([, value]) => value)).toEqual([0, 0, 0, 0]);
+    const blocked = renderPhaserEffect({ ...base, waveform: 'saw', phaseSpread: 50, order: { mode: 'forward', blocks: 2 } }, fixtures, 0);
+    const winged = renderPhaserEffect({ ...base, waveform: 'saw', phaseSpread: 50, order: { mode: 'forward', wings: 2 } }, fixtures, 0);
+    expect(blocked.map(([, value]) => value)).toEqual([0, 0, 128, 128]);
+    expect(winged.map(([, value]) => value)).toEqual([0, 128, 128, 0]);
   });
 
   it('can run relative to the current look instead of replacing it', () => {
