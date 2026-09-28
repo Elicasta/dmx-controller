@@ -4206,6 +4206,20 @@ export default function App() {
               <label><span>Description</span><textarea value={activeCue.description ?? ''} onChange={(event)=>updateCueProperties(activeCue.id,{description:event.target.value})}/></label>
               <div className="inspector-pair"><label><span>Fade In ms</span><input type="number" min="0" value={activeCue.fadeMs} onChange={(event)=>updateCueProperties(activeCue.id,{fadeMs:Number(event.target.value)})}/></label><label><span>Fade Out ms</span><input type="number" min="0" value={activeCue.fadeOutMs ?? activeCue.fadeMs} onChange={(event)=>updateCueProperties(activeCue.id,{fadeOutMs:Number(event.target.value)})}/></label></div>
               <div className="inspector-pair"><label><span>Delay ms</span><input type="number" min="0" value={activeCue.delayMs ?? 0} onChange={(event)=>updateCueProperties(activeCue.id,{delayMs:Number(event.target.value)})}/></label><label><span>Follow ms</span><input type="number" min="0" value={activeCue.followMs ?? 0} onChange={(event)=>updateCueProperties(activeCue.id,{followMs:Number(event.target.value)})}/></label></div>
+              <section className="cue-timing-overrides">
+                <header><span>ATTRIBUTE TIMING</span><small>Optional per-family overrides</small></header>
+                {(['intensity','color','position','beam'] as CueTimingRule['family'][]).map((family)=>{
+                  const stored=activeCue.timing?.find((rule)=>rule.family===family);
+                  const rule=stored ?? {family,fadeMs:activeCue.fadeMs,delayMs:0,curve:'ease' as const};
+                  return <div className="cue-timing-row" key={family}>
+                    <strong>{family.toUpperCase()}</strong>
+                    <label><span>Fade ms</span><input type="number" min="0" max="60000" value={rule.fadeMs} onChange={(event)=>updateCueTimingFamily(activeCue.id,family,{fadeMs:Number(event.target.value)})}/></label>
+                    <label><span>Delay ms</span><input type="number" min="0" max="60000" value={rule.delayMs} onChange={(event)=>updateCueTimingFamily(activeCue.id,family,{delayMs:Number(event.target.value)})}/></label>
+                    <label><span>Curve</span><select value={rule.curve} onChange={(event)=>updateCueTimingFamily(activeCue.id,family,{curve:event.target.value as CueTimingRule['curve']})}><option value="ease">Ease</option><option value="linear">Linear</option><option value="snap">Snap</option></select></label>
+                    <button className="cue-timing-reset" disabled={!stored} onClick={()=>clearCueTimingFamily(activeCue.id,family)}>RESET</button>
+                  </div>;
+                })}
+              </section>
               <label><span>Linked Effect</span><select value={activeCue.linkedEffectId ?? ''} onChange={(event)=>updateCueProperties(activeCue.id,{linkedEffectId:event.target.value})}><option value="">None</option>{EFFECT_PRESETS.map((effect)=><option key={effect.id} value={effect.id}>{effect.name}</option>)}</select></label>
               <label><span>Track / Audio Note</span><input value={activeCue.trackName ?? ''} onChange={(event)=>updateCueProperties(activeCue.id,{trackName:event.target.value})}/></label>
               <button className="console-primary" onClick={()=>updateCue(activeCue.id)}>Update Look From Output</button>
@@ -4299,6 +4313,11 @@ export default function App() {
           onStopFx={()=>stopEffect()}
           onColor={applyGlobalColor}
           onSelectedLevel={(value)=>selectedFixtureTargets.forEach((fixture)=>void setFixtureAttribute(fixture,'dimmer',percentToDmx(value)))}
+          buskActive={buskChannelCount > 0}
+          onBuskLook={(lookId)=>{const look=allLooks.find((item)=>item.id===lookId);if(look)applyBuskLook(look);}}
+          onBuskColor={applyBuskColor}
+          onBuskSelectedLevel={applyBuskSelectedLevel}
+          onBuskRelease={()=>clearBusk()}
         />}
 
         {liveView === 'overrides' && <div className="live-detail-view">
