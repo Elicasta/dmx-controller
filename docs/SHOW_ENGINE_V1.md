@@ -56,15 +56,25 @@ Current controls:
 
 Relative mode offsets the fixture's current attribute value instead of replacing it. This allows one movement effect to be reused over many looks.
 
-### cue-tracking.ts
+### cue tracking + timing
 
-Provides channel-level tracking primitives:
+Cue tracking is now active in the real cue stack, not just a helper:
 
-- Diff one cue state against another.
-- Resolve a tracked cue by inheriting earlier values.
-- Block selected inherited channels.
+- New and updated cues store sparse channel instructions.
+- Untouched values inherit through later cues.
+- Reordering cues recomputes sparse instructions so each cue keeps its resolved look.
+- Deleting a cue preserves the resolved looks of surviving cues.
+- Legacy snapshot cues remain readable.
+- Show-file schema v4 stores tracking plus attribute-family timing.
 
-Existing show files remain compatible. Full cue-list integration can migrate incrementally.
+Cue timing can override fade, delay, and curve independently for:
+
+- Intensity
+- Color
+- Position
+- Beam
+
+This allows color to snap while movement travels over a bar and intensity fades on its own timing.
 
 ### playback-stack.ts
 
@@ -99,7 +109,7 @@ Ordered aiming is routed through ShowRuntime so stage programming and palette re
 
 ## UI changes
 
-The FX editor exposes:
+The FX editor exposes saved group order all the way into phase assignment, plus:
 
 - Fixture order
 - Direction
@@ -124,13 +134,11 @@ The stage AIM controls expose:
 1. Multi-attribute phasers so Pan + Tilt + Zoom can live in one effect.
 2. Step-based phasers with per-step width, transition, acceleration, and deceleration.
 3. Selection grids persisted on fixture groups.
-4. Cue tracking integrated into capture/update/reorder behavior.
-5. Per-attribute cue fade and delay timing.
-6. Playback stack integrated into the live runtime instead of effect loops writing directly into the base frame.
-7. N-shot effects and one-shot hits.
-8. Song-section recipes driven by LumaStudio/Ableton transport.
-9. Art-Net/sACN multi-universe output at a fixed render cadence.
-10. Visualizer preview of phaser geometry before output.
+4. Playback stack integrated into the live runtime instead of effect loops writing directly into the base frame.
+5. N-shot effects and one-shot hits.
+6. Song-section recipes driven by LumaStudio/Ableton transport.
+7. Art-Net/sACN multi-universe output at a fixed render cadence.
+8. Visualizer preview of phaser geometry before output.
 
 ## Reference concepts
 
