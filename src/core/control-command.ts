@@ -3,6 +3,8 @@ import type { DmxUpdate } from '../lib/dmx';
 import type { FixtureParameter } from '../lib/fixtures';
 import type { Vec3 } from './geometry';
 import type { TargetArrangement } from './targets';
+import type { FixtureOrderMode } from './fixture-order';
+import type { PlaybackLayerMode } from './playback-stack';
 
 export type ControlSource =
   | 'ui'
@@ -17,20 +19,19 @@ export type ControlSource =
   | 'system';
 
 export type ControlCommand =
-  | { type: 'frame.batch.replace'; frames: Array<{ universe: number; values: readonly number[] }> }
-  | { type: 'frame.batch.output.replace'; frames: Array<{ universe: number; values: readonly number[] }> }
   | { type: 'frame.replace'; universe: number; values: readonly number[] }
   | { type: 'frame.output.replace'; universe: number; values: readonly number[] }
   | { type: 'frame.update'; universe: number; updates: ReadonlyArray<DmxUpdate> }
+  | { type: 'playback.layer.set'; universe: number; layerId: string; priority: number; mode: PlaybackLayerMode; updates: ReadonlyArray<DmxUpdate> }
+  | { type: 'playback.layer.clear'; universe: number; layerId: string }
   | { type: 'fixture.select'; fixtureIds: string[]; mode: 'replace' | 'add' | 'remove' | 'toggle' }
   | { type: 'fixture.attribute'; fixtureIds: string[]; parameter: FixtureParameter; value: number }
   | { type: 'fixture.color'; fixtureIds: string[]; color: { red: number; green: number; blue: number } }
   | { type: 'fixture.flash.set'; fixtureIds: string[]; active: boolean }
   | { type: 'fixture.position'; positions: Array<{ fixtureId: string; panNormalized: number; tiltNormalized: number }> }
-  | { type: 'fixture.target'; fixtureIds: string[]; target: Vec3; arrangement?: TargetArrangement; spreadMeters?: number }
+  | { type: 'fixture.target'; fixtureIds: string[]; target: Vec3; arrangement?: TargetArrangement; spreadMeters?: number; orderMode?: FixtureOrderMode }
   | { type: 'group.color'; groupName: string; color: { red: number; green: number; blue: number } }
   | { type: 'group.master.set'; groupName: string; value: number }
-  | { type: 'group.level.adjust'; groupName: string; previous: number; value: number }
   | { type: 'effect.start'; effectId: EffectId }
   | { type: 'effect.press'; effectId: EffectId }
   | { type: 'effect.release'; effectId: EffectId }
