@@ -4,6 +4,7 @@ import type { FixtureParameter } from '../lib/fixtures';
 import type { Vec3 } from './geometry';
 import type { TargetArrangement } from './targets';
 import type { FixtureOrderMode } from './fixture-order';
+import type { PlaybackLayerMode } from './playback-stack';
 
 export type ControlSource =
   | 'ui'
@@ -21,6 +22,8 @@ export type ControlCommand =
   | { type: 'frame.replace'; universe: number; values: readonly number[] }
   | { type: 'frame.output.replace'; universe: number; values: readonly number[] }
   | { type: 'frame.update'; universe: number; updates: ReadonlyArray<DmxUpdate> }
+  | { type: 'playback.layer.set'; universe: number; layerId: string; priority: number; mode: PlaybackLayerMode; updates: ReadonlyArray<DmxUpdate> }
+  | { type: 'playback.layer.clear'; universe: number; layerId: string }
   | { type: 'fixture.select'; fixtureIds: string[]; mode: 'replace' | 'add' | 'remove' | 'toggle' }
   | { type: 'fixture.attribute'; fixtureIds: string[]; parameter: FixtureParameter; value: number }
   | { type: 'fixture.color'; fixtureIds: string[]; color: { red: number; green: number; blue: number } }
