@@ -3090,7 +3090,7 @@ export default function App() {
         depth: 100,
         offset: 0,
         mode: 'absolute'
-      }].slice(0, 8)
+      } as CustomEffectLane].slice(0, 8)
     }));
   }
 
