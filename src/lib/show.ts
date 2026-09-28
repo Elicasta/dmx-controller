@@ -54,6 +54,7 @@ export type ShowCue = {
   description?: string;
   linkedLookId?: string;
   linkedEffectId?: string;
+  linkedEffectTargetIds?: string[];
   trackName?: string;
   transition?: CueTransition;
   timing?: CueTimingMap;
@@ -155,6 +156,10 @@ export function isShowFile(value: unknown): value is ShowFile {
       && (item.description === undefined || typeof item.description === 'string')
       && (item.linkedLookId === undefined || typeof item.linkedLookId === 'string')
       && (item.linkedEffectId === undefined || typeof item.linkedEffectId === 'string')
+      && (item.linkedEffectTargetIds === undefined || (
+        Array.isArray(item.linkedEffectTargetIds)
+        && item.linkedEffectTargetIds.every((id) => typeof id === 'string')
+      ))
       && (item.trackName === undefined || typeof item.trackName === 'string')
       && (item.transition === undefined || ['linear', 'ease-in', 'ease-out', 's-curve'].includes(item.transition))
       && (item.timing === undefined || isCueTimingMap(item.timing))
@@ -350,6 +355,7 @@ export function sanitizeShow(show: ShowFile): ShowFile {
       description: (cue.description ?? '').slice(0, 500),
       linkedLookId: (cue.linkedLookId ?? '').slice(0, 100),
       linkedEffectId: (cue.linkedEffectId ?? '').slice(0, 100),
+      linkedEffectTargetIds: [...new Set((cue.linkedEffectTargetIds ?? []).filter((id) => typeof id === 'string').map((id) => id.slice(0, 100)))].slice(0, 256),
       trackName: (cue.trackName ?? '').slice(0, 180),
       ...(cue.transition ? { transition: cue.transition } : {}),
       ...(cue.timing ? { timing: sanitizeCueTiming(cue.timing) } : {}),
