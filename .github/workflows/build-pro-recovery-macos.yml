@@ -1,0 +1,86 @@
+name: Build Pro Recovery macOS
+
+on:
+  push:
+    branches:
+      - recovery/pro-033-show-engine
+    paths:
+      - '.github/workflows/build-pro-recovery-macos.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: macos-latest
+    steps:
+      - name: Check out Pro recovery source
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: lts/*
+          cache: npm
+
+      - name: Set up Rust targets
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-darwin,x86_64-apple-darwin
+
+      - name: Cache Rust build
+        uses: swatinem/rust-cache@v2
+        with:
+          workspaces: "./src-tauri -> target"
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Verify recovery tests
+        run: npm test
+
+      - name: Verify Pro shell and Show Engine markers
+        run: |
+          npm run build
+          grep -R -q "LIVE CONTROL SURFACE" dist || (echo "Missing Pro Live controller" && exit 1)
+          grep -R -q "MA DESK" dist || (echo "Missing Pro MA surface" && exit 1)
+          grep -R -q "STEP RECIPE" dist || (echo "Missing Step Recipe editor" && exit 1)
+          grep -R -q "SELECTION GRID" dist || (echo "Missing selection grid editor" && exit 1)
+          grep -R -q "ATTRIBUTE TIMING" dist || (echo "Missing split cue timing" && exit 1)
+
+      - name: Test native engine
+        run: cargo test --manifest-path src-tauri/Cargo.toml
+
+      - name: Disable updater artifacts for recovery build
+        run: |
+          node <<'NODE'
+          const fs = require('fs');
+          const path = 'src-tauri/tauri.conf.json';
+          const config = JSON.parse(fs.readFileSync(path, 'utf8'));
+          config.bundle.createUpdaterArtifacts = false;
+          fs.writeFileSync(path, JSON.stringify(config, null, 2) + '\n');
+          NODE
+
+      - name: Force fresh native asset embedding
+        run: cargo clean --manifest-path src-tauri/Cargo.toml
+
+      - name: Build universal Pro recovery app and DMG
+        run: npm run tauri:build -- --target universal-apple-darwin --bundles app,dmg
+
+      - name: Verify Pro recovery app and DMG
+        run: |
+          APP_PATH="$(find src-tauri/target/universal-apple-darwin/release/bundle/macos -maxdepth 1 -name '*.app' -print -quit)"
+          DMG_PATH="$(find src-tauri/target/universal-apple-darwin/release/bundle/dmg -maxdepth 1 -name '*.dmg' -print -quit)"
+          test -n "$APP_PATH" || (echo "No .app found" && exit 1)
+          test -n "$DMG_PATH" || (echo "No DMG found" && exit 1)
+          codesign --verify --deep --strict --verbose=2 "$APP_PATH"
+          hdiutil verify "$DMG_PATH"
+
+      - name: Upload LumaRig Pro Recovery
+        uses: actions/upload-artifact@v4
+        with:
+          name: LumaRig-Pro-Recovery-macOS-universal
+          if-no-files-found: error
+          path: |
+            src-tauri/target/universal-apple-darwin/release/bundle/dmg/*.dmg
+            src-tauri/target/universal-apple-darwin/release/bundle/macos/*.app
