@@ -1920,3 +1920,14 @@ input[type="text"], input[type="number"], .add-fixture-grid input, .patch-card-b
 .fx-module header strong{max-width:86px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:#55e98d!important}
 @media(max-width:1450px){.programmer-attribute-deck-v4{grid-template-columns:260px 190px 160px 135px 135px 145px!important}.programmer-attribute-deck-v4{overflow-x:auto!important}}
 @media(max-width:1180px){.programmer-v3{grid-template-rows:48px minmax(210px,1fr) 258px 118px!important}.programmer-attribute-deck-v4{grid-template-columns:250px 185px 155px 132px 132px 142px!important}}
+
+
+/* Show Engine v1: split cue timing */
+.cue-timing-overrides{display:grid;gap:8px;padding:10px;border:1px solid var(--line,rgba(255,255,255,.1));border-radius:8px;background:rgba(255,255,255,.025)}
+.cue-timing-overrides>header{display:flex;align-items:baseline;justify-content:space-between;gap:8px}
+.cue-timing-overrides>header span{font-size:10px;font-weight:800;letter-spacing:.11em}
+.cue-timing-overrides>header small{opacity:.56;font-size:9px}
+.cue-timing-row{display:grid;grid-template-columns:minmax(72px,.7fr) repeat(3,minmax(72px,1fr));gap:6px;align-items:end}
+.cue-timing-row>strong{align-self:center;font-size:10px;letter-spacing:.08em;opacity:.72}
+.cue-timing-row label{min-width:0}
+@media(max-width:900px){.cue-timing-row{grid-template-columns:1fr 1fr}}
