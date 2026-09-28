@@ -308,7 +308,10 @@ export function DesktopLiveController(props: DesktopLiveControllerProps) {
       const group = props.groups.find((candidate) => candidate.id === item.targetId);
       if (group) props.onSelectFixtures(group.fixtureIds, 'replace');
     } else if (item.kind === 'fixture' && item.targetId) props.onSelectFixtures([item.targetId], 'replace');
-    else if (item.kind === 'look' && item.targetId) props.onLook(item.targetId);
+    else if (item.kind === 'look' && item.targetId) {
+      if (mode === 'busk' && props.onBuskLook) props.onBuskLook(item.targetId);
+      else props.onLook(item.targetId);
+    }
     else if (item.kind === 'effect' && item.targetId) {
       if (item.momentary) heldEffects.current.add(item.targetId);
       props.onEffectPress(item.targetId, Boolean(item.momentary));
