@@ -3123,7 +3123,15 @@ export default function App() {
     color: rgbToHex(preset.rgb[0], preset.rgb[1], preset.rgb[2])
   }));
   const allLooks = [...STARTER_LOOKS, ...savedLooks];
-  const programEffectFixtures = selectedFixtureTargets;
+  const selectedFixtureIdSet = new Set(selectedFixtureTargets.map((fixture) => fixture.id));
+  const selectedGroupIsExactSelection = Boolean(
+    selectedGroupFixtures.length
+    && selectedGroupFixtures.length === selectedFixtureTargets.length
+    && selectedGroupFixtures.every((fixture) => selectedFixtureIdSet.has(fixture.id))
+  );
+  const programEffectFixtures = selectedGroupIsExactSelection
+    ? selectedGroupFixtures
+    : selectedFixtureTargets;
   const programEffectName = selectedFixtureTargets.length === 1
     ? selectedFixtureTargets[0].name
     : selectedFixtureTargets.length > 1
@@ -3315,7 +3323,8 @@ export default function App() {
                   <span><small>BPM</small><strong>{fxEditor.bpm}</strong></span>
                   <span><small>DEPTH</small><strong>{fxEditor.depth}%</strong></span>
                   <span><small>PHASE</small><strong>{fxEditor.phaseSpread}%</strong></span>
-                  <span><small>BASE</small><strong>{fxEditor.offset}%</strong></span>
+                  <span><small>{(fxEditor.mode ?? 'absolute') === 'relative' ? 'BIAS' : 'BASE'}</small><strong>{fxEditor.offset}%</strong></span>
+                  <span><small>ORDER</small><strong>{(fxEditor.orderMode ?? 'forward').replace('-', ' ')}</strong></span>
                   <span><small>TARGETS</small><strong>{programEffectFixtures.length}</strong></span>
                 </div>
               </section>
