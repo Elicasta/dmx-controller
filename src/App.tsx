@@ -11,7 +11,7 @@ import {
   VISIBLE_CHANNELS,
   type DmxUpdate
 } from './lib/dmx';
-import { EFFECT_PRESETS, EFFECT_SHAPES, effectWaveValue, renderEffect, renderCustomEffect, type CustomEffect, type CustomEffectParameter, type EffectId, type EffectPreset, type EffectWaveform, type MotionShape } from './lib/effects';
+import { EFFECT_PRESETS, EFFECT_SHAPES, effectWaveValue, renderEffect, renderCustomEffect, type CustomEffect, type EffectId, type EffectParameter, type EffectPreset, type EffectWaveform } from './lib/effects';
 import {
   DEFAULT_PATCH,
   FIXTURE_LIBRARY,
@@ -40,13 +40,18 @@ import {
 import {
   applyLightingOffset,
   DEFAULT_EXTERNAL_TRACK_SYNC,
+  cueChanges,
   diffUniverse,
   EMPTY_SHOW,
   isShowFile,
   MAX_RECORDING_FRAMES,
   midiSongPositionToMs,
   moveCue,
+  removeCuePreservingTracking,
+  resolveShowCueFrame,
   sanitizeShow,
+  type CueTimingFamily,
+  type CueTimingRule,
   type FixtureGroup,
   type PositionPalette,
   type ShowCue,
@@ -117,6 +122,7 @@ import { ArtNetOutputDriver } from './core/artnet-output';
 import { ShowRuntime, type RuntimeDispatchResult } from './core/show-runtime';
 import { projectStagePoint, unprojectStagePoint, type StagePoint2D, type StageView } from './core/stage-projection';
 import { arrangeTargetPoints, buildStageTargets, type TargetArrangement, type TargetPoint } from './core/targets';
+import { cuePlaybackDuration, renderCueTimedFrame } from './core/cue-timing';
 import { orderFixtures, type FixtureOrderMode } from './core/fixture-order';
 import { RemoteRelay, type RelayCommandEnvelope, type RemoteRelayConfig, type RemoteRelayStatus } from './core/remote-relay';
 import { StudioBridgeDispatcher } from './core/studio-bridge-dispatcher';
@@ -335,9 +341,8 @@ function isCustomEffect(value: unknown): value is CustomEffect {
   const effect = value as Partial<CustomEffect>;
   return typeof effect.id === 'string'
     && typeof effect.name === 'string'
-    && ['dimmer', 'pan', 'tilt', 'uv', 'position'].includes(String(effect.parameter))
+    && ['dimmer', 'pan', 'tilt', 'uv'].includes(String(effect.parameter))
     && ['sine', 'triangle', 'square', 'saw', 'reverse-saw', 'step'].includes(String(effect.waveform))
-    && (effect.motionShape === undefined || ['circle', 'figure-eight', 'diagonal', 'pan-sweep', 'tilt-sweep'].includes(String(effect.motionShape)))
     && [effect.bpm, effect.depth, effect.phaseSpread, effect.offset].every((part) => typeof part === 'number' && Number.isFinite(part))
     && (effect.orderMode === undefined || ['forward', 'reverse', 'center-out', 'outside-in', 'odd-even', 'even-odd', 'mirror-pairs'].includes(String(effect.orderMode)))
     && [effect.blocks, effect.groups, effect.wings, effect.shift, effect.cycleBeats].every((part) => part === undefined || (typeof part === 'number' && Number.isFinite(part)))
@@ -357,7 +362,7 @@ function loadShowFile(): ShowFile {
     const raw = window.localStorage.getItem(SHOW_STORAGE_KEY);
     const parsed: unknown = JSON.parse(raw || 'null');
     if (isShowFile(parsed)) {
-      if (parsed.version < 3 && raw && !window.localStorage.getItem(SHOW_BACKUP_STORAGE_KEY)) {
+      if (parsed.version < 4 && raw && !window.localStorage.getItem(SHOW_BACKUP_STORAGE_KEY)) {
         window.localStorage.setItem(SHOW_BACKUP_STORAGE_KEY, raw);
       }
       return sanitizeShow(parsed);
@@ -703,7 +708,6 @@ export default function App() {
     name: 'New FX',
     parameter: 'dimmer',
     waveform: 'sine',
-    motionShape: 'circle',
     bpm: 100,
     depth: 100,
     phaseSpread: 0,
@@ -1140,6 +1144,48 @@ export default function App() {
     fadeAnimationRef.current = requestAnimationFrame(tick);
   }
 
+  function fadeCueToUniverse(
+    cue: ShowCue,
+    target: number[],
+    source: ControlSource = 'cue',
+    onComplete?: () => void
+  ) {
+    stopFade();
+    if (activeEffectRef.current || activeCustomEffectIdRef.current) stopEffect(false);
+    const from = [...universeRef.current];
+    const totalDuration = cuePlaybackDuration(cue, from, target, patchRef.current);
+
+    if (totalDuration === 0) {
+      void commitUniverse(target, source);
+      setMessage(`Cue ${cue.number}: ${cue.name} is live.`);
+      onComplete?.();
+      return;
+    }
+
+    const startedAt = performance.now();
+    fadeLastFrameRef.current = startedAt - FRAME_MS;
+    setIsFading(true);
+
+    const tick = (now: number) => {
+      const elapsed = Math.min(totalDuration, now - startedAt);
+      if (now - fadeLastFrameRef.current >= FRAME_MS || elapsed >= totalDuration) {
+        fadeLastFrameRef.current = now;
+        void commitUniverse(renderCueTimedFrame(cue, from, target, elapsed, patchRef.current), source);
+      }
+
+      if (elapsed < totalDuration) {
+        fadeAnimationRef.current = requestAnimationFrame(tick);
+      } else {
+        fadeAnimationRef.current = null;
+        setIsFading(false);
+        setMessage(`Cue ${cue.number}: ${cue.name} is live.`);
+        onComplete?.();
+      }
+    };
+
+    fadeAnimationRef.current = requestAnimationFrame(tick);
+  }
+
   function runLook(look: FixtureLook, duration = fadeMs) {
     const target = applyUniverseUpdates(universeRef.current, lookUpdates(look.values, selectedFixtures(patch)));
     fadeToUniverse(look.name, target, duration);
@@ -1273,28 +1319,57 @@ export default function App() {
   function captureCue() {
     const number = showFile.cues.length + 1;
     const name = cueName.trim() || `Cue ${number}`;
-    const cue: ShowCue = { id: `cue-${Date.now().toString(36)}`, number, name, fadeMs: cueFadeMs, fadeOutMs: cueFadeMs, delayMs: 0, followMs: 0, color: globalColor, description: '', linkedLookId: '', linkedEffectId: '', trackName: '', values: { ...primaryValues }, universe: [...universeRef.current] };
+    const output = [...universeRef.current];
+    const previous = resolveShowCueFrame(showFile.cues, showFile.cues.length - 1);
+    const cue: ShowCue = {
+      id: `cue-${Date.now().toString(36)}`,
+      number,
+      name,
+      fadeMs: cueFadeMs,
+      fadeOutMs: cueFadeMs,
+      delayMs: 0,
+      followMs: 0,
+      color: globalColor,
+      description: '',
+      linkedLookId: '',
+      linkedEffectId: '',
+      trackName: '',
+      values: { ...primaryValues },
+      changes: cueChanges(previous, output),
+      timing: [],
+      universe: output
+    };
     setShowFile((current) => ({ ...current, cues: [...current.cues, cue] }));
     setCueName('');
-    setMessage(`${name} captured with all ${patch.length} patched lights.`);
+    setMessage(`${name} captured as a tracked cue with ${cue.changes?.length ?? 0} channel instruction${cue.changes?.length === 1 ? '' : 's'}.`);
   }
 
   function runCue(cue: ShowCue) {
     if (cueFollowTimerRef.current !== null) window.clearTimeout(cueFollowTimerRef.current);
+
     const launch = () => {
+      const cueIndex = showFile.cues.findIndex((item) => item.id === cue.id);
       setActiveCueId(cue.id);
-      const target = cue.universe?.length === 512 ? [...cue.universe] : applyUniverseUpdates(universeRef.current, lookUpdates(cue.values, selectedFixtures(patch)));
+      const target = cueIndex >= 0
+        ? resolveShowCueFrame(showFile.cues, cueIndex)
+        : cue.universe?.length === 512
+          ? [...cue.universe]
+          : applyUniverseUpdates(universeRef.current, lookUpdates(cue.values, selectedFixtures(patch)));
+
       void dispatchControl({ type: 'cue.go', cueId: cue.id }, 'cue');
-      fadeToUniverse(`Cue ${cue.number}: ${cue.name}`, target, cue.fadeMs, 'cue');
-      if (cue.linkedEffectId && EFFECT_PRESETS.some((effect) => effect.id === cue.linkedEffectId)) {
-        startEffect(cue.linkedEffectId as EffectId);
-      }
+
+      fadeCueToUniverse(cue, target, 'cue', () => {
+        if (cue.linkedEffectId && EFFECT_PRESETS.some((effect) => effect.id === cue.linkedEffectId)) {
+          startEffect(cue.linkedEffectId as EffectId);
+        }
+      });
+
       if ((cue.followMs ?? 0) > 0) {
-        const cueIndex = showFile.cues.findIndex((item) => item.id === cue.id);
         const following = showFile.cues[cueIndex + 1];
         if (following) cueFollowTimerRef.current = window.setTimeout(() => runCue(following), cue.followMs);
       }
     };
+
     if ((cue.delayMs ?? 0) > 0) window.setTimeout(launch, cue.delayMs);
     else launch();
   }
@@ -1312,13 +1387,43 @@ export default function App() {
   function updateCue(id: string) {
     const output = [...outputUniverseRef.current];
     const outputValues = primaryFixture ? fixtureValues(output, primaryFixture) : primaryValues;
+    setShowFile((current) => {
+      const cueIndex = current.cues.findIndex((cue) => cue.id === id);
+      if (cueIndex < 0) return current;
+      const previous = resolveShowCueFrame(current.cues, cueIndex - 1);
+      const changes = cueChanges(previous, output);
+      return {
+        ...current,
+        cues: current.cues.map((cue) => cue.id === id
+          ? { ...cue, values: { ...outputValues }, changes, universe: output }
+          : cue)
+      };
+    });
+    setMessage('Cue updated from live output. Downstream tracked values remain inherited.');
+  }
+
+  function cueTimingRule(cue: ShowCue, family: CueTimingFamily): CueTimingRule {
+    return cue.timing?.find((rule) => rule.family === family) ?? {
+      family,
+      fadeMs: cue.fadeMs,
+      delayMs: 0,
+      curve: 'ease'
+    };
+  }
+
+  function updateCueTiming(id: string, family: CueTimingFamily, updates: Partial<CueTimingRule>) {
     setShowFile((current) => ({
       ...current,
-      cues: current.cues.map((cue) => cue.id === id
-        ? { ...cue, values: { ...outputValues }, universe: output }
-        : cue)
+      cues: current.cues.map((cue) => {
+        if (cue.id !== id) return cue;
+        const existing = cueTimingRule(cue, family);
+        const next = { ...existing, ...updates, family };
+        return {
+          ...cue,
+          timing: [...(cue.timing ?? []).filter((rule) => rule.family !== family), next]
+        };
+      })
     }));
-    setMessage('Cue look updated from the actual live output.');
   }
 
   function updateCueProperties(id: string, updates: Partial<ShowCue>) {
@@ -1329,7 +1434,10 @@ export default function App() {
   }
 
   function deleteCue(id: string) {
-    setShowFile((current) => ({ ...current, cues: current.cues.filter((cue) => cue.id !== id).map((cue, index) => ({ ...cue, number: index + 1 })) }));
+    setShowFile((current) => ({
+      ...current,
+      cues: removeCuePreservingTracking(current.cues, id)
+    }));
     if (activeCueId === id) setActiveCueId(null);
   }
 
@@ -1784,15 +1892,25 @@ export default function App() {
       goCue: (cueId) => {
         const cue = cueId ? showFile.cues.find((item) => item.id === cueId) : nextCue;
         if (!cue) throw new Error('No LumaRig cue is available.');
-        const target = cue.universe?.length === 512 ? [...cue.universe] : applyUniverseUpdates(universeRef.current, lookUpdates(cue.values, selectedFixtures(patch)));
-        fadeToUniverse(cue.name, target, cue.fadeMs, 'remote');
+        const cueIndex = showFile.cues.findIndex((item) => item.id === cue.id);
+        const target = cueIndex >= 0
+          ? resolveShowCueFrame(showFile.cues, cueIndex)
+          : cue.universe?.length === 512
+            ? [...cue.universe]
+            : applyUniverseUpdates(universeRef.current, lookUpdates(cue.values, selectedFixtures(patch)));
+        fadeCueToUniverse(cue, target, 'remote');
         setActiveCueId(cue.id);
       },
       fireScene: (sceneId) => {
         const cue = showFile.cues.find((item) => item.id === sceneId);
         if (!cue) throw new Error('LumaRig scene was not found.');
-        const target = cue.universe?.length === 512 ? [...cue.universe] : applyUniverseUpdates(universeRef.current, lookUpdates(cue.values, selectedFixtures(patch)));
-        fadeToUniverse(cue.name, target, cue.fadeMs, 'remote');
+        const cueIndex = showFile.cues.findIndex((item) => item.id === cue.id);
+        const target = cueIndex >= 0
+          ? resolveShowCueFrame(showFile.cues, cueIndex)
+          : cue.universe?.length === 512
+            ? [...cue.universe]
+            : applyUniverseUpdates(universeRef.current, lookUpdates(cue.values, selectedFixtures(patch)));
+        fadeCueToUniverse(cue, target, 'remote');
         setActiveCueId(cue.id);
       },
       startEffect: (effectId) => {
@@ -2675,7 +2793,6 @@ export default function App() {
       name: effect.name,
       parameter: shape.parameter,
       waveform: shape.waveform,
-      motionShape: 'circle',
       bpm: effect.defaultBpm,
       depth: 100,
       phaseSpread: shape.phaseSpread,
@@ -2707,8 +2824,7 @@ export default function App() {
       shift: Math.max(-256, Math.min(256, Math.round(fxEditor.shift ?? 0))),
       direction: fxEditor.direction ?? 'forward',
       cycleBeats: Math.max(.125, Math.min(32, fxEditor.cycleBeats ?? 1)),
-      mode: fxEditor.parameter === 'position' ? (fxEditor.mode ?? 'relative') : (fxEditor.mode ?? 'absolute'),
-      motionShape: fxEditor.motionShape ?? 'circle',
+      mode: fxEditor.mode ?? 'absolute',
       id: fxEditor.id.startsWith('custom-') && fxEditor.id !== 'custom-preview'
         ? fxEditor.id
         : `custom-${Date.now().toString(36)}`
@@ -2737,11 +2853,12 @@ export default function App() {
     stopFade();
     stopEffect(false);
     setAudioArmed(false);
-    const targetSet = targetIds?.length ? new Set(targetIds) : null;
-    const effectFixtures = patchRef.current.map((fixture) => ({
-      ...fixture,
-      selected: targetSet ? targetSet.has(fixture.id) : fixture.selected
-    }));
+    const effectFixtures = targetIds?.length
+      ? targetIds
+          .map((id) => patchRef.current.find((fixture) => fixture.id === id))
+          .filter((fixture): fixture is PatchedFixture => Boolean(fixture))
+          .map((fixture) => ({ ...fixture, selected: true }))
+      : patchRef.current.map((fixture) => ({ ...fixture }));
     if (!effectFixtures.some((fixture) => fixture.selected)) {
       setMessage('Select fixtures or a group before running the custom FX.');
       return;
@@ -3127,7 +3244,15 @@ export default function App() {
     color: rgbToHex(preset.rgb[0], preset.rgb[1], preset.rgb[2])
   }));
   const allLooks = [...STARTER_LOOKS, ...savedLooks];
-  const programEffectFixtures = selectedFixtureTargets;
+  const selectedFixtureIdSet = new Set(selectedFixtureTargets.map((fixture) => fixture.id));
+  const selectedGroupIsExactSelection = Boolean(
+    selectedGroupFixtures.length
+    && selectedGroupFixtures.length === selectedFixtureTargets.length
+    && selectedGroupFixtures.every((fixture) => selectedFixtureIdSet.has(fixture.id))
+  );
+  const programEffectFixtures = selectedGroupIsExactSelection
+    ? selectedGroupFixtures
+    : selectedFixtureTargets;
   const programEffectName = selectedFixtureTargets.length === 1
     ? selectedFixtureTargets[0].name
     : selectedFixtureTargets.length > 1
@@ -3319,7 +3444,8 @@ export default function App() {
                   <span><small>BPM</small><strong>{fxEditor.bpm}</strong></span>
                   <span><small>DEPTH</small><strong>{fxEditor.depth}%</strong></span>
                   <span><small>PHASE</small><strong>{fxEditor.phaseSpread}%</strong></span>
-                  <span><small>BASE</small><strong>{fxEditor.offset}%</strong></span>
+                  <span><small>{(fxEditor.mode ?? 'absolute') === 'relative' ? 'BIAS' : 'BASE'}</small><strong>{fxEditor.offset}%</strong></span>
+                  <span><small>ORDER</small><strong>{(fxEditor.orderMode ?? 'forward').replace('-', ' ')}</strong></span>
                   <span><small>TARGETS</small><strong>{programEffectFixtures.length}</strong></span>
                 </div>
               </section>
@@ -3328,10 +3454,9 @@ export default function App() {
                 <header><span>FX PARAMETERS</span><small>Graphical generator</small></header>
                 <label><span>Name</span><input value={fxEditor.name} onChange={(event) => setFxEditor((current) => ({ ...current, name: event.target.value }))}/></label>
                 <div className="inspector-pair">
-                  <label><span>Parameter</span><select value={fxEditor.parameter} onChange={(event) => { const parameter = event.target.value as CustomEffectParameter; setFxEditor((current) => ({ ...current, parameter, motionShape: current.motionShape ?? 'circle', mode: parameter === 'position' ? 'relative' : current.mode })); }}><option value="dimmer">Dimmer</option><option value="position">Position · Pan + Tilt</option><option value="pan">Pan</option><option value="tilt">Tilt</option><option value="uv">UV</option></select></label>
+                  <label><span>Parameter</span><select value={fxEditor.parameter} onChange={(event) => setFxEditor((current) => ({ ...current, parameter: event.target.value as EffectParameter }))}><option value="dimmer">Dimmer</option><option value="pan">Pan</option><option value="tilt">Tilt</option><option value="uv">UV</option></select></label>
                   <label><span>Waveform</span><select value={fxEditor.waveform} onChange={(event) => setFxEditor((current) => ({ ...current, waveform: event.target.value as EffectWaveform }))}><option value="sine">Sine</option><option value="triangle">Triangle</option><option value="square">Square</option><option value="saw">Saw</option><option value="reverse-saw">Reverse Saw</option><option value="step">Step</option></select></label>
                 </div>
-                {fxEditor.parameter === 'position' && <label><span>Motion Shape</span><select value={fxEditor.motionShape ?? 'circle'} onChange={(event) => setFxEditor((current) => ({ ...current, motionShape: event.target.value as MotionShape }))}><option value="circle">Circle</option><option value="figure-eight">Figure 8</option><option value="diagonal">Diagonal</option><option value="pan-sweep">Pan Sweep</option><option value="tilt-sweep">Tilt Sweep</option></select></label>}
                 <div className="inspector-pair">
                   <label><span>Fixture Order</span><select value={fxEditor.orderMode ?? 'forward'} onChange={(event) => setFxEditor((current) => ({ ...current, orderMode: event.target.value as CustomEffect['orderMode'] }))}><option value="forward">Forward</option><option value="reverse">Reverse</option><option value="center-out">Center Out</option><option value="outside-in">Outside In</option><option value="mirror-pairs">Mirror Pairs</option><option value="odd-even">Odd → Even</option><option value="even-odd">Even → Odd</option></select></label>
                   <label><span>Direction</span><select value={fxEditor.direction ?? 'forward'} onChange={(event) => setFxEditor((current) => ({ ...current, direction: event.target.value as CustomEffect['direction'] }))}><option value="forward">Forward</option><option value="reverse">Reverse</option></select></label>
@@ -3366,7 +3491,7 @@ export default function App() {
                 {EFFECT_PRESETS.map((effect) => <button key={effect.id} className={`${selectedFxBankId === effect.id ? 'selected' : ''} ${activeEffect === effect.id ? 'running' : ''}`} onClick={() => loadFactoryFx(effect)} onDoubleClick={() => toggleEffect(effect.id, programEffectFixtures.map((fixture) => fixture.id))}><i className={`fx-icon fx-${effect.id}`}/><span><strong>{effect.name}</strong><small>{EFFECT_SHAPES[effect.id].waveform} · {effect.defaultBpm} BPM</small></span><b>{activeEffect === effect.id ? 'LIVE' : 'FACTORY'}</b></button>)}
                 {customEffects.map((effect) => <article key={effect.id} className={`${selectedFxBankId === effect.id ? 'selected' : ''} ${activeCustomEffectId === effect.id ? 'running' : ''}`}><button className="fx-bank-load" onClick={() => { setSelectedFxBankId(effect.id); setFxEditor(effect); }} onDoubleClick={() => runCustomFx(effect, programEffectFixtures.map((fixture) => fixture.id))}><i>∿</i><span><strong>{effect.name}</strong><small>{effect.waveform} · {effect.bpm} BPM</small></span><b>{activeCustomEffectId === effect.id ? 'LIVE' : 'CUSTOM'}</b></button><button className="fx-bank-delete" aria-label={`Delete ${effect.name}`} onClick={() => deleteCustomFx(effect.id)}>×</button></article>)}
               </div>
-              <footer><span>Single click loads an effect into the graph. Double-click a bank item to run it immediately.</span><button onClick={() => { setFxEditor({ id: 'custom-preview', name: 'New FX', parameter: 'dimmer', waveform: 'sine', motionShape: 'circle', bpm: 100, depth: 100, phaseSpread: 0, offset: 0, orderMode: 'forward', blocks: 1, groups: 1, wings: 1, shift: 0, direction: 'forward', cycleBeats: 1, mode: 'absolute' }); setSelectedFxBankId('custom-preview'); }}>＋ NEW FX</button></footer>
+              <footer><span>Single click loads an effect into the graph. Double-click a bank item to run it immediately.</span><button onClick={() => { setFxEditor({ id: 'custom-preview', name: 'New FX', parameter: 'dimmer', waveform: 'sine', bpm: 100, depth: 100, phaseSpread: 0, offset: 0, orderMode: 'forward', blocks: 1, groups: 1, wings: 1, shift: 0, direction: 'forward', cycleBeats: 1, mode: 'absolute' }); setSelectedFxBankId('custom-preview'); }}>＋ NEW FX</button></footer>
             </section>
           </div>}
 
@@ -3390,7 +3515,7 @@ export default function App() {
 
           <main className="cue-preview-console"><header><span>{directStatus.clients > 0 ? 'LUMAVIZ LIVE PREVIEW' : 'STAGE / CUE PREVIEW'}</span><b>{activeCue?.name ?? 'Live output'}</b></header><div className={`show-viz-preview ${liveLumaVizPreview ? 'linked external-feed' : directStatus.clients > 0 ? 'linked' : ''}`}>{liveLumaVizPreview ? <img src={liveLumaVizPreview.dataUrl} alt={`LumaViz ${liveLumaVizPreview.view ?? 'live'} preview`} /> : renderStagePreview()}</div><div className="cue-preview-meta"><span>CURRENT<strong>{activeCue ? `${activeCue.number}. ${activeCue.name}` : 'Ready'}</strong></span><span>NEXT<strong>{nextCue ? `${nextCue.number}. ${nextCue.name}` : 'End of show'}</strong></span></div></main>
 
-          <aside className="cue-inspector-console"><header><span>CUE INSPECTOR</span><strong>{activeCue?.name ?? 'New cue'}</strong></header>{activeCue ? <><label><span>Cue Name</span><input value={activeCue.name} onChange={(event)=>updateCueProperties(activeCue.id,{name:event.target.value})}/></label><label><span>Cue Color</span><input type="color" value={activeCue.color ?? '#55e98d'} onChange={(event)=>updateCueProperties(activeCue.id,{color:event.target.value})}/></label><label><span>Description</span><textarea value={activeCue.description ?? ''} onChange={(event)=>updateCueProperties(activeCue.id,{description:event.target.value})}/></label><div className="inspector-pair"><label><span>Fade In ms</span><input type="number" min="0" value={activeCue.fadeMs} onChange={(event)=>updateCueProperties(activeCue.id,{fadeMs:Number(event.target.value)})}/></label><label><span>Fade Out ms</span><input type="number" min="0" value={activeCue.fadeOutMs ?? activeCue.fadeMs} onChange={(event)=>updateCueProperties(activeCue.id,{fadeOutMs:Number(event.target.value)})}/></label></div><div className="inspector-pair"><label><span>Delay ms</span><input type="number" min="0" value={activeCue.delayMs ?? 0} onChange={(event)=>updateCueProperties(activeCue.id,{delayMs:Number(event.target.value)})}/></label><label><span>Follow ms</span><input type="number" min="0" value={activeCue.followMs ?? 0} onChange={(event)=>updateCueProperties(activeCue.id,{followMs:Number(event.target.value)})}/></label></div><label><span>Linked Effect</span><select value={activeCue.linkedEffectId ?? ''} onChange={(event)=>updateCueProperties(activeCue.id,{linkedEffectId:event.target.value})}><option value="">None</option>{EFFECT_PRESETS.map((effect)=><option key={effect.id} value={effect.id}>{effect.name}</option>)}</select></label><label><span>Track / Audio Note</span><input value={activeCue.trackName ?? ''} onChange={(event)=>updateCueProperties(activeCue.id,{trackName:event.target.value})}/></label><button className="console-primary" onClick={()=>updateCue(activeCue.id)}>Update Look From Output</button></> : <><label><span>New Cue Name</span><input value={cueName} placeholder={`Cue ${showFile.cues.length+1}`} onChange={(event)=>setCueName(event.target.value)}/></label><label><span>Fade In</span><select value={cueFadeMs} onChange={(event)=>setCueFadeMs(Number(event.target.value))}>{FADE_TIMES.map((time)=><option key={time} value={time}>{time===0?'Snap':`${time/1000}s`}</option>)}</select></label><button className="console-primary" onClick={captureCue}>Capture Current Look</button></>}<label><span>Show Notes</span><textarea value={showFile.notes ?? ''} placeholder="Set list, transitions, safety notes…" onChange={(event)=>setShowFile((current)=>({...current,notes:event.target.value}))}/></label></aside>
+          <aside className="cue-inspector-console"><header><span>CUE INSPECTOR</span><strong>{activeCue?.name ?? 'New cue'}</strong></header>{activeCue ? <><label><span>Cue Name</span><input value={activeCue.name} onChange={(event)=>updateCueProperties(activeCue.id,{name:event.target.value})}/></label><label><span>Cue Color</span><input type="color" value={activeCue.color ?? '#55e98d'} onChange={(event)=>updateCueProperties(activeCue.id,{color:event.target.value})}/></label><label><span>Description</span><textarea value={activeCue.description ?? ''} onChange={(event)=>updateCueProperties(activeCue.id,{description:event.target.value})}/></label><div className="inspector-pair"><label><span>Fade In ms</span><input type="number" min="0" value={activeCue.fadeMs} onChange={(event)=>updateCueProperties(activeCue.id,{fadeMs:Number(event.target.value)})}/></label><label><span>Fade Out ms</span><input type="number" min="0" value={activeCue.fadeOutMs ?? activeCue.fadeMs} onChange={(event)=>updateCueProperties(activeCue.id,{fadeOutMs:Number(event.target.value)})}/></label></div><div className="inspector-pair"><label><span>Delay ms</span><input type="number" min="0" value={activeCue.delayMs ?? 0} onChange={(event)=>updateCueProperties(activeCue.id,{delayMs:Number(event.target.value)})}/></label><label><span>Follow ms</span><input type="number" min="0" value={activeCue.followMs ?? 0} onChange={(event)=>updateCueProperties(activeCue.id,{followMs:Number(event.target.value)})}/></label></div><section className="cue-timing-overrides"><header><span>ATTRIBUTE TIMING</span><small>Override only what needs different timing</small></header>{(['intensity','color','position','beam'] as CueTimingFamily[]).map((family)=>{const rule=cueTimingRule(activeCue,family);return <div className="cue-timing-row" key={family}><strong>{family.toUpperCase()}</strong><label><span>Fade ms</span><input type="number" min="0" max="60000" value={rule.fadeMs} onChange={(event)=>updateCueTiming(activeCue.id,family,{fadeMs:Number(event.target.value)})}/></label><label><span>Delay ms</span><input type="number" min="0" max="60000" value={rule.delayMs} onChange={(event)=>updateCueTiming(activeCue.id,family,{delayMs:Number(event.target.value)})}/></label><label><span>Curve</span><select value={rule.curve} onChange={(event)=>updateCueTiming(activeCue.id,family,{curve:event.target.value as CueTimingRule['curve']})}><option value="ease">Ease</option><option value="linear">Linear</option><option value="snap">Snap</option></select></label></div>})}</section><label><span>Linked Effect</span><select value={activeCue.linkedEffectId ?? ''} onChange={(event)=>updateCueProperties(activeCue.id,{linkedEffectId:event.target.value})}><option value="">None</option>{EFFECT_PRESETS.map((effect)=><option key={effect.id} value={effect.id}>{effect.name}</option>)}</select></label><label><span>Track / Audio Note</span><input value={activeCue.trackName ?? ''} onChange={(event)=>updateCueProperties(activeCue.id,{trackName:event.target.value})}/></label><button className="console-primary" onClick={()=>updateCue(activeCue.id)}>Update Look From Output</button></> : <><label><span>New Cue Name</span><input value={cueName} placeholder={`Cue ${showFile.cues.length+1}`} onChange={(event)=>setCueName(event.target.value)}/></label><label><span>Fade In</span><select value={cueFadeMs} onChange={(event)=>setCueFadeMs(Number(event.target.value))}>{FADE_TIMES.map((time)=><option key={time} value={time}>{time===0?'Snap':`${time/1000}s`}</option>)}</select></label><button className="console-primary" onClick={captureCue}>Capture Current Look</button></>}<label><span>Show Notes</span><textarea value={showFile.notes ?? ''} placeholder="Set list, transitions, safety notes…" onChange={(event)=>setShowFile((current)=>({...current,notes:event.target.value}))}/></label></aside>
 
           <div className="cue-transport-console"><button onClick={goPreviousCue} disabled={!showFile.cues.length}>BACK</button><span><small>CURRENT</small><strong>{activeCue?.name ?? 'Ready'}</strong></span><button className="giant-go" onClick={goNextCue} disabled={!nextCue}>GO<small>{nextCue?.name ?? 'End'}</small></button><span><small>NEXT</small><strong>{nextCue?.name ?? 'End of show'}</strong></span><button onClick={goNextCue} disabled={!nextCue}>NEXT</button></div>
         </div>}
