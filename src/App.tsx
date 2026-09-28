@@ -728,8 +728,8 @@ export default function App() {
   const effectBaseUniverseRef = useRef<number[]>(makeUniverse());
   const momentaryEffectRef = useRef<{
     effect: EffectId;
-    baseUniverse: number[];
     previousEffect: EffectId | null;
+    previousCustomEffectId: string | null;
     previousTargetIds: string[];
   } | null>(null);
   const [effectBpm, setEffectBpm] = useState(120);
@@ -1034,7 +1034,7 @@ export default function App() {
     setIsFading(false);
   }
 
-  function stopEffect(announce = true) {
+  function stopEffect(announce = true, clearLayer = true) {
     momentaryEffectRef.current = null;
     activeEffectRef.current = null;
     activeCustomEffectIdRef.current = null;
@@ -1043,7 +1043,14 @@ export default function App() {
     setActiveCustomEffectId(null);
     if (effectAnimationRef.current !== null) window.cancelAnimationFrame(effectAnimationRef.current);
     effectAnimationRef.current = null;
-    if (announce) setMessage('Effect stopped. The current output is held.');
+    if (clearLayer && runtimeRef.current) {
+      void dispatchControl({
+        type: 'playback.layer.clear',
+        universe: 1,
+        layerId: 'fx'
+      }, 'fx');
+    }
+    if (announce) setMessage('Effect stopped. The underlying cue/programmer look is restored.');
   }
 
   async function publishRuntimeResult(result: RuntimeDispatchResult) {
@@ -1089,7 +1096,7 @@ export default function App() {
   async function setChannels(updates: ReadonlyArray<DmxUpdate>, interrupt = true, source: ControlSource = 'ui') {
     if (interrupt) {
       stopFade();
-      if (activeEffectRef.current) stopEffect(false);
+      if (activeEffectRef.current || activeCustomEffectIdRef.current) stopEffect(false);
       if (audioArmedRef.current) setAudioArmed(false);
     }
     await dispatchControl({ type: 'frame.update', universe: 1, updates }, source);
@@ -1101,13 +1108,13 @@ export default function App() {
 
   async function setFixtureAttribute(fixture: PatchedFixture, parameter: FixtureParameter, value: number, source: ControlSource = 'ui') {
     stopFade();
-    if (activeEffectRef.current) stopEffect(false);
+    if (activeEffectRef.current || activeCustomEffectIdRef.current) stopEffect(false);
     await dispatchControl({ type: 'fixture.attribute', fixtureIds: [fixture.id], parameter, value }, source);
   }
 
   async function setFixtureColor(fixture: PatchedFixture, rgb: readonly [number, number, number], source: ControlSource = 'ui') {
     stopFade();
-    if (activeEffectRef.current) stopEffect(false);
+    if (activeEffectRef.current || activeCustomEffectIdRef.current) stopEffect(false);
     await dispatchControl({ type: 'fixture.color', fixtureIds: [fixture.id], color: { red: rgb[0], green: rgb[1], blue: rgb[2] } }, source);
   }
 
@@ -1117,7 +1124,7 @@ export default function App() {
 
   function fadeToUniverse(name: string, target: number[], duration: number, source: ControlSource = 'ui') {
     stopFade();
-    if (activeEffectRef.current) stopEffect(false);
+    if (activeEffectRef.current || activeCustomEffectIdRef.current) stopEffect(false);
     const from = [...universeRef.current];
     if (duration === 0) {
       void commitUniverse(target, source);
@@ -1220,7 +1227,7 @@ export default function App() {
 
   function startEffect(effect: EffectId, requestedFixtureIds?: readonly string[]) {
     stopFade();
-    stopEffect(false);
+    stopEffect(false, false);
     setAudioArmed(false);
     const requested = requestedFixtureIds?.length
       ? [...requestedFixtureIds]
@@ -1251,16 +1258,25 @@ export default function App() {
         const dimmerChannels = new Set(patchRef.current.map((fixture) => parameterChannel(fixture, 'dimmer')).filter(Boolean));
         const masterCap = percentToDmx(settingsRef.current.masterLimit);
         const cappedHold = finaleHold.map(([channel, value]) => [channel, dimmerChannels.has(channel) ? Math.min(value, masterCap) : value] as const);
-        void commitUniverse(applyUniverseUpdates(effectBaseUniverseRef.current, cappedHold), 'fx');
-        stopEffect(false);
-        setMessage('Finale complete — holding the full-white finish.');
+        const holdFrame = applyUniverseUpdates(effectBaseUniverseRef.current, cappedHold);
+        void commitUniverse(holdFrame, 'fx').then(() => {
+          stopEffect(false);
+          setMessage('Finale complete — holding the full-white finish.');
+        });
         return;
       }
       const dimmerChannels = new Set(patchRef.current.map((fixture) => parameterChannel(fixture, 'dimmer')).filter(Boolean));
       const masterCap = percentToDmx(settingsRef.current.masterLimit);
       const updates = renderEffect(effect, effectFixtures, elapsed, bpm, effectDepthRef.current / 100)
         .map(([channel, value]) => [channel, dimmerChannels.has(channel) ? Math.min(value, masterCap) : value] as const);
-      void commitUniverse(applyUniverseUpdates(effectBaseUniverseRef.current, updates), 'fx');
+      void dispatchControl({
+        type: 'playback.layer.set',
+        universe: 1,
+        layerId: 'fx',
+        priority: preset?.momentary ? 80 : 30,
+        mode: effect === 'bump' ? 'htp' : 'ltp',
+        updates
+      }, 'fx');
       effectAnimationRef.current = requestAnimationFrame(tick);
     };
     effectAnimationRef.current = requestAnimationFrame(tick);
@@ -1277,25 +1293,32 @@ export default function App() {
 
   function startMomentaryEffect(effect: EffectId, targetIds?: readonly string[]) {
     if (momentaryEffectRef.current?.effect === effect) return;
-    const baseUniverse = [...universeRef.current];
     const previousEffect = activeEffectRef.current;
+    const previousCustomEffectId = activeCustomEffectIdRef.current;
     const previousTargetIds = [...effectTargetIdsRef.current];
     startEffect(effect, targetIds);
-    momentaryEffectRef.current = { effect, baseUniverse, previousEffect, previousTargetIds };
+    momentaryEffectRef.current = { effect, previousEffect, previousCustomEffectId, previousTargetIds };
     const preset = EFFECT_PRESETS.find((item) => item.id === effect);
-    setMessage(`${preset?.name ?? effect} held — release to restore the previous output.`);
+    setMessage(`${preset?.name ?? effect} held — release to restore the previous playback layer.`);
   }
 
   function releaseMomentaryEffect(effect: EffectId) {
     const held = momentaryEffectRef.current;
     if (!held || held.effect !== effect) return;
+    const previousCustom = held.previousCustomEffectId
+      ? customEffects.find((item) => item.id === held.previousCustomEffectId) ?? null
+      : null;
+    const willResume = Boolean(held.previousEffect || previousCustom);
     momentaryEffectRef.current = null;
-    stopEffect(false);
+    stopEffect(false, !willResume);
     const preset = EFFECT_PRESETS.find((item) => item.id === effect);
-    void commitUniverse(held.baseUniverse, 'fx').finally(() => {
-      if (held.previousEffect) startEffect(held.previousEffect, held.previousTargetIds);
-      else setMessage(`${preset?.name ?? effect} released. Previous output restored.`);
-    });
+    if (held.previousEffect) {
+      startEffect(held.previousEffect, held.previousTargetIds);
+    } else if (previousCustom) {
+      runCustomFx(previousCustom, held.previousTargetIds);
+    } else {
+      setMessage(`${preset?.name ?? effect} released. Underlying look restored.`);
+    }
   }
 
   function tapTempo() {
@@ -1470,7 +1493,7 @@ export default function App() {
 
   function loadShowProject(snapshot: ShowProjectSnapshot) {
     stopFade();
-    if (activeEffectRef.current) stopEffect(false);
+    if (activeEffectRef.current || activeCustomEffectIdRef.current) stopEffect(false);
     setShowFile(sanitizeShow(snapshot.show));
     setPatch(snapshot.patch.map((fixture, index) => migratePatchedFixture(fixture, index, snapshot.patch.length, snapshot.stageSettings.dimensions)));
     setStageElements(snapshot.stageElements.map((element) => migrateStageElement(element, snapshot.stageSettings.dimensions)));
@@ -1483,7 +1506,7 @@ export default function App() {
 
   function newShowProject() {
     stopFade();
-    if (activeEffectRef.current) stopEffect(false);
+    if (activeEffectRef.current || activeCustomEffectIdRef.current) stopEffect(false);
     const usedNames = new Set(showLibrary.map((item) => item.name.toLowerCase()));
     let showNumber = 1;
     let nextName = 'Untitled Show';
@@ -1633,7 +1656,7 @@ export default function App() {
     if (showRecordingActiveRef.current) return setMessage('Stop the active recording before playing a saved take.');
     stopRecordedShowPlayback(false);
     stopFade();
-    if (activeEffectRef.current) stopEffect(false);
+    if (activeEffectRef.current || activeCustomEffectIdRef.current) stopEffect(false);
     setAudioArmed(false);
     audioArmedRef.current = false;
     const external = Boolean(options.external);
@@ -2857,7 +2880,7 @@ export default function App() {
       return;
     }
     stopFade();
-    stopEffect(false);
+    stopEffect(false, false);
     setAudioArmed(false);
     const effectFixtures = targetIds?.length
       ? targetIds
@@ -2869,6 +2892,7 @@ export default function App() {
       setMessage('Select fixtures or a group before running the custom FX.');
       return;
     }
+    effectTargetIdsRef.current = effectFixtures.filter((fixture) => fixture.selected).map((fixture) => fixture.id);
     effectBaseUniverseRef.current = [...universeRef.current];
     const startedAt = performance.now();
     activeCustomEffectIdRef.current = effect.id;
@@ -2876,7 +2900,14 @@ export default function App() {
     const tick = (now: number) => {
       if (activeCustomEffectIdRef.current !== effect.id) return;
       const updates = renderCustomEffect(effect, effectFixtures, now - startedAt, effectBaseUniverseRef.current);
-      void commitUniverse(applyUniverseUpdates(effectBaseUniverseRef.current, updates), 'fx');
+      void dispatchControl({
+        type: 'playback.layer.set',
+        universe: 1,
+        layerId: 'fx',
+        priority: 30,
+        mode: 'ltp',
+        updates
+      }, 'fx');
       effectAnimationRef.current = requestAnimationFrame(tick);
     };
     effectAnimationRef.current = requestAnimationFrame(tick);
