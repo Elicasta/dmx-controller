@@ -43,6 +43,10 @@ export type CustomEffect = {
   phaseSpread: number;
   offset: number;
   orderMode?: FixtureOrderMode;
+  blocks?: number;
+  groups?: number;
+  wings?: number;
+  shift?: number;
   direction?: PhaserDirection;
   cycleBeats?: number;
   mode?: PhaserMode;
@@ -77,6 +81,13 @@ export function renderCustomEffect(
   return renderPhaserEffect({
     ...effect,
     orderMode: effect.orderMode ?? 'forward',
+    order: {
+      mode: effect.orderMode ?? 'forward',
+      blocks: effect.blocks ?? 1,
+      groups: effect.groups ?? 1,
+      wings: effect.wings ?? 1,
+      shift: effect.shift ?? 0
+    },
     direction: effect.direction ?? 'forward',
     cycleBeats: effect.cycleBeats ?? 1,
     mode: effect.mode ?? 'absolute'
