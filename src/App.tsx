@@ -12,7 +12,7 @@ import {
   VISIBLE_CHANNELS,
   type DmxUpdate
 } from './lib/dmx';
-import { EFFECT_PRESETS, EFFECT_SHAPES, effectWaveValue, renderEffectByUniverse, renderCustomEffectByUniverse, type CustomEffect, type EffectId, type EffectParameter, type EffectPreset, type EffectWaveform } from './lib/effects';
+import { EFFECT_PRESETS, EFFECT_SHAPES, effectWaveValue, renderEffectByUniverse, renderCustomEffectByUniverse, type CustomEffect, type CustomEffectLane, type CustomEffectParameter, type EffectId, type EffectParameter, type EffectPreset, type EffectWaveform, type MotionShape } from './lib/effects';
 import {
   DEFAULT_PATCH,
   FIXTURE_LIBRARY,
@@ -40,6 +40,7 @@ import {
 } from './lib/looks';
 import {
   applyLightingOffset,
+  cueChangesByUniverse,
   DEFAULT_EXTERNAL_TRACK_SYNC,
   diffUniverse,
   EMPTY_SHOW,
@@ -47,7 +48,10 @@ import {
   MAX_RECORDING_FRAMES,
   midiSongPositionToMs,
   moveCue,
+  removeCuePreservingTracking,
+  resolveShowCueFrames,
   sanitizeShow,
+  type CueTimingRule,
   type FixtureGroup,
   type PositionPalette,
   type ShowCue,
@@ -123,6 +127,10 @@ import { ShowRuntime, type RuntimeDispatchResult } from './core/show-runtime';
 import { CueLaunchGuard } from './core/cue-launch-guard';
 import { projectStagePoint, unprojectStagePoint, type StagePoint2D, type StageView } from './core/stage-projection';
 import { arrangeTargetPoints, buildStageTargets, type TargetArrangement, type TargetPoint } from './core/targets';
+import { cuePlaybackDuration, renderCueTimedFrame } from './core/cue-timing';
+import { orderFixtures, type FixtureOrderMode } from './core/fixture-order';
+import { phaserStepValue, type PhaserStep } from './core/phaser-engine';
+import { makeSelectionGrid, moveFixtureInSelectionGrid, normalizeSelectionGrid, type SelectionGridTraversal } from './core/selection-grid';
 import { RemoteRelay, type RelayCommandEnvelope, type RemoteRelayConfig, type RemoteRelayStatus } from './core/remote-relay';
 import { StudioBridgeDispatcher } from './core/studio-bridge-dispatcher';
 import type { StudioBridgeCommand, StudioSongIdentity } from './core/studio-bridge-protocol';
@@ -335,14 +343,45 @@ function loadSavedLooks(): FixtureLook[] {
   )).slice(0, 24);
 }
 
+const CUSTOM_FX_LANE_PARAMETERS: readonly FixtureParameter[] = [
+  'dimmer', 'pan', 'tilt', 'uv', 'strobe', 'zoom', 'iris', 'focus', 'gobo', 'colorWheel', 'prism'
+];
+
+function isPhaserStep(value: unknown): value is PhaserStep {
+  if (!value || typeof value !== 'object') return false;
+  const step = value as Partial<PhaserStep>;
+  return typeof step.value === 'number'
+    && Number.isFinite(step.value)
+    && [step.width, step.transition, step.acceleration, step.deceleration]
+      .every((part) => part === undefined || (typeof part === 'number' && Number.isFinite(part)));
+}
+
+function isCustomEffectLane(value: unknown): value is CustomEffectLane {
+  if (!value || typeof value !== 'object') return false;
+  const lane = value as Partial<CustomEffectLane>;
+  return CUSTOM_FX_LANE_PARAMETERS.includes(lane.parameter as FixtureParameter)
+    && ['sine', 'triangle', 'square', 'saw', 'reverse-saw', 'step'].includes(String(lane.waveform))
+    && [lane.depth, lane.offset].every((part) => typeof part === 'number' && Number.isFinite(part))
+    && [lane.phaseOffset, lane.rateMultiplier].every((part) => part === undefined || (typeof part === 'number' && Number.isFinite(part)))
+    && (lane.mode === undefined || ['absolute', 'relative'].includes(String(lane.mode)))
+    && (lane.steps === undefined || (Array.isArray(lane.steps) && lane.steps.every(isPhaserStep)));
+}
+
 function isCustomEffect(value: unknown): value is CustomEffect {
   if (!value || typeof value !== 'object') return false;
   const effect = value as Partial<CustomEffect>;
   return typeof effect.id === 'string'
     && typeof effect.name === 'string'
-    && ['dimmer', 'pan', 'tilt', 'uv'].includes(String(effect.parameter))
+    && ['dimmer', 'pan', 'tilt', 'uv', 'position'].includes(String(effect.parameter))
     && ['sine', 'triangle', 'square', 'saw', 'reverse-saw', 'step'].includes(String(effect.waveform))
-    && [effect.bpm, effect.depth, effect.phaseSpread, effect.offset].every((part) => typeof part === 'number' && Number.isFinite(part));
+    && (effect.motionShape === undefined || ['circle', 'figure-eight', 'diagonal', 'pan-sweep', 'tilt-sweep'].includes(String(effect.motionShape)))
+    && [effect.bpm, effect.depth, effect.phaseSpread, effect.offset].every((part) => typeof part === 'number' && Number.isFinite(part))
+    && (effect.orderMode === undefined || ['forward', 'reverse', 'center-out', 'outside-in', 'odd-even', 'even-odd', 'mirror-pairs'].includes(String(effect.orderMode)))
+    && [effect.blocks, effect.groups, effect.wings, effect.shift, effect.cycleBeats].every((part) => part === undefined || (typeof part === 'number' && Number.isFinite(part)))
+    && (effect.direction === undefined || ['forward', 'reverse'].includes(String(effect.direction)))
+    && (effect.mode === undefined || ['absolute', 'relative'].includes(String(effect.mode)))
+    && (effect.steps === undefined || (Array.isArray(effect.steps) && effect.steps.every(isPhaserStep)))
+    && (effect.lanes === undefined || (Array.isArray(effect.lanes) && effect.lanes.every(isCustomEffectLane)));
 }
 
 function loadCustomEffects(): CustomEffect[] {
@@ -357,7 +396,7 @@ function loadShowFile(): ShowFile {
     const raw = window.localStorage.getItem(SHOW_STORAGE_KEY);
     const parsed: unknown = JSON.parse(raw || 'null');
     if (isShowFile(parsed)) {
-      if (parsed.version < 3 && raw && !window.localStorage.getItem(SHOW_BACKUP_STORAGE_KEY)) {
+      if (parsed.version < 4 && raw && !window.localStorage.getItem(SHOW_BACKUP_STORAGE_KEY)) {
         window.localStorage.setItem(SHOW_BACKUP_STORAGE_KEY, raw);
       }
       return sanitizeShow(parsed);
@@ -711,19 +750,24 @@ export default function App() {
     bpm: 100,
     depth: 100,
     phaseSpread: 0,
-    offset: 0
+    offset: 0,
+    orderMode: 'forward',
+    blocks: 1,
+    groups: 1,
+    wings: 1,
+    shift: 0,
+    direction: 'forward',
+    cycleBeats: 1,
+    mode: 'absolute'
   });
   const [selectedFxBankId, setSelectedFxBankId] = useState<string>('pulse');
   const effectTargetIdsRef = useRef<string[]>([]);
   const effectAnimationRef = useRef<number | null>(null);
   const effectStartedRef = useRef(0);
   const effectBaseUniversesRef = useRef<Map<number, number[]>>(new Map([[1, makeUniverse()]]));
-  const momentaryEffectRef = useRef<{
-    effect: EffectId;
-    baseUniverses: Map<number, number[]>;
-    previousEffect: EffectId | null;
-    previousTargetIds: string[];
-  } | null>(null);
+  const momentaryEffectRef = useRef<{ effect: EffectId } | null>(null);
+  const buskLayerRef = useRef<Map<number, Map<number, number>>>(new Map());
+  const [buskChannelCount, setBuskChannelCount] = useState(0);
   const [effectBpm, setEffectBpm] = useState(120);
   const [effectDepth, setEffectDepth] = useState(100);
   const effectBpmRef = useRef(effectBpm);
@@ -790,6 +834,7 @@ export default function App() {
   const stageDragRef = useRef<{ pointerId: number; kind: 'fixture' | 'element'; id: string; preserved: Vec3; moved: boolean } | null>(null);
   const [selectedTargetId, setSelectedTargetId] = useState('target-center-stage');
   const [aimArrangement, setAimArrangement] = useState<TargetArrangement>('converge');
+  const [aimOrderMode, setAimOrderMode] = useState<FixtureOrderMode>('forward');
   const [aimSpreadMeters, setAimSpreadMeters] = useState(4);
   const [calibrationOpen, setCalibrationOpen] = useState(false);
   const [positionPaletteName, setPositionPaletteName] = useState('');
@@ -799,6 +844,7 @@ export default function App() {
   const [moverControlsOpen, setMoverControlsOpen] = useState(false);
   const [groupMasters, setGroupMasters] = useState<Record<string, number>>({});
   const groupLevelsRef = useRef<Record<string, number>>({});
+  const [groupGridFixtureId, setGroupGridFixtureId] = useState<string | null>(null);
 
   const [midiInputs, setMidiInputs] = useState<MidiInputInfo[]>([]);
   const [selectedMidiInput, setSelectedMidiInput] = useState('');
@@ -885,12 +931,15 @@ export default function App() {
   );
   const selectedGroup = fixtureGroups.find((group) => group.id === selectedGroupId) ?? fixtureGroups[0] ?? null;
   const selectedGroupFixtures = selectedGroup ? fixturesInGroup(patch, selectedGroup) : [];
+  const selectedGroupGrid = selectedGroup ? normalizeSelectionGrid(selectedGroup.selectionGrid, selectedGroup.fixtureOrder) : null;
   const selectedFixtureTargets = selectedFixtures(patch);
 
   useEffect(() => {
     if (JSON.stringify(showFile.groups ?? []) === JSON.stringify(fixtureGroups)) return;
     setShowFile((current) => ({ ...current, groups: fixtureGroups }));
   }, [fixtureGroups, showFile.groups]);
+
+  useEffect(() => { setGroupGridFixtureId(null); }, [selectedGroupId]);
 
   useEffect(() => {
     if (!selectedGroupId && fixtureGroups[0]) setSelectedGroupId(fixtureGroups[0].id);
