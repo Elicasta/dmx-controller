@@ -45,4 +45,30 @@ describe('console domain adapters', () => {
     expect(effectSupportedByFixture('sweep', mover)).toBe(true);
     expect(effectSupportedByFixture('sweep', DEFAULT_PATCH[0])).toBe(false);
   });
+
+  it('derives group fixture order from the persisted two-dimensional grid traversal', () => {
+    const a = { ...mover, id: 'a', name: 'A', address: 1 };
+    const b = { ...mover, id: 'b', name: 'B', address: 20 };
+    const c = { ...mover, id: 'c', name: 'C', address: 40 };
+    const d = { ...mover, id: 'd', name: 'D', address: 60 };
+    const group = {
+      ...makeFixtureGroup('Movers'),
+      fixtureOrder: ['a', 'b', 'c', 'd'],
+      selectionGrid: {
+        rows: 2,
+        columns: 2,
+        traversal: 'column' as const,
+        cells: [
+          { fixtureId: 'a', row: 0, column: 0 },
+          { fixtureId: 'b', row: 0, column: 1 },
+          { fixtureId: 'c', row: 1, column: 0 },
+          { fixtureId: 'd', row: 1, column: 1 }
+        ]
+      }
+    };
+    const [reconciled] = reconcileFixtureGroups([group], [a, b, c, d]);
+    expect(reconciled.fixtureOrder).toEqual(['a', 'c', 'b', 'd']);
+    expect(fixturesInGroup([a, b, c, d], reconciled).map((fixture) => fixture.id)).toEqual(['a', 'c', 'b', 'd']);
+  });
+
 });

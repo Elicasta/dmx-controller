@@ -11,7 +11,7 @@ import {
   VISIBLE_CHANNELS,
   type DmxUpdate
 } from './lib/dmx';
-import { EFFECT_PRESETS, EFFECT_SHAPES, effectWaveValue, renderEffect, renderCustomEffect, type CustomEffect, type CustomEffectParameter, type EffectId, type EffectPreset, type EffectWaveform, type MotionShape } from './lib/effects';
+import { EFFECT_PRESETS, EFFECT_SHAPES, effectWaveValue, renderEffect, renderCustomEffect, type CustomEffect, type CustomEffectLane, type CustomEffectParameter, type EffectId, type EffectPreset, type EffectWaveform, type MotionShape } from './lib/effects';
 import {
   DEFAULT_PATCH,
   FIXTURE_LIBRARY,
@@ -124,6 +124,8 @@ import { projectStagePoint, unprojectStagePoint, type StagePoint2D, type StageVi
 import { arrangeTargetPoints, buildStageTargets, type TargetArrangement, type TargetPoint } from './core/targets';
 import { cuePlaybackDuration, renderCueTimedFrame } from './core/cue-timing';
 import { orderFixtures, type FixtureOrderMode } from './core/fixture-order';
+import { phaserStepValue, type PhaserStep } from './core/phaser-engine';
+import { makeSelectionGrid, moveFixtureInSelectionGrid, normalizeSelectionGrid, type SelectionGridTraversal } from './core/selection-grid';
 import { RemoteRelay, type RelayCommandEnvelope, type RemoteRelayConfig, type RemoteRelayStatus } from './core/remote-relay';
 import { StudioBridgeDispatcher } from './core/studio-bridge-dispatcher';
 import type { StudioBridgeCommand, StudioSongIdentity } from './core/studio-bridge-protocol';
@@ -336,6 +338,30 @@ function loadSavedLooks(): FixtureLook[] {
   )).slice(0, 24);
 }
 
+const CUSTOM_FX_LANE_PARAMETERS: readonly FixtureParameter[] = [
+  'dimmer', 'pan', 'tilt', 'uv', 'strobe', 'zoom', 'iris', 'focus', 'gobo', 'colorWheel', 'prism'
+];
+
+function isPhaserStep(value: unknown): value is PhaserStep {
+  if (!value || typeof value !== 'object') return false;
+  const step = value as Partial<PhaserStep>;
+  return typeof step.value === 'number'
+    && Number.isFinite(step.value)
+    && [step.width, step.transition, step.acceleration, step.deceleration]
+      .every((part) => part === undefined || (typeof part === 'number' && Number.isFinite(part)));
+}
+
+function isCustomEffectLane(value: unknown): value is CustomEffectLane {
+  if (!value || typeof value !== 'object') return false;
+  const lane = value as Partial<CustomEffectLane>;
+  return CUSTOM_FX_LANE_PARAMETERS.includes(lane.parameter as FixtureParameter)
+    && ['sine', 'triangle', 'square', 'saw', 'reverse-saw', 'step'].includes(String(lane.waveform))
+    && [lane.depth, lane.offset].every((part) => typeof part === 'number' && Number.isFinite(part))
+    && [lane.phaseOffset, lane.rateMultiplier].every((part) => part === undefined || (typeof part === 'number' && Number.isFinite(part)))
+    && (lane.mode === undefined || ['absolute', 'relative'].includes(String(lane.mode)))
+    && (lane.steps === undefined || (Array.isArray(lane.steps) && lane.steps.every(isPhaserStep)));
+}
+
 function isCustomEffect(value: unknown): value is CustomEffect {
   if (!value || typeof value !== 'object') return false;
   const effect = value as Partial<CustomEffect>;
@@ -348,7 +374,9 @@ function isCustomEffect(value: unknown): value is CustomEffect {
     && (effect.orderMode === undefined || ['forward', 'reverse', 'center-out', 'outside-in', 'odd-even', 'even-odd', 'mirror-pairs'].includes(String(effect.orderMode)))
     && [effect.blocks, effect.groups, effect.wings, effect.shift, effect.cycleBeats].every((part) => part === undefined || (typeof part === 'number' && Number.isFinite(part)))
     && (effect.direction === undefined || ['forward', 'reverse'].includes(String(effect.direction)))
-    && (effect.mode === undefined || ['absolute', 'relative'].includes(String(effect.mode)));
+    && (effect.mode === undefined || ['absolute', 'relative'].includes(String(effect.mode)))
+    && (effect.steps === undefined || (Array.isArray(effect.steps) && effect.steps.every(isPhaserStep)))
+    && (effect.lanes === undefined || (Array.isArray(effect.lanes) && effect.lanes.every(isCustomEffectLane)));
 }
 
 function loadCustomEffects(): CustomEffect[] {
@@ -800,6 +828,7 @@ export default function App() {
   const [positionPaletteName, setPositionPaletteName] = useState('');
   const [positionPaletteKind, setPositionPaletteKind] = useState<'spatial' | 'absolute'>('spatial');
   const [groupMasters, setGroupMasters] = useState<Record<string, number>>({});
+  const [groupGridFixtureId, setGroupGridFixtureId] = useState<string | null>(null);
 
   const [midiInputs, setMidiInputs] = useState<MidiInputInfo[]>([]);
   const [selectedMidiInput, setSelectedMidiInput] = useState('');
@@ -884,12 +913,15 @@ export default function App() {
   );
   const selectedGroup = fixtureGroups.find((group) => group.id === selectedGroupId) ?? fixtureGroups[0] ?? null;
   const selectedGroupFixtures = selectedGroup ? fixturesInGroup(patch, selectedGroup) : [];
+  const selectedGroupGrid = selectedGroup ? normalizeSelectionGrid(selectedGroup.selectionGrid, selectedGroup.fixtureOrder) : null;
   const selectedFixtureTargets = selectedFixtures(patch);
 
   useEffect(() => {
     if (JSON.stringify(showFile.groups ?? []) === JSON.stringify(fixtureGroups)) return;
     setShowFile((current) => ({ ...current, groups: fixtureGroups }));
   }, [fixtureGroups, showFile.groups]);
+
+  useEffect(() => { setGroupGridFixtureId(null); }, [selectedGroupId]);
 
   useEffect(() => {
     if (!selectedGroupId && fixtureGroups[0]) setSelectedGroupId(fixtureGroups[0].id);
@@ -2854,6 +2886,34 @@ export default function App() {
     }));
   }
 
+  function updateGroupGridColumns(group: FixtureGroup, columns: number) {
+    const safeColumns = Math.max(1, Math.min(12, Math.round(columns)));
+    const currentGrid = normalizeSelectionGrid(group.selectionGrid ?? makeSelectionGrid(group.fixtureOrder), group.fixtureOrder);
+    const selectionGrid = normalizeSelectionGrid({
+      ...currentGrid,
+      columns: safeColumns,
+      rows: Math.max(1, Math.ceil(Math.max(1, group.fixtureOrder.length) / safeColumns))
+    }, group.fixtureOrder);
+    updateFixtureGroup(group.id, { selectionGrid });
+  }
+
+  function updateGroupGridTraversal(group: FixtureGroup, traversal: SelectionGridTraversal) {
+    const currentGrid = normalizeSelectionGrid(group.selectionGrid ?? makeSelectionGrid(group.fixtureOrder), group.fixtureOrder);
+    updateFixtureGroup(group.id, { selectionGrid: { ...currentGrid, traversal } });
+  }
+
+  function handleGroupGridCell(group: FixtureGroup, row: number, column: number) {
+    const grid = normalizeSelectionGrid(group.selectionGrid ?? makeSelectionGrid(group.fixtureOrder), group.fixtureOrder);
+    const occupant = grid.cells.find((cell) => cell.row === row && cell.column === column);
+    if (!groupGridFixtureId) {
+      if (occupant) setGroupGridFixtureId(occupant.fixtureId);
+      return;
+    }
+    const selectionGrid = moveFixtureInSelectionGrid(grid, group.fixtureOrder, groupGridFixtureId, row, column);
+    updateFixtureGroup(group.id, { selectionGrid });
+    setGroupGridFixtureId(null);
+  }
+
   function deleteFixtureGroup(groupId: string) {
     const group = fixtureGroups.find((item) => item.id === groupId);
     if (!group || !window.confirm(`Delete the ${group.name} group? Fixtures will remain patched and become unassigned.`)) return;
@@ -2969,12 +3029,80 @@ export default function App() {
     }
   }
 
-  function fxGraphPoints(waveform: EffectWaveform, depth = 100, offset = 0) {
+  function fxGraphPoints(waveform: EffectWaveform, depth = 100, offset = 0, steps?: readonly PhaserStep[]) {
     return Array.from({ length: 65 }, (_, index) => {
       const x = index / 64;
-      const y = Math.max(0, Math.min(1, offset / 100 + effectWaveValue(waveform, x) * depth / 100));
+      const source = steps?.length ? phaserStepValue(steps, x) : effectWaveValue(waveform, x);
+      const y = Math.max(0, Math.min(1, offset / 100 + source * depth / 100));
       return `${(x * 600).toFixed(1)},${(120 - y * 100).toFixed(1)}`;
     }).join(' ');
+  }
+
+  function enableStepRecipe() {
+    setFxEditor((current) => ({
+      ...current,
+      waveform: 'step',
+      steps: current.steps?.length ? current.steps : [
+        { value: 100, width: 1, transition: 0, acceleration: 0, deceleration: 0 },
+        { value: 0, width: 1, transition: 0, acceleration: 0, deceleration: 0 }
+      ]
+    }));
+  }
+
+  function updateFxStep(index: number, updates: Partial<PhaserStep>) {
+    setFxEditor((current) => ({
+      ...current,
+      steps: (current.steps ?? []).map((step, stepIndex) => stepIndex === index ? { ...step, ...updates } : step)
+    }));
+  }
+
+  function addFxStep() {
+    setFxEditor((current) => ({
+      ...current,
+      waveform: 'step',
+      steps: [...(current.steps ?? []), { value: 100, width: 1, transition: 0, acceleration: 0, deceleration: 0 }].slice(0, 16)
+    }));
+  }
+
+  function moveFxStep(index: number, direction: -1 | 1) {
+    setFxEditor((current) => {
+      const steps = [...(current.steps ?? [])];
+      const target = index + direction;
+      if (target < 0 || target >= steps.length) return current;
+      [steps[index], steps[target]] = [steps[target], steps[index]];
+      return { ...current, steps };
+    });
+  }
+
+  function removeFxStep(index: number) {
+    setFxEditor((current) => {
+      const steps = (current.steps ?? []).filter((_, stepIndex) => stepIndex !== index);
+      return { ...current, steps: steps.length ? steps : undefined };
+    });
+  }
+
+  function addFxLane() {
+    setFxEditor((current) => ({
+      ...current,
+      lanes: [...(current.lanes ?? []), {
+        parameter: 'dimmer',
+        waveform: 'sine',
+        depth: 100,
+        offset: 0,
+        mode: 'absolute'
+      } as CustomEffectLane].slice(0, 8)
+    }));
+  }
+
+  function updateFxLane(index: number, updates: Partial<CustomEffectLane>) {
+    setFxEditor((current) => ({
+      ...current,
+      lanes: (current.lanes ?? []).map((lane, laneIndex) => laneIndex === index ? { ...lane, ...updates } : lane)
+    }));
+  }
+
+  function removeFxLane(index: number) {
+    setFxEditor((current) => ({ ...current, lanes: (current.lanes ?? []).filter((_, laneIndex) => laneIndex !== index) }));
   }
 
   function loadFactoryFx(effect: EffectPreset) {
@@ -3017,6 +3145,28 @@ export default function App() {
       direction: fxEditor.direction ?? 'forward',
       cycleBeats: Math.max(.125, Math.min(32, fxEditor.cycleBeats ?? 1)),
       mode: fxEditor.mode ?? 'absolute',
+      steps: fxEditor.steps?.slice(0, 16).map((step) => ({
+        value: Math.max(0, Math.min(100, step.value)),
+        width: Math.max(.01, Math.min(1000, step.width ?? 1)),
+        transition: Math.max(0, Math.min(100, step.transition ?? 0)),
+        acceleration: Math.max(0, Math.min(100, step.acceleration ?? 0)),
+        deceleration: Math.max(0, Math.min(100, step.deceleration ?? 0))
+      })),
+      lanes: fxEditor.lanes?.slice(0, 8).map((lane) => ({
+        ...lane,
+        depth: Math.max(0, Math.min(100, lane.depth)),
+        offset: Math.max(-100, Math.min(100, lane.offset)),
+        phaseOffset: Math.max(-8, Math.min(8, lane.phaseOffset ?? 0)),
+        rateMultiplier: Math.max(.125, Math.min(8, lane.rateMultiplier ?? 1)),
+        mode: lane.mode ?? 'absolute',
+        steps: lane.steps?.slice(0, 16).map((step) => ({
+          value: Math.max(0, Math.min(100, step.value)),
+          width: Math.max(.01, Math.min(1000, step.width ?? 1)),
+          transition: Math.max(0, Math.min(100, step.transition ?? 0)),
+          acceleration: Math.max(0, Math.min(100, step.acceleration ?? 0)),
+          deceleration: Math.max(0, Math.min(100, step.deceleration ?? 0))
+        }))
+      })),
       id: fxEditor.id.startsWith('custom-') && fxEditor.id !== 'custom-preview'
         ? fxEditor.id
         : `custom-${Date.now().toString(36)}`
@@ -3546,6 +3696,23 @@ export default function App() {
             <label><span>Master Brightness Default</span><input type="range" min="0" max="100" value={selectedGroup.masterDefault} onChange={(event) => updateFixtureGroup(selectedGroup.id, { masterDefault: Number(event.target.value) })} /><b>{selectedGroup.masterDefault}%</b></label>
             <label className="inspector-toggle"><span>FX Enabled</span><input type="checkbox" checked={selectedGroup.fxEnabled} onChange={(event) => updateFixtureGroup(selectedGroup.id, { fxEnabled: event.target.checked })} /></label>
             <label><span>Group Notes</span><textarea maxLength={500} value={selectedGroup.notes} onChange={(event) => updateFixtureGroup(selectedGroup.id, { notes: event.target.value })} /></label>
+            {selectedGroupGrid && <section className="selection-grid-editor">
+              <header><span>SELECTION GRID</span><small>{selectedGroupGrid.rows} × {selectedGroupGrid.columns}</small></header>
+              <div className="selection-grid-controls">
+                <label><span>Columns</span><input type="number" min="1" max="12" value={selectedGroupGrid.columns} onChange={(event) => updateGroupGridColumns(selectedGroup, Number(event.target.value))}/></label>
+                <label><span>Traversal</span><select value={selectedGroupGrid.traversal} onChange={(event) => updateGroupGridTraversal(selectedGroup, event.target.value as SelectionGridTraversal)}><option value="row">Rows</option><option value="column">Columns</option><option value="snake-row">Snake Rows</option><option value="snake-column">Snake Columns</option></select></label>
+              </div>
+              <p>{groupGridFixtureId ? 'Choose a destination cell. Occupied cells swap positions.' : 'Select a fixture, then select its destination cell.'}</p>
+              <div className="selection-grid-cells" style={{ gridTemplateColumns: `repeat(${selectedGroupGrid.columns}, minmax(0, 1fr))` }}>
+                {Array.from({ length: selectedGroupGrid.rows * selectedGroupGrid.columns }, (_, index) => {
+                  const row = Math.floor(index / selectedGroupGrid.columns);
+                  const column = index % selectedGroupGrid.columns;
+                  const cell = selectedGroupGrid.cells.find((item) => item.row === row && item.column === column);
+                  const fixture = cell ? selectedGroupFixtures.find((item) => item.id === cell.fixtureId) : null;
+                  return <button key={`${row}-${column}`} className={cell?.fixtureId === groupGridFixtureId ? 'selected' : ''} onClick={() => handleGroupGridCell(selectedGroup, row, column)}><small>{row + 1}.{column + 1}</small><strong>{fixture?.name ?? 'Empty'}</strong></button>;
+                })}
+              </div>
+            </section>}
             <button className="console-primary" disabled={!assignmentIds.length} onClick={() => assignCheckedFixtures()}>Assign Selected ({assignmentIds.length})</button><button onClick={createFixtureGroup}>＋ Create Group</button><button className="danger-button" onClick={() => deleteFixtureGroup(selectedGroup.id)}>Delete Group</button>
           </> : setupView === 'stage' && selectedStageElement ? <>
             <header><span>STAGE OBJECT</span><strong>{selectedStageElement.label}</strong><small>{selectedStageElement.type}</small></header>
@@ -3631,13 +3798,13 @@ export default function App() {
 
             <div className="fx-editor-layout">
               <section className="fx-graph-editor">
-                <header><span>WAVEFORM</span><strong>{fxEditor.waveform.toUpperCase()} · {fxEditor.parameter.toUpperCase()}</strong></header>
+                <header><span>{fxEditor.steps?.length ? 'STEP RECIPE' : 'WAVEFORM'}</span><strong>{fxEditor.steps?.length ? `${fxEditor.steps.length} STEPS` : fxEditor.waveform.toUpperCase()} · {fxEditor.parameter.toUpperCase()}</strong></header>
                 <div className="fx-graph-canvas">
                   <svg viewBox="0 0 600 120" preserveAspectRatio="none" aria-label="FX waveform preview">
                     <defs><pattern id="fx-grid-v4" width="75" height="30" patternUnits="userSpaceOnUse"><path d="M 75 0 L 0 0 0 30" fill="none" stroke="rgba(115,132,142,.18)" strokeWidth="1"/></pattern></defs>
                     <rect width="600" height="120" fill="url(#fx-grid-v4)"/>
                     <line x1="0" y1="110" x2="600" y2="110" stroke="rgba(115,132,142,.28)" strokeWidth="1"/>
-                    <polyline className={activeCustomEffectId === fxEditor.id ? 'running' : ''} points={fxGraphPoints(fxEditor.waveform, fxEditor.depth, fxEditor.offset)} fill="none" strokeWidth="3" vectorEffect="non-scaling-stroke"/>
+                    <polyline className={activeCustomEffectId === fxEditor.id ? 'running' : ''} points={fxGraphPoints(fxEditor.waveform, fxEditor.depth, fxEditor.offset, fxEditor.steps)} fill="none" strokeWidth="3" vectorEffect="non-scaling-stroke"/>
                   </svg>
                 </div>
                 <div className="fx-editor-readouts">
@@ -3646,6 +3813,7 @@ export default function App() {
                   <span><small>PHASE</small><strong>{fxEditor.phaseSpread}%</strong></span>
                   <span><small>{(fxEditor.mode ?? 'absolute') === 'relative' ? 'BIAS' : 'BASE'}</small><strong>{fxEditor.offset}%</strong></span>
                   <span><small>ORDER</small><strong>{(fxEditor.orderMode ?? 'forward').replace('-', ' ')}</strong></span>
+                  <span><small>LANES</small><strong>{(fxEditor.lanes?.length ?? 0) + (fxEditor.parameter === 'position' ? 2 : 1)}</strong></span>
                   <span><small>TARGETS</small><strong>{programEffectFixtures.length}</strong></span>
                 </div>
               </section>
@@ -3661,6 +3829,19 @@ export default function App() {
                   <label><span>Motion Shape</span><select value={fxEditor.motionShape ?? 'circle'} onChange={(event) => setFxEditor((current) => ({ ...current, motionShape: event.target.value as MotionShape }))}><option value="circle">Circle</option><option value="figure-eight">Figure Eight</option><option value="diagonal">Diagonal</option><option value="pan-sweep">Pan Sweep</option><option value="tilt-sweep">Tilt Sweep</option></select></label>
                   <label><span>Movement</span><strong className="fx-semantic-readout">16-bit Pan + Tilt · relative to current look</strong></label>
                 </div>}
+                <section className="fx-step-recipe">
+                  <header><span>STEP RECIPE</span><div>{fxEditor.steps?.length ? <><button onClick={addFxStep}>＋ STEP</button><button onClick={() => setFxEditor((current) => ({ ...current, steps: undefined }))}>USE WAVEFORM</button></> : <button onClick={enableStepRecipe}>＋ BUILD STEPS</button>}</div></header>
+                  {fxEditor.steps?.length ? <div className="fx-step-list">{fxEditor.steps.map((step, index) => <article key={index}>
+                    <b>{index + 1}</b>
+                    <label><span>Value</span><input type="number" min="0" max="100" value={step.value} onChange={(event) => updateFxStep(index, { value: Number(event.target.value) })}/></label>
+                    <label><span>Width</span><input type="number" min=".01" max="32" step=".25" value={step.width ?? 1} onChange={(event) => updateFxStep(index, { width: Number(event.target.value) })}/></label>
+                    <label><span>Transition</span><input type="number" min="0" max="100" value={step.transition ?? 0} onChange={(event) => updateFxStep(index, { transition: Number(event.target.value) })}/></label>
+                    <label><span>Accel</span><input type="number" min="0" max="100" value={step.acceleration ?? 0} onChange={(event) => updateFxStep(index, { acceleration: Number(event.target.value) })}/></label>
+                    <label><span>Decel</span><input type="number" min="0" max="100" value={step.deceleration ?? 0} onChange={(event) => updateFxStep(index, { deceleration: Number(event.target.value) })}/></label>
+                    <div className="fx-step-actions"><button disabled={index === 0} onClick={() => moveFxStep(index, -1)}>↑</button><button disabled={index === fxEditor.steps!.length - 1} onClick={() => moveFxStep(index, 1)}>↓</button><button onClick={() => removeFxStep(index)}>×</button></div>
+                  </article>)}</div> : <p>Use a normal waveform, or build a weighted step sequence with hold, transition, acceleration, and deceleration.</p>}
+                </section>
+
                 <div className="inspector-pair">
                   <label><span>Fixture Order</span><select value={fxEditor.orderMode ?? 'forward'} onChange={(event) => setFxEditor((current) => ({ ...current, orderMode: event.target.value as CustomEffect['orderMode'] }))}><option value="forward">Forward</option><option value="reverse">Reverse</option><option value="center-out">Center Out</option><option value="outside-in">Outside In</option><option value="mirror-pairs">Mirror Pairs</option><option value="odd-even">Odd → Even</option><option value="even-odd">Even → Odd</option></select></label>
                   <label><span>Direction</span><select value={fxEditor.direction ?? 'forward'} onChange={(event) => setFxEditor((current) => ({ ...current, direction: event.target.value as CustomEffect['direction'] }))}><option value="forward">Forward</option><option value="reverse">Reverse</option></select></label>
@@ -3681,6 +3862,20 @@ export default function App() {
                 <label><span>Depth · {fxEditor.depth}%</span><input type="range" min="0" max="100" value={fxEditor.depth} onChange={(event) => setFxEditor((current) => ({ ...current, depth: Number(event.target.value) }))}/></label>
                 <label><span>Phase Spread · {fxEditor.phaseSpread}%</span><input type="range" min="0" max="200" value={fxEditor.phaseSpread} onChange={(event) => setFxEditor((current) => ({ ...current, phaseSpread: Number(event.target.value) }))}/></label>
                 <label><span>{(fxEditor.mode ?? 'absolute') === 'relative' ? 'Bias' : 'Base'} · {fxEditor.offset}%</span><input type="range" min="-100" max="100" value={fxEditor.offset} onChange={(event) => setFxEditor((current) => ({ ...current, offset: Number(event.target.value) }))}/></label>
+                <section className="fx-lane-editor">
+                  <header><span>ATTRIBUTE LANES</span><button onClick={addFxLane}>＋ LANE</button></header>
+                  <p>Layer dimmer, movement, zoom, iris, focus, gobo, strobe, or prism behavior in the same effect.</p>
+                  {(fxEditor.lanes ?? []).map((lane, index) => <article key={index}>
+                    <label><span>Attribute</span><select value={lane.parameter} onChange={(event) => updateFxLane(index, { parameter: event.target.value as FixtureParameter })}>{CUSTOM_FX_LANE_PARAMETERS.map((parameter) => <option key={parameter} value={parameter}>{parameter.replace(/([A-Z])/g, ' $1')}</option>)}</select></label>
+                    <label><span>Wave</span><select value={lane.waveform} onChange={(event) => updateFxLane(index, { waveform: event.target.value as EffectWaveform })}><option value="sine">Sine</option><option value="triangle">Triangle</option><option value="square">Square</option><option value="saw">Saw</option><option value="reverse-saw">Reverse Saw</option><option value="step">Step</option></select></label>
+                    <label><span>Depth</span><input type="number" min="0" max="100" value={lane.depth} onChange={(event) => updateFxLane(index, { depth: Number(event.target.value) })}/></label>
+                    <label><span>Offset</span><input type="number" min="-100" max="100" value={lane.offset} onChange={(event) => updateFxLane(index, { offset: Number(event.target.value) })}/></label>
+                    <label><span>Phase</span><input type="number" min="-8" max="8" step=".05" value={lane.phaseOffset ?? 0} onChange={(event) => updateFxLane(index, { phaseOffset: Number(event.target.value) })}/></label>
+                    <label><span>Rate</span><input type="number" min=".125" max="8" step=".125" value={lane.rateMultiplier ?? 1} onChange={(event) => updateFxLane(index, { rateMultiplier: Number(event.target.value) })}/></label>
+                    <button className="fx-lane-delete" onClick={() => removeFxLane(index)}>×</button>
+                  </article>)}
+                </section>
+
                 <div className="fx-editor-actions">
                   <button className={activeCustomEffectId === fxEditor.id ? 'danger-button' : 'console-primary'} disabled={!programEffectFixtures.length} onClick={() => runCustomFx(fxEditor, programEffectFixtures.map((fixture) => fixture.id))}>{activeCustomEffectId === fxEditor.id ? 'STOP FX' : 'RUN FX'}</button>
                   <button onClick={saveCustomFx}>SAVE TO BANK</button>

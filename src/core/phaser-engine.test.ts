@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { applyUniverseUpdates, makeUniverse } from '../lib/dmx';
 import { DEFAULT_PATCH, migratePatchedFixture, type PatchedFixture } from '../lib/fixtures';
-import { phaserCycleMs, phaserValueAt, renderPhaserEffect, renderPhaserProgram, type PhaserEffect } from './phaser-engine';
+import { phaserCycleMs, phaserStepValue, phaserValueAt, renderPhaserEffect, renderPhaserProgram, type PhaserEffect } from './phaser-engine';
 
 function mover(id: string, address: number): PatchedFixture {
   return migratePatchedFixture({
@@ -99,4 +99,47 @@ describe('phaser engine', () => {
     expect(updates[0][1]).toBeGreaterThan(128);
     expect(updates[0][1]).toBeLessThanOrEqual(255);
   });
+  it('renders weighted step recipes with hold and transition regions', () => {
+    const steps = [
+      { value: 0, width: 1, transition: 50 },
+      { value: 100, width: 1, transition: 0 }
+    ];
+    expect(phaserStepValue(steps, 0)).toBe(0);
+    expect(phaserStepValue(steps, .125)).toBe(0);
+    expect(phaserStepValue(steps, .375)).toBeCloseTo(.5, 4);
+    expect(phaserStepValue(steps, .6)).toBe(1);
+  });
+
+  it('applies step acceleration and deceleration without changing endpoints', () => {
+    const linear = [
+      { value: 0, transition: 100 },
+      { value: 100, transition: 100 }
+    ];
+    const eased = [
+      { value: 0, transition: 100, acceleration: 100, deceleration: 100 },
+      { value: 100, transition: 100, acceleration: 100, deceleration: 100 }
+    ];
+    expect(phaserStepValue(eased, 0)).toBe(0);
+    expect(phaserStepValue(eased, .25)).toBeCloseTo(.5, 4);
+    expect(phaserStepValue(eased, .125)).toBeLessThan(phaserStepValue(linear, .125));
+  });
+
+  it('renders independent multi-attribute step lanes in one program', () => {
+    const fixture = mover('multi-lane', 1);
+    const updates = renderPhaserProgram({
+      bpm: 120,
+      phaseSpread: 0,
+      cycleBeats: 1,
+      lanes: [
+        { parameter: 'pan', waveform: 'sine', depth: 40, offset: 0, mode: 'relative' },
+        { parameter: 'dimmer', waveform: 'step', depth: 100, offset: 0, steps: [
+          { value: 100, width: 1, transition: 0 },
+          { value: 0, width: 1, transition: 0 }
+        ] }
+      ]
+    }, [fixture], 0, makeUniverse());
+    expect(updates.map(([channel]) => channel)).toEqual([9, 1, 2]);
+    expect(updates.find(([channel]) => channel === 9)?.[1]).toBe(255);
+  });
+
 });

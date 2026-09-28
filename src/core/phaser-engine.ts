@@ -26,6 +26,19 @@ export type PhaserTiming = {
   cycleBeats?: number;
 };
 
+export type PhaserStep = {
+  /** Normalized step value expressed as 0..100 percent. */
+  value: number;
+  /** Relative duration weight for this step. */
+  width?: number;
+  /** Percent of this step spent transitioning toward the next step. */
+  transition?: number;
+  /** Ease-in amount for the transition, 0..100. */
+  acceleration?: number;
+  /** Ease-out amount for the transition, 0..100. */
+  deceleration?: number;
+};
+
 export type PhaserLane = {
   parameter: FixtureParameter;
   waveform: PhaserWaveform;
@@ -34,6 +47,8 @@ export type PhaserLane = {
   phaseOffset?: number;
   rateMultiplier?: number;
   mode?: PhaserMode;
+  /** Optional explicit step recipe. When present it replaces waveform sampling for this lane. */
+  steps?: readonly PhaserStep[];
 };
 
 export type PhaserEffect = PhaserTiming & PhaserLane;
@@ -44,6 +59,10 @@ export type PhaserProgram = PhaserTiming & {
 
 function clamp01(value: number): number {
   return Math.max(0, Math.min(1, Number.isFinite(value) ? value : 0));
+}
+
+function clampPercent(value: number | undefined, fallback = 0): number {
+  return Math.max(0, Math.min(100, Number.isFinite(value) ? Number(value) : fallback));
 }
 
 function clampRate(value: number | undefined): number {
@@ -60,6 +79,50 @@ export function phaserWaveValue(waveform: PhaserWaveform, phase: number): number
   return p < .18 ? 1 : 0;
 }
 
+function stepTransitionCurve(progress: number, acceleration = 0, deceleration = 0): number {
+  const t = clamp01(progress);
+  const accelPower = 1 + clampPercent(acceleration) / 100 * 3;
+  const decelPower = 1 + clampPercent(deceleration) / 100 * 3;
+  if (t <= .5) return .5 * Math.pow(t * 2, accelPower);
+  return 1 - .5 * Math.pow((1 - t) * 2, decelPower);
+}
+
+export function phaserStepValue(steps: readonly PhaserStep[], phase: number): number {
+  if (!steps.length) return 0;
+  if (steps.length === 1) return clampPercent(steps[0].value) / 100;
+
+  const safeSteps = steps.map((step) => ({
+    value: clampPercent(step.value) / 100,
+    width: Math.max(.01, Math.min(1000, Number.isFinite(step.width) ? Number(step.width) : 1)),
+    transition: clampPercent(step.transition),
+    acceleration: clampPercent(step.acceleration),
+    deceleration: clampPercent(step.deceleration)
+  }));
+  const totalWidth = safeSteps.reduce((sum, step) => sum + step.width, 0);
+  const wrapped = ((phase % 1) + 1) % 1;
+  const position = wrapped * totalWidth;
+
+  let cursor = 0;
+  for (let index = 0; index < safeSteps.length; index += 1) {
+    const step = safeSteps[index];
+    const end = cursor + step.width;
+    if (position < end || index === safeSteps.length - 1) {
+      const local = Math.max(0, Math.min(1, (position - cursor) / step.width));
+      const transitionFraction = step.transition / 100;
+      if (transitionFraction <= 0) return step.value;
+      const transitionStart = 1 - transitionFraction;
+      if (local <= transitionStart) return step.value;
+      const next = safeSteps[(index + 1) % safeSteps.length];
+      const linearProgress = (local - transitionStart) / transitionFraction;
+      const curved = stepTransitionCurve(linearProgress, step.acceleration, step.deceleration);
+      return step.value + (next.value - step.value) * curved;
+    }
+    cursor = end;
+  }
+
+  return safeSteps[safeSteps.length - 1].value;
+}
+
 export function phaserCycleMs(effect: Pick<PhaserTiming, 'bpm' | 'cycleBeats'>): number {
   const bpm = Math.max(20, Math.min(300, Number.isFinite(effect.bpm) ? effect.bpm : 120));
   const cycleBeats = Math.max(.125, Math.min(32, Number.isFinite(effect.cycleBeats) ? Number(effect.cycleBeats) : 1));
@@ -72,13 +135,36 @@ function elapsedPhaseAt(effect: PhaserTiming, elapsedMs: number, rateMultiplier 
   return effect.direction === 'reverse' ? 1 - raw : raw;
 }
 
+function lanePhaseAt(
+  timing: PhaserTiming,
+  lane: Pick<PhaserLane, 'phaseOffset' | 'rateMultiplier'>,
+  elapsedMs: number,
+  fixturePhase: number
+): number {
+  const travel = elapsedPhaseAt(timing, elapsedMs, lane.rateMultiplier);
+  const spread = Math.max(0, Math.min(2, timing.phaseSpread / 100));
+  return travel
+    + clamp01(fixturePhase) * spread
+    + (Number.isFinite(lane.phaseOffset) ? Number(lane.phaseOffset) : 0);
+}
+
 export function phaserValueAt(effect: PhaserEffect, elapsedMs: number, fixturePhase = 0): number {
-  const travel = elapsedPhaseAt(effect, elapsedMs, effect.rateMultiplier);
-  const spread = Math.max(0, Math.min(2, effect.phaseSpread / 100));
-  return phaserWaveValue(
-    effect.waveform,
-    travel + clamp01(fixturePhase) * spread + (Number.isFinite(effect.phaseOffset) ? Number(effect.phaseOffset) : 0)
-  );
+  const phase = lanePhaseAt(effect, effect, elapsedMs, fixturePhase);
+  return effect.steps?.length
+    ? phaserStepValue(effect.steps, phase)
+    : phaserWaveValue(effect.waveform, phase);
+}
+
+export function phaserLaneValueAt(
+  timing: PhaserTiming,
+  lane: PhaserLane,
+  elapsedMs: number,
+  fixturePhase = 0
+): number {
+  const phase = lanePhaseAt(timing, lane, elapsedMs, fixturePhase);
+  return lane.steps?.length
+    ? phaserStepValue(lane.steps, phase)
+    : phaserWaveValue(lane.waveform, phase);
 }
 
 function normalizedLaneValue(lane: PhaserLane, wave: number, baseNormalized: number): number {
@@ -140,7 +226,7 @@ export function renderPhaserProgram(
     const updates: DmxUpdate[] = [];
 
     for (const lane of program.lanes) {
-      const wave = phaserValueAt({ ...program, ...lane }, elapsedMs, phase);
+      const wave = phaserLaneValueAt(program, lane, elapsedMs, phase);
 
       if (lane.parameter === 'pan') {
         pan = normalizedLaneValue(lane, wave, movement.pan);
@@ -198,7 +284,8 @@ export function renderPhaserEffect(
       offset: effect.offset,
       phaseOffset: effect.phaseOffset,
       rateMultiplier: effect.rateMultiplier,
-      mode: effect.mode
+      mode: effect.mode,
+      steps: effect.steps
     }]
   }, fixtures, elapsedMs, baseUniverse);
 }
