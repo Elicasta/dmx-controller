@@ -1228,10 +1228,14 @@ export default function App() {
   }
 
   function cueUniverseFrames(cue: ShowCue) {
+    const index = showFile.cues.findIndex((item) => item.id === cue.id);
+    if (index >= 0) return resolveShowCueFrames(showFile.cues, index);
+
     if (cue.universes?.length) {
       return new Map(cue.universes.map((snapshot) => [snapshot.universe, [...snapshot.values]]));
     }
     if (cue.universe?.length === 512) return new Map([[1, [...cue.universe]]]);
+
     const selected = selectedFixtures(patchRef.current);
     const baseFrames = cloneEffectBaseFrames(selected);
     const frames = new Map<number, number[]>();
@@ -1475,6 +1479,81 @@ export default function App() {
     fadeAnimationRef.current = requestAnimationFrame(tick);
   }
 
+  function fadeCueToUniverseFrames(
+    cue: ShowCue,
+    targets: ReadonlyMap<number, readonly number[]>,
+    source: ControlSource = 'cue',
+    onComplete?: () => void
+  ) {
+    stopFade();
+    if (activeEffectRef.current || activeCustomEffectIdRef.current) stopEffect(false, true, false);
+    if (!targets.size) {
+      setMessage(`Cue ${cue.number}: ${cue.name} has no target universes.`);
+      return;
+    }
+
+    const snapshot = runtimeRef.current!.snapshot;
+    const from = new Map<number, number[]>(
+      [...targets.keys()].map((universe) => [
+        universe,
+        [...(snapshot.baseUniverses.get(universe) ?? makeUniverse())]
+      ])
+    );
+
+    const duration = Math.max(0, ...[...targets.entries()].map(([universe, target]) => {
+      const fixturePatch = patchRef.current.filter((fixture) => (fixture.universe ?? 1) === universe);
+      return cuePlaybackDuration(cue, from.get(universe) ?? makeUniverse(), target, fixturePatch);
+    }));
+
+    const finish = (frames: ReadonlyMap<number, readonly number[]>) => {
+      void commitUniverseFrames(frames, source).then(() => {
+        fadeAnimationRef.current = null;
+        setIsFading(false);
+        setMessage(`Cue ${cue.number}: ${cue.name} is live.`);
+        onComplete?.();
+      });
+    };
+
+    if (duration === 0) {
+      finish(targets);
+      return;
+    }
+
+    const startedAt = performance.now();
+    fadeLastFrameRef.current = startedAt - FRAME_MS;
+    setIsFading(true);
+
+    const tick = (now: number) => {
+      const elapsed = Math.min(duration, now - startedAt);
+      const done = elapsed >= duration;
+      if (now - fadeLastFrameRef.current >= FRAME_MS || done) {
+        fadeLastFrameRef.current = now;
+        const frames = new Map<number, number[]>();
+        for (const [universe, target] of targets) {
+          const fixturePatch = patchRef.current.filter((fixture) => (fixture.universe ?? 1) === universe);
+          frames.set(
+            universe,
+            renderCueTimedFrame(
+              cue,
+              from.get(universe) ?? makeUniverse(),
+              target,
+              elapsed,
+              fixturePatch
+            )
+          );
+        }
+        if (done) {
+          finish(frames);
+          return;
+        }
+        void commitUniverseFrames(frames, source);
+      }
+      fadeAnimationRef.current = requestAnimationFrame(tick);
+    };
+
+    fadeAnimationRef.current = requestAnimationFrame(tick);
+  }
+
   function fadeToUniverse(name: string, target: number[], duration: number, source: ControlSource = 'ui') {
     fadeToUniverseFrames(name, new Map([[1, target]]), duration, source);
   }
@@ -1621,6 +1700,13 @@ export default function App() {
     const number = showFile.cues.length + 1;
     const name = cueName.trim() || `Cue ${number}`;
     const frames = cloneEffectBaseFrames();
+    const previous = resolveShowCueFrames(showFile.cues, showFile.cues.length - 1);
+    const primaryFixtureUniverse = primaryFixture?.universe ?? 1;
+    const primaryFrame = frames.get(primaryFixtureUniverse) ?? makeUniverse();
+    const values = primaryFixture ? fixtureValues(primaryFrame, primaryFixture) : primaryValues;
+    const primary = frames.get(1) ?? makeUniverse();
+    const previousPrimary = previous.get(1) ?? makeUniverse();
+
     const cue: ShowCue = {
       id: `cue-${Date.now().toString(36)}`,
       number,
@@ -1634,13 +1720,18 @@ export default function App() {
       linkedLookId: '',
       linkedEffectId: '',
       trackName: '',
-      values: { ...primaryValues },
-      universe: [...(frames.get(1) ?? makeUniverse())],
+      values: { ...values },
+      changes: diffUniverse(previousPrimary, primary),
+      universeChanges: cueChangesByUniverse(previous, frames),
+      timing: [],
+      universe: [...primary],
       universes: serializeUniverseFrames(frames)
     };
+
     setShowFile((current) => ({ ...current, version: 4, cues: [...current.cues, cue] }));
     setCueName('');
-    setMessage(`${name} captured across ${frames.size} universe${frames.size === 1 ? '' : 's'}.`);
+    const instructions = cue.universeChanges?.reduce((sum, item) => sum + item.updates.length, 0) ?? 0;
+    setMessage(`${name} captured as ${instructions} tracked instruction${instructions === 1 ? '' : 's'} across ${frames.size} universe${frames.size === 1 ? '' : 's'}.`);
   }
 
   function clearCueTimers() {
@@ -1661,6 +1752,7 @@ export default function App() {
     clearCueTimers();
     const generation = cueLaunchGuardRef.current.begin(cue.id, delayed);
     if (generation === null) return;
+
     const launch = () => {
       if (!cueLaunchGuardRef.current.markLaunched(generation)) return;
       cueDelayTimerRef.current = null;
@@ -1668,10 +1760,14 @@ export default function App() {
       setActiveCueId(cue.id);
       const targets = cueUniverseFrames(cue);
       void dispatchControl({ type: 'cue.go', cueId: cue.id }, 'cue');
-      fadeToUniverseFrames(`Cue ${cue.number}: ${cue.name}`, targets, cue.fadeMs, 'cue');
-      if (cue.linkedEffectId && EFFECT_PRESETS.some((effect) => effect.id === cue.linkedEffectId)) {
-        startEffect(cue.linkedEffectId as EffectId);
-      }
+
+      fadeCueToUniverseFrames(cue, targets, 'cue', () => {
+        if (!cueLaunchGuardRef.current.isCurrent(generation)) return;
+        if (cue.linkedEffectId && EFFECT_PRESETS.some((effect) => effect.id === cue.linkedEffectId)) {
+          startEffect(cue.linkedEffectId as EffectId);
+        }
+      });
+
       if ((cue.followMs ?? 0) > 0) {
         const cueIndex = showFile.cues.findIndex((item) => item.id === cue.id);
         const following = showFile.cues[cueIndex + 1];
@@ -1682,9 +1778,9 @@ export default function App() {
         }
       }
     };
-    if ((cue.delayMs ?? 0) > 0) {
-      cueDelayTimerRef.current = window.setTimeout(launch, cue.delayMs);
-    } else launch();
+
+    if ((cue.delayMs ?? 0) > 0) cueDelayTimerRef.current = window.setTimeout(launch, cue.delayMs);
+    else launch();
   }
 
   function goNextCue() {
@@ -1702,23 +1798,35 @@ export default function App() {
   }
 
   function updateCue(id: string) {
-    const outputs = clonePatchedOutputFrames();
-    const primaryUniverse = primaryFixture?.universe ?? 1;
-    const primaryOutput = outputs.get(primaryUniverse) ?? makeUniverse();
-    const outputValues = primaryFixture ? fixtureValues(primaryOutput, primaryFixture) : primaryValues;
-    setShowFile((current) => ({
-      ...current,
-      version: 4,
-      cues: current.cues.map((cue) => cue.id === id
-        ? {
-            ...cue,
-            values: { ...outputValues },
-            universe: [...(outputs.get(1) ?? makeUniverse())],
-            universes: serializeUniverseFrames(outputs)
-          }
-        : cue)
-    }));
-    setMessage(`Cue look updated from live output across ${outputs.size} universe${outputs.size === 1 ? '' : 's'}.`);
+    const frames = cloneEffectBaseFrames();
+    const primaryFixtureUniverse = primaryFixture?.universe ?? 1;
+    const primaryFrame = frames.get(primaryFixtureUniverse) ?? makeUniverse();
+    const values = primaryFixture ? fixtureValues(primaryFrame, primaryFixture) : primaryValues;
+
+    setShowFile((current) => {
+      const index = current.cues.findIndex((cue) => cue.id === id);
+      if (index < 0) return current;
+      const previous = resolveShowCueFrames(current.cues, index - 1);
+      const primary = frames.get(1) ?? makeUniverse();
+      const previousPrimary = previous.get(1) ?? makeUniverse();
+
+      return {
+        ...current,
+        version: 4,
+        cues: current.cues.map((cue, cueIndex) => cueIndex === index
+          ? {
+              ...cue,
+              values: { ...values },
+              changes: diffUniverse(previousPrimary, primary),
+              universeChanges: cueChangesByUniverse(previous, frames),
+              universe: [...primary],
+              universes: serializeUniverseFrames(frames)
+            }
+          : cue)
+      };
+    });
+
+    setMessage(`Cue look updated from the programmer/base state across ${frames.size} universe${frames.size === 1 ? '' : 's'}.`);
   }
 
   function updateCueProperties(id: string, updates: Partial<ShowCue>) {
@@ -1728,8 +1836,42 @@ export default function App() {
     }));
   }
 
+  function updateCueTimingFamily(
+    cueId: string,
+    family: CueTimingRule['family'],
+    updates: Partial<Omit<CueTimingRule, 'family'>>
+  ) {
+    setShowFile((current) => ({
+      ...current,
+      cues: current.cues.map((cue) => {
+        if (cue.id !== cueId) return cue;
+        const existing = cue.timing?.find((rule) => rule.family === family);
+        const rule: CueTimingRule = {
+          family,
+          fadeMs: existing?.fadeMs ?? cue.fadeMs,
+          delayMs: existing?.delayMs ?? 0,
+          curve: existing?.curve ?? 'ease',
+          ...updates
+        };
+        return {
+          ...cue,
+          timing: [...(cue.timing ?? []).filter((item) => item.family !== family), rule]
+        };
+      })
+    }));
+  }
+
+  function clearCueTimingFamily(cueId: string, family: CueTimingRule['family']) {
+    setShowFile((current) => ({
+      ...current,
+      cues: current.cues.map((cue) => cue.id === cueId
+        ? { ...cue, timing: (cue.timing ?? []).filter((rule) => rule.family !== family) }
+        : cue)
+    }));
+  }
+
   function deleteCue(id: string) {
-    setShowFile((current) => ({ ...current, cues: current.cues.filter((cue) => cue.id !== id).map((cue, index) => ({ ...cue, number: index + 1 })) }));
+    setShowFile((current) => ({ ...current, cues: removeCuePreservingTracking(current.cues, id) }));
     if (activeCueIdRef.current === id) {
       cancelPendingCueLaunches();
       activeCueIdRef.current = null;
