@@ -36,13 +36,21 @@ describe('phaser engine', () => {
     expect(phaserValueAt({ ...base, waveform: 'saw', direction: 'reverse' }, 125, 0)).toBeCloseTo(.75, 4);
   });
 
-  it('uses fixture order to assign phase', () => {
-    const fixtures = [mover('one', 1), mover('two', 20), mover('three', 40)];
+  it('uses fixture order to assign distinct phase positions', () => {
+    const fixtures = [mover('one', 1), mover('two', 20), mover('three', 40), mover('four', 60)];
     const forward = renderPhaserEffect({ ...base, waveform: 'saw', orderMode: 'forward' }, fixtures, 0);
     const reverse = renderPhaserEffect({ ...base, waveform: 'saw', orderMode: 'reverse' }, fixtures, 0);
-    expect(forward.map(([, value]) => value)).toEqual([0, 128, 0]);
-    expect(reverse.map(([, value]) => value)).toEqual([0, 128, 0]);
-    expect(forward.map(([channel]) => channel)).toEqual([1, 20, 40]);
+    expect(forward.map(([, value]) => value)).toEqual([0, 85, 170, 0]);
+    expect(reverse.map(([, value]) => value)).toEqual([0, 170, 85, 0]);
+    expect(forward.map(([channel]) => channel)).toEqual([1, 20, 40, 60]);
+  });
+
+  it('lets blocks share phase and wings mirror phase', () => {
+    const fixtures = [mover('one', 1), mover('two', 20), mover('three', 40), mover('four', 60)];
+    const blocked = renderPhaserEffect({ ...base, waveform: 'saw', order: { mode: 'forward', blocks: 2 } }, fixtures, 0);
+    const winged = renderPhaserEffect({ ...base, waveform: 'saw', order: { mode: 'forward', wings: 2 } }, fixtures, 0);
+    expect(blocked.map(([, value]) => value)).toEqual([0, 0, 0, 0]);
+    expect(winged.map(([, value]) => value)).toEqual([0, 0, 0, 0]);
   });
 
   it('can run relative to the current look instead of replacing it', () => {
