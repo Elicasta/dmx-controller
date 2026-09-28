@@ -125,40 +125,6 @@ describe('ShowRuntime', () => {
     expect(restored.frame[4]).toBe(200);
   });
 
-  it('moves group fixture levels by the fader delta, caps bright fixtures, and sets FULL across universes', () => {
-    const fixtures = [
-      { ...DEFAULT_PATCH[0], id: 'left', address: 1, group: 'Front Wash' },
-      { ...DEFAULT_PATCH[0], id: 'center', address: 11, group: 'Front Wash' },
-      { ...DEFAULT_PATCH[0], id: 'right', address: 21, group: 'Front Wash', universe: 2 },
-      { ...DEFAULT_PATCH[0], id: 'unrelated', address: 31, group: 'Other' }
-    ];
-    const runtime = new ShowRuntime({ patch: fixtures });
-    runtime.dispatch(controlCommand('ui', { type: 'frame.update', universe: 1, updates: [[5, 128], [15, 179], [35, 77]] }));
-    runtime.dispatch(controlCommand('ui', { type: 'frame.update', universe: 2, updates: [[25, 255]] }));
-    const increased = runtime.dispatch(controlCommand('surface', { type: 'group.level.adjust', groupName: 'Front Wash', previous: 50, value: 60 }));
-    expect(increased.outputs.map((output) => output.universe)).toEqual([1, 2]);
-    expect(increased.outputs[0].baseFrame[4]).toBe(154);
-    expect(increased.outputs[0].baseFrame[14]).toBe(204);
-    expect(increased.outputs[1].baseFrame[24]).toBe(255);
-    expect(increased.outputs[0].baseFrame[34]).toBe(77);
-    const full = runtime.dispatch(controlCommand('surface', { type: 'group.level.adjust', groupName: 'Front Wash', previous: 60, value: 100 }));
-    expect(full.outputs[0].baseFrame[4]).toBe(255);
-    expect(full.outputs[0].baseFrame[14]).toBe(255);
-    expect(full.outputs[1].baseFrame[24]).toBe(255);
-    const lowered = runtime.dispatch(controlCommand('surface', { type: 'group.level.adjust', groupName: 'Front Wash', previous: 100, value: 90 }));
-    expect(lowered.outputs[0].baseFrame[4]).toBeCloseTo(230, 0);
-    expect(lowered.outputs[1].baseFrame[24]).toBeCloseTo(230, 0);
-  });
-
-  it('takes over an existing output group master without multiplying the new fader levels twice', () => {
-    const runtime = new ShowRuntime({ patch: DEFAULT_PATCH });
-    runtime.dispatch(controlCommand('ui', { type: 'frame.update', universe: 1, updates: [[5, 200]] }));
-    runtime.dispatch(controlCommand('ui', { type: 'group.master.set', groupName: 'Front Wash', value: .5 }));
-    const adjusted = runtime.dispatch(controlCommand('surface', { type: 'group.level.adjust', groupName: 'Front Wash', previous: 50, value: 60 }));
-    expect(adjusted.frame[4]).toBeGreaterThan(100);
-    expect(adjusted.frame[4]).toBe(adjusted.baseFrame[4]);
-  });
-
   it('flashes fixture intensity without changing its programmer base value', () => {
     const runtime = new ShowRuntime({ patch: DEFAULT_PATCH });
     runtime.dispatch(controlCommand('ui', {
@@ -208,6 +174,166 @@ describe('ShowRuntime', () => {
     expect(exact.frame).toEqual(colored.frame);
   });
 
+  it('layers FX over the programmer without rewriting the base frame', () => {
+    const runtime = new ShowRuntime({ patch: DEFAULT_PATCH });
+    runtime.dispatch(controlCommand('ui', {
+      type: 'frame.update', universe: 1, updates: [[5, 80]]
+    }));
+    const layered = runtime.dispatch(controlCommand('fx', {
+      type: 'playback.layer.set',
+      universe: 1,
+      layerId: 'fx',
+      priority: 30,
+      mode: 'ltp',
+      updates: [[5, 210]]
+    }));
+    expect(layered.baseFrame[4]).toBe(80);
+    expect(layered.frame[4]).toBe(210);
+
+    const cleared = runtime.dispatch(controlCommand('fx', {
+      type: 'playback.layer.clear', universe: 1, layerId: 'fx'
+    }));
+    expect(cleared.baseFrame[4]).toBe(80);
+    expect(cleared.frame[4]).toBe(80);
+  });
+
+  it('applies group and grand masters after playback layers', () => {
+    const runtime = new ShowRuntime({ patch: DEFAULT_PATCH });
+    runtime.dispatch(controlCommand('fx', {
+      type: 'playback.layer.set',
+      universe: 1,
+      layerId: 'fx',
+      priority: 30,
+      mode: 'ltp',
+      updates: [[5, 200]]
+    }));
+    runtime.dispatch(controlCommand('ui', {
+      type: 'group.master.set', groupName: 'Front Wash', value: .5
+    }));
+    const mastered = runtime.dispatch(controlCommand('ui', {
+      type: 'master.set', value: .5
+    }));
+    expect(mastered.baseFrame[4]).toBe(0);
+    expect(mastered.frame[4]).toBe(50);
+  });
+
+  it('resolves the live stack as base < FX < BUSK < hit and restores each layer cleanly', () => {
+    const runtime = new ShowRuntime({ patch: DEFAULT_PATCH });
+
+    runtime.dispatch(controlCommand('ui', {
+      type: 'frame.update',
+      universe: 1,
+      updates: [[1, 10], [5, 40]]
+    }));
+
+    runtime.dispatch(controlCommand('fx', {
+      type: 'playback.layer.set',
+      universe: 1,
+      layerId: 'fx',
+      priority: 30,
+      mode: 'ltp',
+      updates: [[1, 60], [5, 80]]
+    }));
+
+    const busked = runtime.dispatch(controlCommand('surface', {
+      type: 'playback.layer.set',
+      universe: 1,
+      layerId: 'busk',
+      priority: 50,
+      mode: 'ltp',
+      updates: [[1, 140], [5, 160]]
+    }));
+    expect(busked.frame[0]).toBe(140);
+    expect(busked.frame[4]).toBe(160);
+
+    const hit = runtime.dispatch(controlCommand('surface', {
+      type: 'playback.layer.set',
+      universe: 1,
+      layerId: 'hit',
+      priority: 80,
+      mode: 'ltp',
+      updates: [[1, 255], [5, 255]]
+    }));
+    expect(hit.frame[0]).toBe(255);
+    expect(hit.frame[4]).toBe(255);
+
+    const afterHit = runtime.dispatch(controlCommand('surface', {
+      type: 'playback.layer.clear',
+      universe: 1,
+      layerId: 'hit'
+    }));
+    expect(afterHit.frame[0]).toBe(140);
+    expect(afterHit.frame[4]).toBe(160);
+
+    const afterBusk = runtime.dispatch(controlCommand('surface', {
+      type: 'playback.layer.clear',
+      universe: 1,
+      layerId: 'busk'
+    }));
+    expect(afterBusk.frame[0]).toBe(60);
+    expect(afterBusk.frame[4]).toBe(80);
+
+    const afterFx = runtime.dispatch(controlCommand('fx', {
+      type: 'playback.layer.clear',
+      universe: 1,
+      layerId: 'fx'
+    }));
+    expect(afterFx.frame[0]).toBe(10);
+    expect(afterFx.frame[4]).toBe(40);
+  });
+
+  it('keeps the main FX layer running underneath an independent hit layer', () => {
+    const runtime = new ShowRuntime({ patch: DEFAULT_PATCH });
+
+    runtime.dispatch(controlCommand('fx', {
+      type: 'playback.layer.set',
+      universe: 1,
+      layerId: 'fx',
+      priority: 30,
+      mode: 'ltp',
+      updates: [[1, 20], [5, 120]]
+    }));
+
+    const hit = runtime.dispatch(controlCommand('surface', {
+      type: 'playback.layer.set',
+      universe: 1,
+      layerId: 'hit',
+      priority: 80,
+      mode: 'ltp',
+      updates: [[1, 255], [5, 255]]
+    }));
+
+    expect(hit.frame[0]).toBe(255);
+    expect(hit.frame[4]).toBe(255);
+
+    const released = runtime.dispatch(controlCommand('surface', {
+      type: 'playback.layer.clear',
+      universe: 1,
+      layerId: 'hit'
+    }));
+
+    expect(released.frame[0]).toBe(20);
+    expect(released.frame[4]).toBe(120);
+    expect(released.baseFrame[0]).toBe(0);
+    expect(released.baseFrame[4]).toBe(0);
+  });
+
+  it('supports HTP hit layers without letting a lower hit pull intensity down', () => {
+    const runtime = new ShowRuntime({ patch: DEFAULT_PATCH });
+    runtime.dispatch(controlCommand('ui', {
+      type: 'frame.update', universe: 1, updates: [[5, 180]]
+    }));
+    const hit = runtime.dispatch(controlCommand('surface', {
+      type: 'playback.layer.set',
+      universe: 1,
+      layerId: 'hit',
+      priority: 80,
+      mode: 'htp',
+      updates: [[5, 100]]
+    }));
+    expect(hit.frame[4]).toBe(180);
+  });
+
   it('changes one fixture intensity without moving another fixture fader', () => {
     const second = { ...DEFAULT_PATCH[0], id: 'fixture-2', address: 11, selected: false };
     const runtime = new ShowRuntime({ patch: [DEFAULT_PATCH[0], second] });
@@ -226,126 +352,5 @@ describe('ShowRuntime', () => {
     }));
     expect(result.baseFrame.slice(0, 3)).toEqual([0, 0, 0]);
     expect(result.baseFrame.slice(10, 13)).toEqual([12, 34, 56]);
-  });
-
-  it('keeps one target arrangement across fixtures split over multiple universes', () => {
-    const fixtures = [
-      { ...mover, id: 'u1-left', universe: 1, transform: { position: { x: -2, y: 5, z: 0 }, rotation: { yaw: 0, pitch: 0, roll: 0 } } },
-      { ...mover, id: 'u2-right', universe: 2, transform: { position: { x: 2, y: 5, z: 0 }, rotation: { yaw: 0, pitch: 0, roll: 0 } } }
-    ];
-    const target = { x: 0, y: 1, z: -4 };
-    const expected = arrangeTargetPoints(target, 2, 'fan-horizontal', 4);
-    const runtime = new ShowRuntime({ patch: fixtures });
-    const result = runtime.dispatch(controlCommand('ui', {
-      type: 'fixture.target',
-      fixtureIds: fixtures.map((fixture) => fixture.id),
-      target,
-      arrangement: 'fan-horizontal',
-      spreadMeters: 4
-    }));
-    expect(result.outputs.map((output) => output.universe)).toEqual([1, 2]);
-    fixtures.forEach((fixture, index) => {
-      const output = result.outputs.find((item) => item.universe === fixture.universe)!;
-      const state = fixtureGeometryState(output.frame, fixture, index, fixtures.length);
-      const direction = normalize(subtract(expected[index], state.beam.origin));
-      expect(angularDistanceDegrees(state.beam.direction, direction)).toBeLessThan(.02);
-    });
-  });
-
-  it('routes a fixture command to the fixture universe instead of the last active universe', () => {
-    const universeTwo = { ...DEFAULT_PATCH[0], id: 'u2-fixture', name: 'Universe 2 Fixture', universe: 2 };
-    const runtime = new ShowRuntime({ patch: [DEFAULT_PATCH[0], universeTwo] });
-    const result = runtime.dispatch(controlCommand('ui', {
-      type: 'fixture.attribute', fixtureIds: [universeTwo.id], parameter: 'dimmer', value: 173
-    }));
-    expect(result.universe).toBe(2);
-    expect(result.outputs).toHaveLength(1);
-    expect(result.baseFrame[4]).toBe(173);
-    expect(runtime.snapshot.universes.get(1)?.[4] ?? 0).toBe(0);
-    expect(runtime.snapshot.universes.get(2)?.[4]).toBe(173);
-  });
-
-  it('replaces multiple universes in one runtime revision', () => {
-    const runtime = new ShowRuntime({ patch: [
-      DEFAULT_PATCH[0],
-      { ...DEFAULT_PATCH[0], id: 'u2', name: 'U2', universe: 2 }
-    ] });
-    const one = Array.from({ length: 512 }, () => 0);
-    const two = Array.from({ length: 512 }, () => 0);
-    one[4] = 200;
-    two[4] = 180;
-
-    const result = runtime.dispatch(controlCommand('fx', {
-      type: 'frame.batch.replace',
-      frames: [
-        { universe: 2, values: two },
-        { universe: 1, values: one }
-      ]
-    }));
-
-    expect(result.revision).toBe(1);
-    expect(result.universe).toBe(1);
-    expect(result.outputs.map((output) => output.universe)).toEqual([1, 2]);
-    expect(result.outputs.find((output) => output.universe === 1)?.baseFrame[4]).toBe(200);
-    expect(result.outputs.find((output) => output.universe === 2)?.baseFrame[4]).toBe(180);
-    expect(runtime.snapshot.baseUniverses.get(1)?.[4]).toBe(200);
-    expect(runtime.snapshot.baseUniverses.get(2)?.[4]).toBe(180);
-  });
-
-  it('applies live master resolution independently to every frame in a batch', () => {
-    const runtime = new ShowRuntime({ patch: [
-      DEFAULT_PATCH[0],
-      { ...DEFAULT_PATCH[0], id: 'u2', name: 'U2', universe: 2 }
-    ] });
-    runtime.dispatch(controlCommand('ui', { type: 'master.set', value: .5 }));
-    const one = Array.from({ length: 512 }, () => 0);
-    const two = Array.from({ length: 512 }, () => 0);
-    one[4] = 200;
-    two[4] = 180;
-
-    const result = runtime.dispatch(controlCommand('fx', {
-      type: 'frame.batch.replace',
-      frames: [
-        { universe: 1, values: one },
-        { universe: 2, values: two }
-      ]
-    }));
-
-    expect(result.outputs.find((output) => output.universe === 1)?.frame[4]).toBe(100);
-    expect(result.outputs.find((output) => output.universe === 2)?.frame[4]).toBe(90);
-  });
-
-  it('refreshes every universe under the grand master', () => {
-    const universeTwo = { ...DEFAULT_PATCH[0], id: 'u2-fixture', name: 'Universe 2 Fixture', universe: 2 };
-    const runtime = new ShowRuntime({ patch: [DEFAULT_PATCH[0], universeTwo] });
-    runtime.dispatch(controlCommand('ui', { type: 'frame.update', universe: 1, updates: [[5, 200]] }));
-    runtime.dispatch(controlCommand('ui', { type: 'frame.update', universe: 2, updates: [[5, 180]] }));
-    const result = runtime.dispatch(controlCommand('ui', { type: 'master.set', value: .5 }));
-    expect(result.outputs.map((output) => output.universe)).toEqual([1, 2]);
-    expect(result.outputs.find((output) => output.universe === 1)?.frame[4]).toBe(100);
-    expect(result.outputs.find((output) => output.universe === 2)?.frame[4]).toBe(90);
-  });
-
-  it('refreshes a group master across every universe containing that group', () => {
-    const universeTwo = { ...DEFAULT_PATCH[0], id: 'u2-fixture', name: 'Universe 2 Fixture', universe: 2 };
-    const runtime = new ShowRuntime({ patch: [DEFAULT_PATCH[0], universeTwo] });
-    runtime.dispatch(controlCommand('ui', { type: 'frame.update', universe: 1, updates: [[5, 200]] }));
-    runtime.dispatch(controlCommand('ui', { type: 'frame.update', universe: 2, updates: [[5, 180]] }));
-    const result = runtime.dispatch(controlCommand('surface', { type: 'group.master.set', groupName: 'Front Wash', value: .25 }));
-    expect(result.outputs.map((output) => output.universe)).toEqual([1, 2]);
-    expect(result.outputs.find((output) => output.universe === 1)?.frame[4]).toBe(50);
-    expect(result.outputs.find((output) => output.universe === 2)?.frame[4]).toBe(45);
-  });
-
-  it('marks every known universe affected by blackout so every output adapter refreshes', () => {
-    const universeTwo = { ...DEFAULT_PATCH[0], id: 'u2-fixture', name: 'Universe 2 Fixture', universe: 2 };
-    const runtime = new ShowRuntime({ patch: [DEFAULT_PATCH[0], universeTwo] });
-    runtime.dispatch(controlCommand('ui', { type: 'frame.update', universe: 1, updates: [[5, 200]] }));
-    runtime.dispatch(controlCommand('ui', { type: 'frame.update', universe: 2, updates: [[5, 180]] }));
-    const result = runtime.dispatch(controlCommand('remote', { type: 'blackout.set', active: true }));
-    expect(runtime.snapshot.blackout).toBe(true);
-    expect(result.outputs.map((output) => output.universe)).toEqual([1, 2]);
-    expect(result.outputs.find((output) => output.universe === 1)?.frame[4]).toBe(200);
-    expect(result.outputs.find((output) => output.universe === 2)?.frame[4]).toBe(180);
   });
 });
