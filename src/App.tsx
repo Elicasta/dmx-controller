@@ -11,7 +11,7 @@ import {
   VISIBLE_CHANNELS,
   type DmxUpdate
 } from './lib/dmx';
-import { EFFECT_PRESETS, EFFECT_SHAPES, effectWaveValue, renderEffect, renderCustomEffect, type CustomEffect, type EffectId, type EffectParameter, type EffectPreset, type EffectWaveform } from './lib/effects';
+import { EFFECT_PRESETS, EFFECT_SHAPES, effectWaveValue, renderEffect, renderCustomEffect, type CustomEffect, type CustomEffectParameter, type EffectId, type EffectParameter, type EffectPreset, type EffectWaveform, type MotionShape } from './lib/effects';
 import {
   DEFAULT_PATCH,
   FIXTURE_LIBRARY,
@@ -335,8 +335,9 @@ function isCustomEffect(value: unknown): value is CustomEffect {
   const effect = value as Partial<CustomEffect>;
   return typeof effect.id === 'string'
     && typeof effect.name === 'string'
-    && ['dimmer', 'pan', 'tilt', 'uv'].includes(String(effect.parameter))
+    && ['dimmer', 'pan', 'tilt', 'uv', 'position'].includes(String(effect.parameter))
     && ['sine', 'triangle', 'square', 'saw', 'reverse-saw', 'step'].includes(String(effect.waveform))
+    && (effect.motionShape === undefined || ['circle', 'figure-eight', 'diagonal', 'pan-sweep', 'tilt-sweep'].includes(String(effect.motionShape)))
     && [effect.bpm, effect.depth, effect.phaseSpread, effect.offset].every((part) => typeof part === 'number' && Number.isFinite(part))
     && (effect.orderMode === undefined || ['forward', 'reverse', 'center-out', 'outside-in', 'odd-even', 'even-odd', 'mirror-pairs'].includes(String(effect.orderMode)))
     && [effect.blocks, effect.groups, effect.wings, effect.shift, effect.cycleBeats].every((part) => part === undefined || (typeof part === 'number' && Number.isFinite(part)))
@@ -702,6 +703,7 @@ export default function App() {
     name: 'New FX',
     parameter: 'dimmer',
     waveform: 'sine',
+    motionShape: 'circle',
     bpm: 100,
     depth: 100,
     phaseSpread: 0,
@@ -2673,6 +2675,7 @@ export default function App() {
       name: effect.name,
       parameter: shape.parameter,
       waveform: shape.waveform,
+      motionShape: 'circle',
       bpm: effect.defaultBpm,
       depth: 100,
       phaseSpread: shape.phaseSpread,
@@ -2704,7 +2707,8 @@ export default function App() {
       shift: Math.max(-256, Math.min(256, Math.round(fxEditor.shift ?? 0))),
       direction: fxEditor.direction ?? 'forward',
       cycleBeats: Math.max(.125, Math.min(32, fxEditor.cycleBeats ?? 1)),
-      mode: fxEditor.mode ?? 'absolute',
+      mode: fxEditor.parameter === 'position' ? (fxEditor.mode ?? 'relative') : (fxEditor.mode ?? 'absolute'),
+      motionShape: fxEditor.motionShape ?? 'circle',
       id: fxEditor.id.startsWith('custom-') && fxEditor.id !== 'custom-preview'
         ? fxEditor.id
         : `custom-${Date.now().toString(36)}`
@@ -3324,9 +3328,10 @@ export default function App() {
                 <header><span>FX PARAMETERS</span><small>Graphical generator</small></header>
                 <label><span>Name</span><input value={fxEditor.name} onChange={(event) => setFxEditor((current) => ({ ...current, name: event.target.value }))}/></label>
                 <div className="inspector-pair">
-                  <label><span>Parameter</span><select value={fxEditor.parameter} onChange={(event) => setFxEditor((current) => ({ ...current, parameter: event.target.value as EffectParameter }))}><option value="dimmer">Dimmer</option><option value="pan">Pan</option><option value="tilt">Tilt</option><option value="uv">UV</option></select></label>
+                  <label><span>Parameter</span><select value={fxEditor.parameter} onChange={(event) => { const parameter = event.target.value as CustomEffectParameter; setFxEditor((current) => ({ ...current, parameter, motionShape: current.motionShape ?? 'circle', mode: parameter === 'position' ? 'relative' : current.mode })); }}><option value="dimmer">Dimmer</option><option value="position">Position · Pan + Tilt</option><option value="pan">Pan</option><option value="tilt">Tilt</option><option value="uv">UV</option></select></label>
                   <label><span>Waveform</span><select value={fxEditor.waveform} onChange={(event) => setFxEditor((current) => ({ ...current, waveform: event.target.value as EffectWaveform }))}><option value="sine">Sine</option><option value="triangle">Triangle</option><option value="square">Square</option><option value="saw">Saw</option><option value="reverse-saw">Reverse Saw</option><option value="step">Step</option></select></label>
                 </div>
+                {fxEditor.parameter === 'position' && <label><span>Motion Shape</span><select value={fxEditor.motionShape ?? 'circle'} onChange={(event) => setFxEditor((current) => ({ ...current, motionShape: event.target.value as MotionShape }))}><option value="circle">Circle</option><option value="figure-eight">Figure 8</option><option value="diagonal">Diagonal</option><option value="pan-sweep">Pan Sweep</option><option value="tilt-sweep">Tilt Sweep</option></select></label>}
                 <div className="inspector-pair">
                   <label><span>Fixture Order</span><select value={fxEditor.orderMode ?? 'forward'} onChange={(event) => setFxEditor((current) => ({ ...current, orderMode: event.target.value as CustomEffect['orderMode'] }))}><option value="forward">Forward</option><option value="reverse">Reverse</option><option value="center-out">Center Out</option><option value="outside-in">Outside In</option><option value="mirror-pairs">Mirror Pairs</option><option value="odd-even">Odd → Even</option><option value="even-odd">Even → Odd</option></select></label>
                   <label><span>Direction</span><select value={fxEditor.direction ?? 'forward'} onChange={(event) => setFxEditor((current) => ({ ...current, direction: event.target.value as CustomEffect['direction'] }))}><option value="forward">Forward</option><option value="reverse">Reverse</option></select></label>
@@ -3361,7 +3366,7 @@ export default function App() {
                 {EFFECT_PRESETS.map((effect) => <button key={effect.id} className={`${selectedFxBankId === effect.id ? 'selected' : ''} ${activeEffect === effect.id ? 'running' : ''}`} onClick={() => loadFactoryFx(effect)} onDoubleClick={() => toggleEffect(effect.id, programEffectFixtures.map((fixture) => fixture.id))}><i className={`fx-icon fx-${effect.id}`}/><span><strong>{effect.name}</strong><small>{EFFECT_SHAPES[effect.id].waveform} · {effect.defaultBpm} BPM</small></span><b>{activeEffect === effect.id ? 'LIVE' : 'FACTORY'}</b></button>)}
                 {customEffects.map((effect) => <article key={effect.id} className={`${selectedFxBankId === effect.id ? 'selected' : ''} ${activeCustomEffectId === effect.id ? 'running' : ''}`}><button className="fx-bank-load" onClick={() => { setSelectedFxBankId(effect.id); setFxEditor(effect); }} onDoubleClick={() => runCustomFx(effect, programEffectFixtures.map((fixture) => fixture.id))}><i>∿</i><span><strong>{effect.name}</strong><small>{effect.waveform} · {effect.bpm} BPM</small></span><b>{activeCustomEffectId === effect.id ? 'LIVE' : 'CUSTOM'}</b></button><button className="fx-bank-delete" aria-label={`Delete ${effect.name}`} onClick={() => deleteCustomFx(effect.id)}>×</button></article>)}
               </div>
-              <footer><span>Single click loads an effect into the graph. Double-click a bank item to run it immediately.</span><button onClick={() => { setFxEditor({ id: 'custom-preview', name: 'New FX', parameter: 'dimmer', waveform: 'sine', bpm: 100, depth: 100, phaseSpread: 0, offset: 0, orderMode: 'forward', blocks: 1, groups: 1, wings: 1, shift: 0, direction: 'forward', cycleBeats: 1, mode: 'absolute' }); setSelectedFxBankId('custom-preview'); }}>＋ NEW FX</button></footer>
+              <footer><span>Single click loads an effect into the graph. Double-click a bank item to run it immediately.</span><button onClick={() => { setFxEditor({ id: 'custom-preview', name: 'New FX', parameter: 'dimmer', waveform: 'sine', motionShape: 'circle', bpm: 100, depth: 100, phaseSpread: 0, offset: 0, orderMode: 'forward', blocks: 1, groups: 1, wings: 1, shift: 0, direction: 'forward', cycleBeats: 1, mode: 'absolute' }); setSelectedFxBankId('custom-preview'); }}>＋ NEW FX</button></footer>
             </section>
           </div>}
 
