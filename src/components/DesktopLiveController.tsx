@@ -70,6 +70,11 @@ export type DesktopLiveControllerProps = {
   onStopFx: () => void;
   onColor: (color: string) => void;
   onSelectedLevel: (value: number) => void;
+  buskActive?: boolean;
+  onBuskLook?: (lookId: string) => void;
+  onBuskColor?: (color: string) => void;
+  onBuskSelectedLevel?: (value: number) => void;
+  onBuskRelease?: () => void;
 };
 
 const STORAGE_PREFIX = 'lumarig.desktop-live.assignments.v1';
@@ -307,8 +312,14 @@ export function DesktopLiveController(props: DesktopLiveControllerProps) {
     else if (item.kind === 'effect' && item.targetId) {
       if (item.momentary) heldEffects.current.add(item.targetId);
       props.onEffectPress(item.targetId, Boolean(item.momentary));
-    } else if (item.kind === 'color' && item.color) props.onColor(item.color);
-    else if (item.kind === 'level') props.onSelectedLevel(clampPercent(item.value ?? 0));
+    } else if (item.kind === 'color' && item.color) {
+      if (mode === 'busk' && props.onBuskColor) props.onBuskColor(item.color);
+      else props.onColor(item.color);
+    } else if (item.kind === 'level') {
+      const value = clampPercent(item.value ?? 0);
+      if (mode === 'busk' && props.onBuskSelectedLevel) props.onBuskSelectedLevel(value);
+      else props.onSelectedLevel(value);
+    }
     else if (item.kind === 'cue-go') props.onGo();
     else if (item.kind === 'cue-back') props.onBack();
     else if (item.kind === 'blackout') props.onBlackout();
@@ -384,12 +395,12 @@ export function DesktopLiveController(props: DesktopLiveControllerProps) {
     </div></div>}
 
     {mode === 'busk' && <div className="desk-busk-scroll"><div className="desk-busk-surface">
-      <div className="desk-busk-display"><div><small>LUMARIG PERFORMANCE</small><strong>{props.currentCue}</strong></div><b>{Math.round(props.bpm)}<small>BPM</small></b><span>{props.fixtures.filter((fixture) => fixture.selected).length} SELECTED</span><button onClick={props.onStopFx}>STOP FX</button></div>
+      <div className="desk-busk-display"><div><small>LUMARIG PERFORMANCE</small><strong>{props.currentCue}</strong></div><b>{Math.round(props.bpm)}<small>BPM</small></b><span>{props.fixtures.filter((fixture) => fixture.selected).length} SELECTED</span><button className={props.buskActive ? 'active' : ''} disabled={!props.buskActive || !props.onBuskRelease} onClick={props.onBuskRelease}>RELEASE BUSK</button></div>
       <div className="desk-busk-encoders">
         {[['MASTER', props.master, props.onMaster], ['FX SPEED', props.fxSpeed, props.onFxSpeed], ['FX SIZE', props.fxDepth, props.onFxDepth]].map(([label, value, onChange]) => <label key={label as string}><span style={{ '--turn': `${-135 + (Number(value) / 100) * 270}deg` } as CSSProperties}><i /></span><strong>{label as string}</strong><small>{Math.round(Number(value))}</small><input aria-label={label as string} type="range" min="0" max="100" value={Number(value)} onChange={(event) => (onChange as (value: number) => void)(Number(event.target.value))} /></label>)}
         {['DIMMER', 'PAN', 'TILT', 'ZOOM', 'STROBE'].map((label) => <label className="disabled" key={label}><span style={{ '--turn': '-135deg' } as CSSProperties}><i /></span><strong>{label}</strong><small>SELECT</small></label>)}
       </div>
-      <div className="desk-busk-body"><aside><button onClick={() => props.onSelectedLevel(100)}>FULL</button><button onClick={() => props.onSelectedLevel(0)}>OUT</button><button onClick={props.onBack}>BACK</button><button className="go" onClick={props.onGo}>GO</button></aside><main>{buskAssignments.map((item, index) => <button key={index} className={`desk-busk-pad ${activeFor(item) ? 'active' : ''} ${edit ? 'editing' : ''}`} style={{ '--pad': item.color || '#5e6b72' } as CSSProperties} onPointerDown={(event) => { if (event.pointerType === 'mouse' && event.button !== 0) return; event.preventDefault(); event.currentTarget.setPointerCapture(event.pointerId); if (edit) openAssignment(index); else activate(item); }} onPointerUp={(event) => { if (event.currentTarget.hasPointerCapture(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId); release(item); }} onPointerCancel={() => release(item)} onLostPointerCapture={() => release(item)}><i /><strong>{item.label}</strong><small>{item.kind}</small><em>{index + 1}</em></button>)}</main><aside className="desk-busk-scenes">{[1, 2, 3, 4].map((scene) => <button key={scene} className={page === scene ? 'active' : ''} onClick={() => setPage(scene)}>SCENE <b>{scene}</b></button>)}<button onClick={props.onStopFx}>STOP FX</button><button className={props.blackout ? 'active danger' : 'danger'} onClick={props.onBlackout}>{props.blackout ? 'RELEASE' : 'BLACKOUT'}</button></aside></div>
+      <div className="desk-busk-body"><aside><button onClick={() => (props.onBuskSelectedLevel ?? props.onSelectedLevel)(100)}>FULL</button><button onClick={() => (props.onBuskSelectedLevel ?? props.onSelectedLevel)(0)}>OUT</button><button onClick={props.onBack}>BACK</button><button className="go" onClick={props.onGo}>GO</button></aside><main>{buskAssignments.map((item, index) => <button key={index} className={`desk-busk-pad ${activeFor(item) ? 'active' : ''} ${edit ? 'editing' : ''}`} style={{ '--pad': item.color || '#5e6b72' } as CSSProperties} onPointerDown={(event) => { if (event.pointerType === 'mouse' && event.button !== 0) return; event.preventDefault(); event.currentTarget.setPointerCapture(event.pointerId); if (edit) openAssignment(index); else activate(item); }} onPointerUp={(event) => { if (event.currentTarget.hasPointerCapture(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId); release(item); }} onPointerCancel={() => release(item)} onLostPointerCapture={() => release(item)}><i /><strong>{item.label}</strong><small>{item.kind}</small><em>{index + 1}</em></button>)}</main><aside className="desk-busk-scenes">{[1, 2, 3, 4].map((scene) => <button key={scene} className={page === scene ? 'active' : ''} onClick={() => setPage(scene)}>SCENE <b>{scene}</b></button>)}<button onClick={props.onStopFx}>STOP FX</button><button className={props.blackout ? 'active danger' : 'danger'} onClick={props.onBlackout}>{props.blackout ? 'RELEASE' : 'BLACKOUT'}</button></aside></div>
       <div className="desk-busk-groups">{props.groups.slice(0, 8).map((group) => <button key={group.id} className={group.selected ? 'active' : ''} onClick={() => props.onSelectFixtures(group.fixtureIds, 'replace')}><i style={{ background: group.color }} /><small>GROUP</small><strong>{group.name}</strong></button>)}</div>
     </div></div>}
 
