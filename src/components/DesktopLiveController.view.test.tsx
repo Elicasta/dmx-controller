@@ -89,7 +89,12 @@ describe('desktop live view', () => {
     click('BUSK');
     const lookPad = [...host.querySelectorAll('.desk-busk-pad')].find((item) => item.querySelector('strong')?.textContent === 'Blue Look') as HTMLButtonElement | undefined;
     expect(lookPad).toBeTruthy();
-    act(() => lookPad!.click());
+    Object.assign(lookPad!, {
+      setPointerCapture: vi.fn(),
+      releasePointerCapture: vi.fn(),
+      hasPointerCapture: vi.fn(() => false)
+    });
+    act(() => lookPad!.dispatchEvent(new Event('pointerdown', { bubbles: true })));
     expect(onBuskLook).toHaveBeenCalledWith('look-blue');
     expect(onLook).not.toHaveBeenCalled();
 
