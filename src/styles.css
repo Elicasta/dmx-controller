@@ -1931,3 +1931,9 @@ input[type="text"], input[type="number"], .add-fixture-grid input, .patch-card-b
 .cue-timing-row>strong{align-self:center;font-size:10px;letter-spacing:.08em;opacity:.72}
 .cue-timing-row label{min-width:0}
 @media(max-width:900px){.cue-timing-row{grid-template-columns:1fr 1fr}}
+
+
+/* Show Engine v1: temporary live BUSK ownership */
+.live-busk-release{min-width:88px;font-weight:800;letter-spacing:.06em;opacity:.46}
+.live-busk-release.active{opacity:1;box-shadow:inset 0 0 0 1px currentColor}
+.live-busk-release:disabled{cursor:default}
