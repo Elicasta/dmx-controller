@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { applyLightingOffset, diffUniverse, isShowFile, midiSongPositionToMs, moveCue, renumberCues, sanitizeShow, type ShowCue } from './show';
+import { applyLightingOffset, cueChanges, diffUniverse, isShowFile, midiSongPositionToMs, moveCue, renumberCues, resolveShowCueFrame, sanitizeShow, type ShowCue } from './show';
 
 function cue(id: string, number: number): ShowCue {
   return {
@@ -83,9 +83,9 @@ describe('show helpers', () => {
     expect(applyLightingOffset(100, -250)).toBe(0);
   });
 
-  it('migrates v1 shows and preserves spatial and absolute position palettes in v3', () => {
+  it('migrates legacy shows and preserves spatial and absolute position palettes in v4', () => {
     const legacy = { version: 1 as const, name: 'Legacy', cues: [] };
-    expect(sanitizeShow(legacy)).toMatchObject({ version: 3, groups: [], positionPalettes: [] });
+    expect(sanitizeShow(legacy)).toMatchObject({ version: 4, groups: [], positionPalettes: [] });
     const show = {
       version: 2 as const,
       name: 'Positions',
@@ -101,6 +101,46 @@ describe('show helpers', () => {
     };
     expect(isShowFile(show)).toBe(true);
     expect(sanitizeShow(show).positionPalettes).toEqual(show.positionPalettes);
+  });
+
+  it('stores sparse tracked cue changes and resolves inheritance forward', () => {
+    const firstFrame = Array(512).fill(0);
+    firstFrame[0] = 255;
+    firstFrame[4] = 100;
+    const secondFrame = [...firstFrame];
+    secondFrame[4] = 200;
+
+    const cues: ShowCue[] = [
+      { ...cue('a', 1), changes: cueChanges(Array(512).fill(0), firstFrame), universe: firstFrame },
+      { ...cue('b', 2), changes: cueChanges(firstFrame, secondFrame), universe: secondFrame }
+    ];
+
+    expect(cues[0].changes).toEqual([[1, 255], [5, 100]]);
+    expect(cues[1].changes).toEqual([[5, 200]]);
+    expect(resolveShowCueFrame(cues, 1).slice(0, 5)).toEqual([255, 0, 0, 0, 200]);
+  });
+
+  it('sanitizes family timing overrides in v4 shows', () => {
+    const show = {
+      version: 4 as const,
+      name: 'Timing',
+      cues: [{
+        ...cue('timed', 1),
+        changes: [[1, 999] as const],
+        timing: [
+          { family: 'position' as const, fadeMs: 90000, delayMs: -20, curve: 'linear' as const },
+          { family: 'color' as const, fadeMs: 0, delayMs: 0, curve: 'snap' as const }
+        ]
+      }]
+    };
+    expect(isShowFile(show)).toBe(true);
+    expect(sanitizeShow(show).cues[0]).toMatchObject({
+      changes: [[1, 255]],
+      timing: [
+        { family: 'position', fadeMs: 60000, delayMs: 0, curve: 'linear' },
+        { family: 'color', fadeMs: 0, delayMs: 0, curve: 'snap' }
+      ]
+    });
   });
 
   it('persists real group definitions and sanitizes group defaults', () => {
