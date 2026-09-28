@@ -1148,7 +1148,7 @@ export default function App() {
     fadeAnimationRef.current = requestAnimationFrame(tick);
   }
 
-  function fadeCueToUniverse(cue: ShowCue, target: number[]) {
+  function fadeCueToUniverse(cue: ShowCue, target: number[], onComplete?: () => void) {
     stopFade();
     if (activeEffectRef.current) stopEffect(false);
     const from = [...universeRef.current];
@@ -1168,8 +1168,10 @@ export default function App() {
     });
 
     if (first.durationMs === 0) {
-      void commitUniverse(target, 'cue');
-      setMessage(`${label} is live.`);
+      void commitUniverse(target, 'cue').finally(() => {
+        setMessage(`${label} is live.`);
+        onComplete?.();
+      });
       return;
     }
 
@@ -1188,15 +1190,18 @@ export default function App() {
       });
       if (now - fadeLastFrameRef.current >= FRAME_MS || rendered.done) {
         fadeLastFrameRef.current = now;
+        if (rendered.done) {
+          void commitUniverse(rendered.frame, 'cue').finally(() => {
+            fadeAnimationRef.current = null;
+            setIsFading(false);
+            setMessage(`${label} is live.`);
+            onComplete?.();
+          });
+          return;
+        }
         void commitUniverse(rendered.frame, 'cue');
       }
-      if (!rendered.done) {
-        fadeAnimationRef.current = requestAnimationFrame(tick);
-      } else {
-        fadeAnimationRef.current = null;
-        setIsFading(false);
-        setMessage(`${label} is live.`);
-      }
+      fadeAnimationRef.current = requestAnimationFrame(tick);
     };
     fadeAnimationRef.current = requestAnimationFrame(tick);
   }
@@ -1335,7 +1340,9 @@ export default function App() {
     const number = showFile.cues.length + 1;
     const name = cueName.trim() || `Cue ${number}`;
     const output = [...universeRef.current];
-    const previous = showFile.cues.length
+    const previousCue = showFile.cues[showFile.cues.length - 1];
+    const canTrack = !previousCue || Boolean(previousCue.tracking || previousCue.changes?.length || previousCue.universe?.length === 512);
+    const previous = showFile.cues.length && canTrack
       ? resolveCueFrame(showFile.cues, showFile.cues.length - 1)
       : makeUniverse();
     const cue: ShowCue = {
@@ -1353,13 +1360,15 @@ export default function App() {
       trackName: '',
       transition: 's-curve',
       timing: {},
-      tracking: true,
-      changes: cueChanges(previous, output),
+      tracking: canTrack,
+      ...(canTrack ? { changes: cueChanges(previous, output) } : { universe: output }),
       values: { ...primaryValues }
     };
     setShowFile((current) => ({ ...current, cues: [...current.cues, cue] }));
     setCueName('');
-    setMessage(`${name} captured as a tracked cue with ${cue.changes?.length ?? 0} changed channels.`);
+    setMessage(canTrack
+      ? `${name} captured as a tracked cue with ${cue.changes?.length ?? 0} changed channels.`
+      : `${name} captured as a blocked cue because the previous legacy cue has no full state.`);
   }
 
   function runCue(cue: ShowCue) {
@@ -1372,10 +1381,10 @@ export default function App() {
         ? resolveCueFrame(showFile.cues, cueIndex)
         : applyUniverseUpdates(universeRef.current, lookUpdates(cue.values, selectedFixtures(patch)));
       void dispatchControl({ type: 'cue.go', cueId: cue.id }, 'cue');
-      fadeCueToUniverse(cue, target);
-      if (cue.linkedEffectId && EFFECT_PRESETS.some((effect) => effect.id === cue.linkedEffectId)) {
-        startEffect(cue.linkedEffectId as EffectId);
-      }
+      const launchLinkedEffect = cue.linkedEffectId && EFFECT_PRESETS.some((effect) => effect.id === cue.linkedEffectId)
+        ? () => startEffect(cue.linkedEffectId as EffectId)
+        : undefined;
+      fadeCueToUniverse(cue, target, launchLinkedEffect);
       if ((cue.followMs ?? 0) > 0) {
         const following = showFile.cues[cueIndex + 1];
         if (following) cueFollowTimerRef.current = window.setTimeout(() => runCue(following), cue.followMs);
@@ -3528,11 +3537,11 @@ export default function App() {
         ] as Array<[ShowMode,string]>).map(([id,label]) => <button key={id} className={showMode === id ? 'active' : ''} onClick={() => setShowMode(id)}>{label}</button>)}</nav>
 
         {showMode === 'cues' && <div className="show-cue-layout">
-          <aside className="cue-list-console"><header><span>CUE LIST</span><button onClick={captureCue}>＋ Capture</button></header>{showFile.cues.length ? showFile.cues.map((cue,index) => <article className={activeCueId === cue.id ? 'active' : ''} key={cue.id}><button className="cue-line" onClick={() => runCue(cue)}><b>{String(cue.number).padStart(2,'0')}</b><i style={{background:lookSwatch(cue.values)}}/><span><strong>{cue.name}</strong><small>{cue.fadeMs ? `${cue.fadeMs/1000}s fade` : 'Snap'} · {cue.tracking === false ? 'BLOCK' : 'TRACK'} · {(cue.transition ?? 's-curve').toUpperCase()}{cue.followMs ? ` · follow ${cue.followMs/1000}s` : ''}</small></span></button><div><button disabled={index===0} onClick={() => setShowFile((current)=>({...current,cues:moveCue(current.cues,cue.id,-1)}))}>↑</button><button disabled={index===showFile.cues.length-1} onClick={() => setShowFile((current)=>({...current,cues:moveCue(current.cues,cue.id,1)}))}>↓</button><button onClick={() => deleteCue(cue.id)}>×</button></div></article>) : <div className="empty-cues"><strong>No cues yet</strong><span>Build a look in CREATE, then capture it here.</span><button onClick={() => setWorkspace('create')}>Open CREATE</button></div>}</aside>
+          <aside className="cue-list-console"><header><span>CUE LIST</span><button onClick={captureCue}>＋ Capture</button></header>{showFile.cues.length ? showFile.cues.map((cue,index) => <article className={activeCueId === cue.id ? 'active' : ''} key={cue.id}><button className="cue-line" onClick={() => runCue(cue)}><b>{String(cue.number).padStart(2,'0')}</b><i style={{background:lookSwatch(cue.values)}}/><span><strong>{cue.name}</strong><small>{cue.fadeMs ? `${cue.fadeMs/1000}s fade` : 'Snap'} · {cue.tracking ? 'TRACK' : 'BLOCK'} · {(cue.transition ?? 's-curve').toUpperCase()}{cue.followMs ? ` · follow ${cue.followMs/1000}s` : ''}</small></span></button><div><button disabled={index===0} onClick={() => setShowFile((current)=>({...current,cues:moveCue(current.cues,cue.id,-1)}))}>↑</button><button disabled={index===showFile.cues.length-1} onClick={() => setShowFile((current)=>({...current,cues:moveCue(current.cues,cue.id,1)}))}>↓</button><button onClick={() => deleteCue(cue.id)}>×</button></div></article>) : <div className="empty-cues"><strong>No cues yet</strong><span>Build a look in CREATE, then capture it here.</span><button onClick={() => setWorkspace('create')}>Open CREATE</button></div>}</aside>
 
           <main className="cue-preview-console"><header><span>{directStatus.clients > 0 ? 'LUMAVIZ LIVE PREVIEW' : 'STAGE / CUE PREVIEW'}</span><b>{activeCue?.name ?? 'Live output'}</b></header><div className={`show-viz-preview ${liveLumaVizPreview ? 'linked external-feed' : directStatus.clients > 0 ? 'linked' : ''}`}>{liveLumaVizPreview ? <img src={liveLumaVizPreview.dataUrl} alt={`LumaViz ${liveLumaVizPreview.view ?? 'live'} preview`} /> : renderStagePreview()}</div><div className="cue-preview-meta"><span>CURRENT<strong>{activeCue ? `${activeCue.number}. ${activeCue.name}` : 'Ready'}</strong></span><span>NEXT<strong>{nextCue ? `${nextCue.number}. ${nextCue.name}` : 'End of show'}</strong></span></div></main>
 
-          <aside className="cue-inspector-console"><header><span>CUE INSPECTOR</span><strong>{activeCue?.name ?? 'New cue'}</strong></header>{activeCue ? <><label><span>Cue Name</span><input value={activeCue.name} onChange={(event)=>updateCueProperties(activeCue.id,{name:event.target.value})}/></label><label><span>Cue Color</span><input type="color" value={activeCue.color ?? '#55e98d'} onChange={(event)=>updateCueProperties(activeCue.id,{color:event.target.value})}/></label><label><span>Description</span><textarea value={activeCue.description ?? ''} onChange={(event)=>updateCueProperties(activeCue.id,{description:event.target.value})}/></label><div className="inspector-pair"><label><span>Tracking</span><select value={activeCue.tracking === false ? 'block' : 'track'} onChange={(event)=>setCueTracking(activeCue.id,event.target.value==='track')}><option value="track">Track · inherit unchanged</option><option value="block">Block · full snapshot</option></select></label><label><span>Transition</span><select value={activeCue.transition ?? 's-curve'} onChange={(event)=>updateCueProperties(activeCue.id,{transition:event.target.value as CueTransition})}><option value="s-curve">S-Curve</option><option value="linear">Linear</option><option value="ease-in">Ease In</option><option value="ease-out">Ease Out</option></select></label></div><div className="inspector-pair"><label><span>Fade In ms</span><input type="number" min="0" value={activeCue.fadeMs} onChange={(event)=>updateCueProperties(activeCue.id,{fadeMs:Number(event.target.value)})}/></label><label><span>Fade Out ms</span><input type="number" min="0" value={activeCue.fadeOutMs ?? activeCue.fadeMs} onChange={(event)=>updateCueProperties(activeCue.id,{fadeOutMs:Number(event.target.value)})}/></label></div><div className="inspector-pair"><label><span>Delay ms</span><input type="number" min="0" value={activeCue.delayMs ?? 0} onChange={(event)=>updateCueProperties(activeCue.id,{delayMs:Number(event.target.value)})}/></label><label><span>Follow ms</span><input type="number" min="0" value={activeCue.followMs ?? 0} onChange={(event)=>updateCueProperties(activeCue.id,{followMs:Number(event.target.value)})}/></label></div><section className="cue-family-timing"><header><span>ATTRIBUTE TIMING</span><small>Overrides cue fade by parameter family</small></header>{(['intensity','color','position','beam'] as CueTimingFamily[]).map((family)=><div className="cue-family-row" key={family}><strong>{family.toUpperCase()}</strong><label><span>Fade ms</span><input type="number" min="0" max="60000" value={activeCue.timing?.[family]?.fadeMs ?? activeCue.fadeMs} onChange={(event)=>updateCueTiming(activeCue.id,family,'fadeMs',Number(event.target.value))}/></label><label><span>Delay ms</span><input type="number" min="0" max="60000" value={activeCue.timing?.[family]?.delayMs ?? 0} onChange={(event)=>updateCueTiming(activeCue.id,family,'delayMs',Number(event.target.value))}/></label><button disabled={!activeCue.timing?.[family]} onClick={()=>clearCueTimingFamily(activeCue.id,family)}>USE CUE</button></div>)}</section><label><span>Linked Effect</span><select value={activeCue.linkedEffectId ?? ''} onChange={(event)=>updateCueProperties(activeCue.id,{linkedEffectId:event.target.value})}><option value="">None</option>{EFFECT_PRESETS.map((effect)=><option key={effect.id} value={effect.id}>{effect.name}</option>)}</select></label><label><span>Track / Audio Note</span><input value={activeCue.trackName ?? ''} onChange={(event)=>updateCueProperties(activeCue.id,{trackName:event.target.value})}/></label><button className="console-primary" onClick={()=>updateCue(activeCue.id)}>Update Look From Output</button></> : <><label><span>New Cue Name</span><input value={cueName} placeholder={`Cue ${showFile.cues.length+1}`} onChange={(event)=>setCueName(event.target.value)}/></label><label><span>Fade In</span><select value={cueFadeMs} onChange={(event)=>setCueFadeMs(Number(event.target.value))}>{FADE_TIMES.map((time)=><option key={time} value={time}>{time===0?'Snap':`${time/1000}s`}</option>)}</select></label><button className="console-primary" onClick={captureCue}>Capture Current Look</button></>}<label><span>Show Notes</span><textarea value={showFile.notes ?? ''} placeholder="Set list, transitions, safety notes…" onChange={(event)=>setShowFile((current)=>({...current,notes:event.target.value}))}/></label></aside>
+          <aside className="cue-inspector-console"><header><span>CUE INSPECTOR</span><strong>{activeCue?.name ?? 'New cue'}</strong></header>{activeCue ? <><label><span>Cue Name</span><input value={activeCue.name} onChange={(event)=>updateCueProperties(activeCue.id,{name:event.target.value})}/></label><label><span>Cue Color</span><input type="color" value={activeCue.color ?? '#55e98d'} onChange={(event)=>updateCueProperties(activeCue.id,{color:event.target.value})}/></label><label><span>Description</span><textarea value={activeCue.description ?? ''} onChange={(event)=>updateCueProperties(activeCue.id,{description:event.target.value})}/></label><div className="inspector-pair"><label><span>Tracking</span><select value={activeCue.tracking ? 'track' : 'block'} onChange={(event)=>setCueTracking(activeCue.id,event.target.value==='track')}><option value="track">Track · inherit unchanged</option><option value="block">Block · full snapshot</option></select></label><label><span>Transition</span><select value={activeCue.transition ?? 's-curve'} onChange={(event)=>updateCueProperties(activeCue.id,{transition:event.target.value as CueTransition})}><option value="s-curve">S-Curve</option><option value="linear">Linear</option><option value="ease-in">Ease In</option><option value="ease-out">Ease Out</option></select></label></div><div className="inspector-pair"><label><span>Fade In ms</span><input type="number" min="0" value={activeCue.fadeMs} onChange={(event)=>updateCueProperties(activeCue.id,{fadeMs:Number(event.target.value)})}/></label><label><span>Fade Out ms</span><input type="number" min="0" value={activeCue.fadeOutMs ?? activeCue.fadeMs} onChange={(event)=>updateCueProperties(activeCue.id,{fadeOutMs:Number(event.target.value)})}/></label></div><div className="inspector-pair"><label><span>Delay ms</span><input type="number" min="0" value={activeCue.delayMs ?? 0} onChange={(event)=>updateCueProperties(activeCue.id,{delayMs:Number(event.target.value)})}/></label><label><span>Follow ms</span><input type="number" min="0" value={activeCue.followMs ?? 0} onChange={(event)=>updateCueProperties(activeCue.id,{followMs:Number(event.target.value)})}/></label></div><section className="cue-family-timing"><header><span>ATTRIBUTE TIMING</span><small>Overrides cue fade by parameter family</small></header>{(['intensity','color','position','beam'] as CueTimingFamily[]).map((family)=><div className="cue-family-row" key={family}><strong>{family.toUpperCase()}</strong><label><span>Fade ms</span><input type="number" min="0" max="60000" value={activeCue.timing?.[family]?.fadeMs ?? activeCue.fadeMs} onChange={(event)=>updateCueTiming(activeCue.id,family,'fadeMs',Number(event.target.value))}/></label><label><span>Delay ms</span><input type="number" min="0" max="60000" value={activeCue.timing?.[family]?.delayMs ?? 0} onChange={(event)=>updateCueTiming(activeCue.id,family,'delayMs',Number(event.target.value))}/></label><button disabled={!activeCue.timing?.[family]} onClick={()=>clearCueTimingFamily(activeCue.id,family)}>USE CUE</button></div>)}</section><label><span>Linked Effect</span><select value={activeCue.linkedEffectId ?? ''} onChange={(event)=>updateCueProperties(activeCue.id,{linkedEffectId:event.target.value})}><option value="">None</option>{EFFECT_PRESETS.map((effect)=><option key={effect.id} value={effect.id}>{effect.name}</option>)}</select></label><label><span>Track / Audio Note</span><input value={activeCue.trackName ?? ''} onChange={(event)=>updateCueProperties(activeCue.id,{trackName:event.target.value})}/></label><button className="console-primary" onClick={()=>updateCue(activeCue.id)}>Update Look From Output</button></> : <><label><span>New Cue Name</span><input value={cueName} placeholder={`Cue ${showFile.cues.length+1}`} onChange={(event)=>setCueName(event.target.value)}/></label><label><span>Fade In</span><select value={cueFadeMs} onChange={(event)=>setCueFadeMs(Number(event.target.value))}>{FADE_TIMES.map((time)=><option key={time} value={time}>{time===0?'Snap':`${time/1000}s`}</option>)}</select></label><button className="console-primary" onClick={captureCue}>Capture Current Look</button></>}<label><span>Show Notes</span><textarea value={showFile.notes ?? ''} placeholder="Set list, transitions, safety notes…" onChange={(event)=>setShowFile((current)=>({...current,notes:event.target.value}))}/></label></aside>
 
           <div className="cue-transport-console"><button onClick={goPreviousCue} disabled={!showFile.cues.length}>BACK</button><span><small>CURRENT</small><strong>{activeCue?.name ?? 'Ready'}</strong></span><button className="giant-go" onClick={goNextCue} disabled={!nextCue}>GO<small>{nextCue?.name ?? 'End'}</small></button><span><small>NEXT</small><strong>{nextCue?.name ?? 'End of show'}</strong></span><button onClick={goNextCue} disabled={!nextCue}>NEXT</button></div>
         </div>}
