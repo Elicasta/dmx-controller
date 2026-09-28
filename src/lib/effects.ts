@@ -1,7 +1,10 @@
 import { clampDmx, type DmxUpdate } from './dmx';
+import { phaserWaveValue, renderPhaserProgram, type PhaserDirection, type PhaserLane, type PhaserMode, type PhaserStep } from '../core/phaser-engine';
+import type { FixtureOrderMode } from '../core/fixture-order';
 import {
   fixtureColorUpdates,
   fixtureParameterUpdate,
+  type FixtureParameter,
   type PatchedFixture
 } from './fixtures';
 
@@ -22,6 +25,18 @@ export type EffectId =
 
 export type EffectWaveform = 'sine' | 'triangle' | 'square' | 'saw' | 'reverse-saw' | 'step';
 export type EffectParameter = 'dimmer' | 'pan' | 'tilt' | 'uv';
+export type CustomEffectParameter = EffectParameter | 'position';
+export type MotionShape = 'circle' | 'figure-eight' | 'diagonal' | 'pan-sweep' | 'tilt-sweep';
+export type CustomEffectLane = {
+  parameter: FixtureParameter;
+  waveform: EffectWaveform;
+  depth: number;
+  offset: number;
+  phaseOffset?: number;
+  rateMultiplier?: number;
+  mode?: PhaserMode;
+  steps?: PhaserStep[];
+};
 
 export type EffectPreset = {
   id: EffectId;
@@ -34,12 +49,23 @@ export type EffectPreset = {
 export type CustomEffect = {
   id: string;
   name: string;
-  parameter: EffectParameter;
+  parameter: CustomEffectParameter;
   waveform: EffectWaveform;
+  motionShape?: MotionShape;
   bpm: number;
   depth: number;
   phaseSpread: number;
   offset: number;
+  orderMode?: FixtureOrderMode;
+  blocks?: number;
+  groups?: number;
+  wings?: number;
+  shift?: number;
+  direction?: PhaserDirection;
+  cycleBeats?: number;
+  mode?: PhaserMode;
+  steps?: PhaserStep[];
+  lanes?: CustomEffectLane[];
 };
 
 export const EFFECT_SHAPES: Record<EffectId, { waveform: EffectWaveform; parameter: EffectParameter; phaseSpread: number }> = {
@@ -59,63 +85,83 @@ export const EFFECT_SHAPES: Record<EffectId, { waveform: EffectWaveform; paramet
 };
 
 export function effectWaveValue(waveform: EffectWaveform, phase: number): number {
-  const p = ((phase % 1) + 1) % 1;
-  if (waveform === 'sine') return (Math.sin(p * Math.PI * 2 - Math.PI / 2) + 1) / 2;
-  if (waveform === 'triangle') return 1 - Math.abs(p * 2 - 1);
-  if (waveform === 'square') return p < .5 ? 1 : 0;
-  if (waveform === 'saw') return p;
-  if (waveform === 'reverse-saw') return 1 - p;
-  return p < .18 ? 1 : 0;
+  return phaserWaveValue(waveform, phase);
 }
 
-export function renderCustomEffect(effect: CustomEffect, fixtures: readonly PatchedFixture[], elapsedMs: number): DmxUpdate[] {
-  const active = fixtures.filter((fixture) => fixture.selected);
-  if (!active.length) return [];
-  const beatMs = 60000 / Math.max(20, effect.bpm);
-  const basePhase = (elapsedMs % beatMs) / beatMs;
-  return active.flatMap((fixture, index) => {
-    const spread = active.length > 1 ? (index / (active.length - 1)) * (effect.phaseSpread / 100) : 0;
-    const wave = effectWaveValue(effect.waveform, basePhase + spread);
-    const normalized = Math.max(0, Math.min(1, effect.offset / 100 + wave * effect.depth / 100));
-    const update = fixtureParameterUpdate(fixture, effect.parameter, normalized * 255);
-    return update ? [update] : [];
-  });
-}
+export function motionShapeLanes(
+  shape: MotionShape,
+  effect: Pick<CustomEffect, 'waveform' | 'depth' | 'offset' | 'mode' | 'steps'>
+): PhaserLane[] {
+  const common = {
+    waveform: effect.waveform,
+    depth: effect.depth,
+    offset: effect.offset,
+    mode: effect.mode ?? 'relative',
+    steps: effect.steps
+  } as const;
 
-function globalizeFixtureAddress(fixture: PatchedFixture): PatchedFixture {
-  const universe = fixture.universe ?? 1;
-  return { ...fixture, address: fixture.address + (universe - 1) * 512 };
-}
-
-function splitGlobalUpdates(updates: readonly DmxUpdate[]): Map<number, DmxUpdate[]> {
-  const result = new Map<number, DmxUpdate[]>();
-  for (const [globalChannel, value] of updates) {
-    if (!Number.isInteger(globalChannel) || globalChannel < 1) continue;
-    const universe = Math.floor((globalChannel - 1) / 512) + 1;
-    const channel = ((globalChannel - 1) % 512) + 1;
-    const list = result.get(universe) ?? [];
-    list.push([channel, value]);
-    result.set(universe, list);
+  if (shape === 'pan-sweep') return [{ ...common, parameter: 'pan' }];
+  if (shape === 'tilt-sweep') return [{ ...common, parameter: 'tilt' }];
+  if (shape === 'diagonal') {
+    return [
+      { ...common, parameter: 'pan' },
+      { ...common, parameter: 'tilt' }
+    ];
   }
-  return result;
+  if (shape === 'figure-eight') {
+    return [
+      { ...common, parameter: 'pan' },
+      { ...common, parameter: 'tilt', phaseOffset: .25, rateMultiplier: 2 }
+    ];
+  }
+  return [
+    { ...common, parameter: 'pan' },
+    { ...common, parameter: 'tilt', phaseOffset: .25 }
+  ];
 }
 
-export function renderEffectByUniverse(
-  effect: EffectId,
-  fixtures: readonly PatchedFixture[],
-  elapsedMs: number,
-  bpm: number,
-  depth: number
-): Map<number, DmxUpdate[]> {
-  return splitGlobalUpdates(renderEffect(effect, fixtures.map(globalizeFixtureAddress), elapsedMs, bpm, depth));
-}
-
-export function renderCustomEffectByUniverse(
+export function renderCustomEffect(
   effect: CustomEffect,
   fixtures: readonly PatchedFixture[],
-  elapsedMs: number
-): Map<number, DmxUpdate[]> {
-  return splitGlobalUpdates(renderCustomEffect(effect, fixtures.map(globalizeFixtureAddress), elapsedMs));
+  elapsedMs: number,
+  baseUniverse?: readonly number[]
+): DmxUpdate[] {
+  const timing = {
+    bpm: effect.bpm,
+    phaseSpread: effect.phaseSpread,
+    orderMode: effect.orderMode ?? 'forward',
+    order: {
+      mode: effect.orderMode ?? 'forward',
+      blocks: effect.blocks ?? 1,
+      groups: effect.groups ?? 1,
+      wings: effect.wings ?? 1,
+      shift: effect.shift ?? 0
+    },
+    direction: effect.direction ?? 'forward',
+    cycleBeats: effect.cycleBeats ?? 1
+  } as const;
+
+  const primaryLanes: PhaserLane[] = effect.parameter === 'position'
+    ? motionShapeLanes(effect.motionShape ?? 'circle', {
+        waveform: effect.waveform,
+        depth: effect.depth,
+        offset: effect.offset,
+        mode: effect.mode ?? 'relative',
+        steps: effect.steps
+      })
+    : [{
+        parameter: effect.parameter,
+        waveform: effect.waveform,
+        depth: effect.depth,
+        offset: effect.offset,
+        mode: effect.mode ?? 'absolute',
+        steps: effect.steps
+      }];
+
+  return renderPhaserProgram({
+    ...timing,
+    lanes: [...primaryLanes, ...(effect.lanes ?? [])]
+  }, fixtures, elapsedMs, baseUniverse);
 }
 
 export const EFFECT_PRESETS: ReadonlyArray<EffectPreset> = [
@@ -219,12 +265,15 @@ export function renderEffect(
   }
 
   if (effect === 'sweep') {
-    return active.flatMap((fixture, index) => {
-      const offset = index / active.length;
-      const pan = fixtureParameterUpdate(fixture, 'pan', ((Math.sin((phase + offset) * Math.PI * 2) + 1) / 2) * 255);
-      const tilt = fixtureParameterUpdate(fixture, 'tilt', ((Math.cos((phase + offset * .5) * Math.PI * 2) + 1) / 2) * 255);
-      return [pan, tilt].filter((update): update is DmxUpdate => Boolean(update));
-    });
+    return renderPhaserProgram({
+      bpm,
+      phaseSpread: 100,
+      cycleBeats: 1,
+      lanes: [
+        { parameter: 'pan', waveform: 'sine', depth: 100, offset: 0, mode: 'absolute' },
+        { parameter: 'tilt', waveform: 'sine', depth: 100, offset: 0, phaseOffset: .25, mode: 'absolute' }
+      ]
+    }, active, elapsedMs);
   }
 
   if (effect === 'finale') {
