@@ -1225,10 +1225,7 @@ export default function App() {
     setMessage(`Grand master at ${Math.round(limited)}%. Fixture values remain preserved underneath.`);
   }
 
-  function startEffect(effect: EffectId, requestedFixtureIds?: readonly string[]) {
-    stopFade();
-    stopEffect(false, false);
-    setAudioArmed(false);
+  function startEffect(effect: EffectId, requestedFixtureIds?: readonly string[]): boolean {
     const requested = requestedFixtureIds?.length
       ? [...requestedFixtureIds]
       : selectedFixtures(patchRef.current).map((fixture) => fixture.id);
@@ -1237,8 +1234,11 @@ export default function App() {
       .filter((fixture): fixture is PatchedFixture => Boolean(fixture));
     if (!effectSupportedByFixtures(effect, targets)) {
       setMessage(targets.length ? 'That effect is not supported by the selected fixture capabilities.' : 'Select a fixture or group before starting an effect.');
-      return;
+      return false;
     }
+    stopFade();
+    stopEffect(false, false);
+    setAudioArmed(false);
     const preset = EFFECT_PRESETS.find((item) => item.id === effect);
     effectTargetIdsRef.current = targets.map((fixture) => fixture.id);
     effectBaseUniverseRef.current = [...universeRef.current];
@@ -1281,6 +1281,7 @@ export default function App() {
     };
     effectAnimationRef.current = requestAnimationFrame(tick);
     setMessage(`${preset?.name ?? effect} running on selected lights.`);
+    return true;
   }
 
   function toggleEffect(effect: EffectId, targetIds?: readonly string[]) {
@@ -1296,7 +1297,7 @@ export default function App() {
     const previousEffect = activeEffectRef.current;
     const previousCustomEffectId = activeCustomEffectIdRef.current;
     const previousTargetIds = [...effectTargetIdsRef.current];
-    startEffect(effect, targetIds);
+    if (!startEffect(effect, targetIds)) return;
     momentaryEffectRef.current = { effect, previousEffect, previousCustomEffectId, previousTargetIds };
     const preset = EFFECT_PRESETS.find((item) => item.id === effect);
     setMessage(`${preset?.name ?? effect} held — release to restore the previous playback layer.`);
@@ -2879,9 +2880,6 @@ export default function App() {
       stopEffect();
       return;
     }
-    stopFade();
-    stopEffect(false, false);
-    setAudioArmed(false);
     const effectFixtures = targetIds?.length
       ? targetIds
           .map((id) => patchRef.current.find((fixture) => fixture.id === id))
@@ -2892,6 +2890,9 @@ export default function App() {
       setMessage('Select fixtures or a group before running the custom FX.');
       return;
     }
+    stopFade();
+    stopEffect(false, false);
+    setAudioArmed(false);
     effectTargetIdsRef.current = effectFixtures.filter((fixture) => fixture.selected).map((fixture) => fixture.id);
     effectBaseUniverseRef.current = [...universeRef.current];
     const startedAt = performance.now();
