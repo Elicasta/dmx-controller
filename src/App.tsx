@@ -711,7 +711,7 @@ export default function App() {
   const remoteEffectLeaseRef = useRef<Map<string, number>>(new Map());
   if (!remoteRelayRef.current) remoteRelayRef.current = new RemoteRelay();
   const [message, setMessage] = useState('Control station ready. Connect DMX when you want physical output.');
-  const [appVersion, setAppVersion] = useState('0.2.0');
+  const [appVersion, setAppVersion] = useState('0.2.1');
   const [updateStatus, setUpdateStatus] = useState<UpdateStatus>('idle');
   const [updateInfo, setUpdateInfo] = useState<UpdateMetadata | null>(null);
   const [updateError, setUpdateError] = useState('');
@@ -3619,7 +3619,7 @@ export default function App() {
   return (
     <main className={`console-app workspace-${workspace} ${dmxStatus.blackout ? 'blackout-is-active' : ''}`}>
       <header className="console-header">
-        <div className="console-brand"><span className="brand-mark">◆</span><div className="brand-product"><b>LUMARIG</b><small>SHOW</small></div><div className="brand-show"><input aria-label="Current show name" value={showFile.name} onChange={(event) => setShowFile((current) => ({ ...current, name: event.target.value }))} /><small>LIVE SHOWFILE · R{sharedShowRevisionRef.current}</small></div></div>
+        <div className="console-brand"><span className="brand-mark">◆</span><div className="brand-product"><b>LUMARIG</b><small>SHOW</small></div><div className="brand-show"><input aria-label="Current show name" value={showFile.name} onChange={(event) => setShowFile((current) => ({ ...current, name: event.target.value }))} /><small>LIVE SHOWFILE · R{sharedShowRevisionRef.current} · v{appVersion}</small></div></div>
         <nav className="console-workspace-tabs" aria-label="Workspace">{(['build', 'create', 'show', 'live'] as Workspace[]).map((item) => <button key={item} className={workspace === item ? 'active' : ''} onClick={() => setWorkspace(item)}>{item.toUpperCase()}</button>)}</nav>
         <div className="console-header-status">
           <button className="tempo-pill" onClick={tapTempo}><strong>{tempoSource === 'midi' && midiBpm ? midiBpm : effectBpm} BPM</strong><small>{tempoSource === 'midi' ? 'MIDI CLOCK' : 'TAP'}</small></button>
