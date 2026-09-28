@@ -3,6 +3,7 @@ import type { DmxUpdate } from '../lib/dmx';
 import type { FixtureParameter } from '../lib/fixtures';
 import type { Vec3 } from './geometry';
 import type { TargetArrangement } from './targets';
+import type { FixtureOrderMode } from './fixture-order';
 
 export type ControlSource =
   | 'ui'
@@ -25,7 +26,7 @@ export type ControlCommand =
   | { type: 'fixture.color'; fixtureIds: string[]; color: { red: number; green: number; blue: number } }
   | { type: 'fixture.flash.set'; fixtureIds: string[]; active: boolean }
   | { type: 'fixture.position'; positions: Array<{ fixtureId: string; panNormalized: number; tiltNormalized: number }> }
-  | { type: 'fixture.target'; fixtureIds: string[]; target: Vec3; arrangement?: TargetArrangement; spreadMeters?: number }
+  | { type: 'fixture.target'; fixtureIds: string[]; target: Vec3; arrangement?: TargetArrangement; spreadMeters?: number; orderMode?: FixtureOrderMode }
   | { type: 'group.color'; groupName: string; color: { red: number; green: number; blue: number } }
   | { type: 'group.master.set'; groupName: string; value: number }
   | { type: 'effect.start'; effectId: EffectId }
