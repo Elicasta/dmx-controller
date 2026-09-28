@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { applyUniverseUpdates, makeUniverse } from '../lib/dmx';
-import { migratePatchedFixture, type PatchedFixture } from '../lib/fixtures';
+import { DEFAULT_PATCH, migratePatchedFixture, type PatchedFixture } from '../lib/fixtures';
 import { phaserCycleMs, phaserValueAt, renderPhaserEffect, renderPhaserProgram, type PhaserEffect } from './phaser-engine';
 
 function mover(id: string, address: number): PatchedFixture {
@@ -66,6 +66,18 @@ describe('phaser engine', () => {
     }, [fixture], 125, makeUniverse());
     expect(updates.map(([channel]) => channel)).toEqual([1, 2, 3, 4]);
     expect(updates[0][1]).not.toBe(updates[2][1]);
+  });
+
+  it('does not let unsupported fixtures consume movement phase slots', () => {
+    const first = mover('first-mover', 20);
+    const second = mover('second-mover', 40);
+    const par = { ...DEFAULT_PATCH[0], id: 'par-between', address: 100, selected: true };
+    const updates = renderPhaserEffect({
+      ...base,
+      waveform: 'saw',
+      phaseSpread: 50
+    }, [first, par, second], 0);
+    expect(updates.filter(([channel]) => [20, 40].includes(channel)).map(([, value]) => value)).toEqual([0, 128]);
   });
 
   it('does not rewrite Tilt when a phaser only owns Pan', () => {
