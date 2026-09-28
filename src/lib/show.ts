@@ -4,6 +4,7 @@ import type { FixtureLookValues } from './looks';
 import type { Vec3 } from '../core/geometry';
 import type { TargetArrangement } from '../core/targets';
 import type { FixtureOrderMode } from '../core/fixture-order';
+import { normalizeSelectionGrid, type FixtureSelectionGrid } from '../core/selection-grid';
 
 export type SpatialPositionPalette = {
   id: string;
@@ -39,6 +40,7 @@ export type FixtureGroup = {
   fxEnabled: boolean;
   notes: string;
   fixtureOrder: string[];
+  selectionGrid?: FixtureSelectionGrid;
 };
 
 export type CueTimingFamily = 'intensity' | 'color' | 'position' | 'beam';
@@ -255,7 +257,19 @@ export function isFixtureGroup(value: unknown): value is FixtureGroup {
     && typeof group.fxEnabled === 'boolean'
     && typeof group.notes === 'string'
     && Array.isArray(group.fixtureOrder)
-    && group.fixtureOrder.every((id) => typeof id === 'string');
+    && group.fixtureOrder.every((id) => typeof id === 'string')
+    && (group.selectionGrid === undefined || (
+      group.selectionGrid
+      && typeof group.selectionGrid === 'object'
+      && Number.isFinite(group.selectionGrid.rows)
+      && Number.isFinite(group.selectionGrid.columns)
+      && ['row', 'column', 'snake-row', 'snake-column'].includes(group.selectionGrid.traversal)
+      && Array.isArray(group.selectionGrid.cells)
+      && group.selectionGrid.cells.every((cell) => (
+        cell && typeof cell.fixtureId === 'string'
+        && Number.isFinite(cell.row) && Number.isFinite(cell.column)
+      ))
+    ));
 }
 
 function isVector(value: unknown): value is Vec3 {
@@ -374,7 +388,12 @@ export function sanitizeShow(show: ShowFile): ShowFile {
       masterDefault: Math.max(0, Math.min(100, Number.isFinite(group.masterDefault) ? group.masterDefault : 100)),
       fxEnabled: Boolean(group.fxEnabled),
       notes: group.notes.slice(0, 500),
-      fixtureOrder: [...new Set(group.fixtureOrder.filter((id) => typeof id === 'string').map((id) => id.slice(0, 100)))].slice(0, 256)
+      fixtureOrder: [...new Set(group.fixtureOrder.filter((id) => typeof id === 'string').map((id) => id.slice(0, 100)))].slice(0, 256),
+      ...(group.selectionGrid ? {
+        selectionGrid: normalizeSelectionGrid(group.selectionGrid, group.fixtureOrder).cells.length
+          ? normalizeSelectionGrid(group.selectionGrid, group.fixtureOrder)
+          : undefined
+      } : {})
     })),
     externalTrack: {
       songName: (show.externalTrack?.songName ?? '').trim().slice(0, 180),
