@@ -76,18 +76,29 @@ Cue timing can override fade, delay, and curve independently for:
 
 This allows color to snap while movement travels over a bar and intensity fades on its own timing.
 
-### playback-stack.ts
+### playback stack
 
-Provides a deterministic layer resolver for cue, FX, programmer, busk, bump, and master layers.
+The playback resolver is now connected to ShowRuntime.
 
-Supported merge modes:
+The programmer/cue frame remains the base state. FX are sparse playback layers over that state, so running a phaser no longer rewrites the cue underneath it. Releasing the FX reveals the underlying look automatically.
+
+Supported layer merge modes:
 
 - LTP
 - HTP
 - Add
 - Multiply
 
-Intensity channels can use HTP while color, position, beam, and other attributes remain LTP.
+Current runtime order is:
+
+1. Programmer / tracked cue base
+2. Playback layers such as FX
+3. Fixture flash override
+4. Group master
+5. Grand master
+6. Hardware output
+
+Momentary hits use a higher-priority layer and can temporarily replace an existing factory or custom effect without destroying it.
 
 ## Spatial positions
 
@@ -134,7 +145,7 @@ The stage AIM controls expose:
 1. Multi-attribute phasers so Pan + Tilt + Zoom can live in one effect.
 2. Step-based phasers with per-step width, transition, acceleration, and deceleration.
 3. Selection grids persisted on fixture groups.
-4. Playback stack integrated into the live runtime instead of effect loops writing directly into the base frame.
+4. Dedicated Busk and hit layers with explicit priority controls.
 5. N-shot effects and one-shot hits.
 6. Song-section recipes driven by LumaStudio/Ableton transport.
 7. Art-Net/sACN multi-universe output at a fixed render cadence.
