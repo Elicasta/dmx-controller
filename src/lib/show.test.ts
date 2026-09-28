@@ -190,4 +190,32 @@ describe('show helpers', () => {
       fxEnabled: true, notes: 'Main wash', fixtureOrder: ['wash-2', 'wash-1']
     });
   });
+
+  it('validates and sanitizes persisted two-dimensional fixture selection grids', () => {
+    const show = {
+      version: 4 as const,
+      name: 'Grid Show',
+      cues: [],
+      groups: [{
+        id: 'movers', name: 'Movers', labelColor: '#55e98d', masterDefault: 100,
+        fxEnabled: true, notes: '', fixtureOrder: ['a', 'b', 'c', 'd'],
+        selectionGrid: {
+          rows: 2, columns: 2, traversal: 'snake-row' as const,
+          cells: [
+            { fixtureId: 'a', row: 0, column: 0 },
+            { fixtureId: 'b', row: 0, column: 1 },
+            { fixtureId: 'c', row: 1, column: 0 },
+            { fixtureId: 'd', row: 1, column: 1 }
+          ]
+        }
+      }]
+    };
+    expect(isShowFile(show)).toBe(true);
+    expect(sanitizeShow(show).groups?.[0].selectionGrid).toMatchObject({
+      rows: 2,
+      columns: 2,
+      traversal: 'snake-row'
+    });
+  });
+
 });
