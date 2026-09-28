@@ -1,6 +1,7 @@
 import type { DmxUpdate } from '../lib/dmx';
 import {
   fixtureParameterUpdate,
+  parameterChannel,
   readFixtureParameter,
   type FixtureParameter,
   type PatchedFixture
@@ -155,7 +156,18 @@ export function renderPhaserProgram(
     }
 
     if (hasPan || hasTilt) {
-      updates.push(...fixtureMovementUpdates(fixture, pan, tilt));
+      const movementUpdates = fixtureMovementUpdates(fixture, pan, tilt);
+      const panChannels = new Set([
+        parameterChannel(fixture, 'pan'),
+        parameterChannel(fixture, 'panFine')
+      ].filter((channel): channel is number => channel !== null));
+      const tiltChannels = new Set([
+        parameterChannel(fixture, 'tilt'),
+        parameterChannel(fixture, 'tiltFine')
+      ].filter((channel): channel is number => channel !== null));
+      updates.push(...movementUpdates.filter(([channel]) => (
+        (hasPan && panChannels.has(channel)) || (hasTilt && tiltChannels.has(channel))
+      )));
     }
 
     return updates;
