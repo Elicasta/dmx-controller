@@ -1415,7 +1415,8 @@ export default function App() {
   }
 
   function updateCue(id: string) {
-    const output = [...outputUniverseRef.current];
+    // Update the tracked cue from the programmer/base state, never a transient FX layer.
+    const output = [...universeRef.current];
     const outputValues = primaryFixture ? fixtureValues(output, primaryFixture) : primaryValues;
     setShowFile((current) => {
       const cueIndex = current.cues.findIndex((cue) => cue.id === id);
