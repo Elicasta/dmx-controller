@@ -1234,7 +1234,7 @@ export default function App() {
     setMessage(`${label} added to BUSK · ${merged.length} overridden channel${merged.length === 1 ? '' : 's'}.`);
   }
 
-  function clearBusk() {
+  function clearBusk(announce = true) {
     buskLayerRef.current.clear();
     setBuskActive(false);
     setBuskChannelCount(0);
@@ -1243,7 +1243,7 @@ export default function App() {
       universe: 1,
       layerId: 'busk'
     }, 'surface').then(() => {
-      setMessage('BUSK released. The running cue and FX are visible again.');
+      if (announce) setMessage('BUSK released. The running cue and FX are visible again.');
     });
   }
 
@@ -1654,6 +1654,7 @@ export default function App() {
 
   function loadShowProject(snapshot: ShowProjectSnapshot) {
     stopFade();
+    clearBusk(false);
     if (activeEffectRef.current || activeCustomEffectIdRef.current) stopEffect(false);
     setShowFile(sanitizeShow(snapshot.show));
     setPatch(snapshot.patch.map((fixture, index) => migratePatchedFixture(fixture, index, snapshot.patch.length, snapshot.stageSettings.dimensions)));
@@ -1667,6 +1668,7 @@ export default function App() {
 
   function newShowProject() {
     stopFade();
+    clearBusk(false);
     if (activeEffectRef.current || activeCustomEffectIdRef.current) stopEffect(false);
     const usedNames = new Set(showLibrary.map((item) => item.name.toLowerCase()));
     let showNumber = 1;
