@@ -65,6 +65,36 @@ describe('desktop live view', () => {
     host.remove();
   });
 
+  it('routes BUSK look pads through the temporary layer instead of the base look path', () => {
+    (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+    const host = document.createElement('div');
+    document.body.append(host);
+    const onLook = vi.fn();
+    const onBuskLook = vi.fn();
+    const root = createRoot(host);
+    act(() => root.render(<DesktopLiveController
+      {...props}
+      showName="Busk Look Test"
+      looks={[{ id: 'look-blue', name: 'Blue Look', color: '#286cff' }]}
+      onLook={onLook}
+      onBuskLook={onBuskLook}
+    />));
+
+    const click = (label: string) => {
+      const button = [...host.querySelectorAll('button')].find((item) => item.textContent?.trim() === label);
+      expect(button, label).toBeTruthy();
+      act(() => button!.click());
+    };
+
+    click('BUSK');
+    click('Blue Look');
+    expect(onBuskLook).toHaveBeenCalledWith('look-blue');
+    expect(onLook).not.toHaveBeenCalled();
+
+    act(() => root.unmount());
+    host.remove();
+  });
+
   it('routes BUSK intensity through the temporary layer and releases it independently', () => {
     (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
     const host = document.createElement('div');
