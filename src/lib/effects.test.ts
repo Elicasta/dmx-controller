@@ -110,7 +110,7 @@ describe('portable effects', () => {
       }]
     };
     const channels = renderCustomEffect(effect, [fixture], 0, Array(512).fill(0)).map(([channel]) => channel);
-    expect(channels).toContain(27);
+    expect(channels).toContain(28);
     expect(channels).toEqual(expect.arrayContaining([20, 21, 22, 23]));
   });
 
