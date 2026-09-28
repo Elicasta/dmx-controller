@@ -53,16 +53,30 @@ Current controls:
 - Direction
 - Fixture order
 - Blocks / groups / wings / shift
+- Explicit step recipes
+- Independent semantic attribute lanes
 
 Relative mode offsets the fixture's current attribute value instead of replacing it. This allows one movement effect to be reused over many looks.
 
-The phaser core also supports multi-lane movement. The FX editor now exposes semantic Position effects that drive paired 16-bit Pan/Tilt as:
+Step recipes replace waveform sampling for a lane with a programmable sequence. Each step stores:
+
+- Value
+- Width / duration weight
+- Transition percentage
+- Acceleration
+- Deceleration
+
+This supports both hard chases and shaped transitions without creating separate effect engines.
+
+The phaser core also supports multi-lane programs. The primary Position effect drives paired 16-bit Pan/Tilt as:
 
 - Circle
 - Figure Eight
 - Diagonal
 - Pan Sweep
 - Tilt Sweep
+
+Additional lanes can independently drive semantic fixture attributes such as Dimmer, Strobe, Zoom, Iris, Focus, Gobo, Color Wheel, and Prism while sharing the same musical clock and fixture distribution.
 
 ### cue tracking + timing
 
@@ -137,9 +151,22 @@ The target engine supports:
 
 Ordered aiming is routed through ShowRuntime so stage programming and palette recall use the same behavior.
 
+## Selection grids
+
+Fixture groups can now persist a two-dimensional selection grid rather than only a flat list.
+
+Supported traversal modes:
+
+- Rows
+- Columns
+- Snake rows
+- Snake columns
+
+The grid preserves fixture placement as patch membership changes. Moving a fixture onto an occupied cell swaps the two cells. The selected traversal is resolved back into the group's fixture order, so the same grid directly controls phaser distribution, group selection order, and effects programmed against that group.
+
 ## UI changes
 
-The FX editor exposes saved group order all the way into phase assignment, plus:
+The FX editor exposes saved group/grid order all the way into phase assignment, plus:
 
 - Fixture order
 - Direction
@@ -152,6 +179,10 @@ The FX editor exposes saved group order all the way into phase assignment, plus:
 - 0–200% phase spread
 - Paired Position (Pan + Tilt)
 - Circle / Figure Eight / Diagonal / Pan Sweep / Tilt Sweep
+- Step recipe editor with value, width, transition, acceleration, and deceleration
+- Up to eight additional semantic attribute lanes per custom effect
+
+The group inspector exposes the persisted selection grid, column count, traversal mode, and fixture-cell swapping.
 
 The stage AIM controls expose:
 
@@ -163,14 +194,12 @@ The stage AIM controls expose:
 
 ## Next engine steps
 
-1. Step-based phasers with per-step width, transition, acceleration, and deceleration.
-2. Selection grids persisted on fixture groups.
-3. Busk per-family release controls and optional latch/momentary palette behavior.
-4. N-shot effects and one-shot hits.
-5. Song-section recipes driven by LumaStudio/Ableton transport.
-6. Art-Net/sACN multi-universe output at a fixed render cadence.
-7. Visualizer preview of phaser geometry before output.
-8. Add Zoom / Iris / Focus lanes to multi-attribute movement recipes.
+1. Busk per-family release controls and optional latch/momentary palette behavior.
+2. N-shot effects and one-shot hits.
+3. Song-section recipes driven by LumaStudio/Ableton transport.
+4. Art-Net/sACN multi-universe output at a fixed render cadence.
+5. Visualizer preview of phaser geometry and step recipes before output.
+6. Recipe/preset workflows for quickly combining movement, intensity, beam, and color lanes.
 
 ## Reference concepts
 
