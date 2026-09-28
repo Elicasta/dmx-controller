@@ -3797,7 +3797,7 @@ export default function App() {
           <header>
             <div><span>BUSK PROGRAMMER</span><strong>{buskActive ? `${buskChannelCount} temporary channels` : selectedFixtureTargets.length ? `${selectedFixtureTargets.length} selected` : 'Select a group or fixture'}</strong></div>
             <nav>{(['groups','intensity','position','color','beam','fx'] as LivePaletteFamily[]).map((family)=><button key={family} className={livePaletteFamily===family?'active':''} onClick={()=>setLivePaletteFamily(family)}>{family.toUpperCase()}</button>)}</nav>
-            <button className={`live-busk-release ${buskActive ? 'active' : ''}`} disabled={!buskActive} onClick={clearBusk}>RELEASE</button>
+            <button className={`live-busk-release ${buskActive ? 'active' : ''}`} disabled={!buskActive} onClick={()=>clearBusk()}>RELEASE</button>
             <button className="live-programmer-close" onClick={()=>setLiveProgrammerOpen(false)}>×</button>
           </header>
           <div className="live-palette-grid">
