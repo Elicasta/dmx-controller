@@ -64,4 +64,39 @@ describe('desktop live view', () => {
     act(() => root.unmount());
     host.remove();
   });
+
+  it('routes BUSK intensity through the temporary layer and releases it independently', () => {
+    (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+    const host = document.createElement('div');
+    document.body.append(host);
+    const onSelectedLevel = vi.fn();
+    const onBuskSelectedLevel = vi.fn();
+    const onBuskRelease = vi.fn();
+    const root = createRoot(host);
+    act(() => root.render(<DesktopLiveController
+      {...props}
+      showName="Busk Layer Test"
+      buskActive
+      onSelectedLevel={onSelectedLevel}
+      onBuskSelectedLevel={onBuskSelectedLevel}
+      onBuskRelease={onBuskRelease}
+    />));
+
+    const click = (label: string) => {
+      const button = [...host.querySelectorAll('button')].find((item) => item.textContent?.trim() === label);
+      expect(button, label).toBeTruthy();
+      act(() => button!.click());
+    };
+
+    click('BUSK');
+    click('FULL');
+    expect(onBuskSelectedLevel).toHaveBeenCalledWith(100);
+    expect(onSelectedLevel).not.toHaveBeenCalled();
+    click('RELEASE BUSK');
+    expect(onBuskRelease).toHaveBeenCalledTimes(1);
+
+    act(() => root.unmount());
+    host.remove();
+  });
+
 });
