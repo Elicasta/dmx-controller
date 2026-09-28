@@ -41,6 +41,13 @@ jobs:
       - name: Test native Art-Net sender
         run: cargo test --manifest-path src-tauri/Cargo.toml
 
+      - name: Verify current frontend before packaging
+        run: |
+          npm run build
+          grep -R -q "STEP RECIPE" dist || (echo "Missing current FX step editor marker" && exit 1)
+          grep -R -q "Fixture Overrides" dist || (echo "Missing current LIVE workspace marker" && exit 1)
+          grep -R -q "SHOW LIBRARY" dist || (echo "Missing current SHOW workspace marker" && exit 1)
+
       - name: Disable updater artifacts for smoke build
         run: |
           node <<'NODE'
@@ -50,6 +57,9 @@ jobs:
           config.bundle.createUpdaterArtifacts = false;
           fs.writeFileSync(path, JSON.stringify(config, null, 2) + '\n');
           NODE
+
+      - name: Force fresh native asset embedding
+        run: cargo clean --manifest-path src-tauri/Cargo.toml
 
       - name: Build universal app and DMG
         run: npm run tauri:build -- --target universal-apple-darwin --bundles app,dmg
