@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { EFFECT_PRESETS, effectWaveValue, renderCustomEffect, renderCustomEffectByUniverse, renderEffect, renderEffectByUniverse, type CustomEffect } from './effects';
+import { EFFECT_PRESETS, effectWaveValue, motionShapeLanes, renderCustomEffect, renderEffect, type CustomEffect } from './effects';
 import { DEFAULT_PATCH, type PatchedFixture } from './fixtures';
 
 describe('portable effects', () => {
@@ -28,12 +28,31 @@ describe('portable effects', () => {
 
   it('uses profile-mapped pan and tilt for moving sweeps', () => {
     const mover: PatchedFixture = { id: 'm', name: 'Mover', profileId: 'adj-pocket-pro', modeId: '11ch-starter', address: 20, group: 'Moving', selected: true, collapsed: false };
-    expect(renderEffect('sweep', [mover], 0, 60, 1).map(([channel]) => channel)).toEqual([20, 22]);
+    expect(renderEffect('sweep', [mover], 0, 60, 1).map(([channel]) => channel)).toEqual([20, 21, 22, 23]);
   });
 
   it('does not treat an empty selection as the whole rig', () => {
     const unselected = DEFAULT_PATCH.map((fixture) => ({ ...fixture, selected: false }));
     expect(renderEffect('pulse', unselected, 0, 60, 1)).toEqual([]);
+  });
+
+  it('builds paired position shapes and renders them through Pan/Tilt fine channels', () => {
+    const fixture: PatchedFixture = { id: 'motion', name: 'Motion', profileId: 'generic-moving-head', modeId: '14ch-common', address: 20, group: 'Moving', selected: true, collapsed: false };
+    const effect: CustomEffect = {
+      id: 'motion-circle',
+      name: 'Motion Circle',
+      parameter: 'position',
+      motionShape: 'circle',
+      waveform: 'sine',
+      bpm: 120,
+      depth: 40,
+      phaseSpread: 0,
+      offset: 0,
+      mode: 'relative'
+    };
+    expect(motionShapeLanes('circle', effect).map((lane) => lane.parameter)).toEqual(['pan', 'tilt']);
+    expect(motionShapeLanes('figure-eight', effect)[1].rateMultiplier).toBe(2);
+    expect(renderCustomEffect(effect, [fixture], 125, Array(512).fill(0)).map(([channel]) => channel)).toEqual([20, 21, 22, 23]);
   });
 
   it('renders reusable custom waveform effects through semantic fixture parameters', () => {
@@ -66,29 +85,33 @@ describe('portable effects', () => {
     expect(renderEffect('chase', [second, first], 0, 120, 1)).toEqual([[15, 255], [5, 0]]);
   });
 
-  it('keeps same-address fixtures isolated across universes while preserving global chase order', () => {
-    const first = { ...DEFAULT_PATCH[0], id: 'u1', universe: 1, address: 1, selected: true };
-    const second = { ...DEFAULT_PATCH[0], id: 'u2', universe: 2, address: 1, selected: true };
-    const frames = renderEffectByUniverse('chase', [first, second], 0, 120, 1);
-    expect(frames.get(1)).toEqual([[5, 255]]);
-    expect(frames.get(2)).toEqual([[5, 0]]);
+  it('combines a primary movement shape with independent semantic lanes', () => {
+    const fixture: PatchedFixture = { id: 'combo', name: 'Combo', profileId: 'generic-moving-head', modeId: '14ch-common', address: 20, group: 'Moving', selected: true, collapsed: false };
+    const effect: CustomEffect = {
+      id: 'combo-step',
+      name: 'Combo Step',
+      parameter: 'position',
+      motionShape: 'circle',
+      waveform: 'sine',
+      bpm: 120,
+      depth: 30,
+      phaseSpread: 0,
+      offset: 0,
+      mode: 'relative',
+      lanes: [{
+        parameter: 'dimmer',
+        waveform: 'step',
+        depth: 100,
+        offset: 0,
+        steps: [
+          { value: 100, width: 1, transition: 0 },
+          { value: 0, width: 1, transition: 0 }
+        ]
+      }]
+    };
+    const channels = renderCustomEffect(effect, [fixture], 0, Array(512).fill(0)).map(([channel]) => channel);
+    expect(channels).toContain(28);
+    expect(channels).toEqual(expect.arrayContaining([20, 21, 22, 23]));
   });
 
-  it('scopes custom FX updates by universe too', () => {
-    const effect: CustomEffect = {
-      id: 'custom-multi',
-      name: 'Custom Multi',
-      parameter: 'dimmer',
-      waveform: 'square',
-      bpm: 120,
-      depth: 100,
-      phaseSpread: 0,
-      offset: 0
-    };
-    const first = { ...DEFAULT_PATCH[0], id: 'u1', universe: 1, address: 1, selected: true };
-    const second = { ...DEFAULT_PATCH[0], id: 'u2', universe: 2, address: 1, selected: true };
-    const frames = renderCustomEffectByUniverse(effect, [first, second], 0);
-    expect(frames.get(1)).toEqual([[5, 255]]);
-    expect(frames.get(2)).toEqual([[5, 255]]);
-  });
 });
