@@ -138,8 +138,8 @@ describe('phaser engine', () => {
         ] }
       ]
     }, [fixture], 0, makeUniverse());
-    expect(updates.map(([channel]) => channel)).toEqual([8, 1, 2]);
-    expect(updates.find(([channel]) => channel === 8)?.[1]).toBe(255);
+    expect(updates.map(([channel]) => channel)).toEqual([9, 1, 2]);
+    expect(updates.find(([channel]) => channel === 9)?.[1]).toBe(255);
   });
 
 });
