@@ -35,6 +35,7 @@ describe('show helpers', () => {
       transition: 'ease-out' as const,
       tracking: true,
       changes: [[5, 999] as const],
+      linkedEffectTargetIds: ['mover-1', 'mover-1', 'mover-2'],
       timing: {
         intensity: { fadeMs: 1200, delayMs: 50 },
         position: { fadeMs: 99999, delayMs: -10 }
@@ -46,6 +47,7 @@ describe('show helpers', () => {
       transition: 'ease-out',
       tracking: true,
       changes: [[5, 255]],
+      linkedEffectTargetIds: ['mover-1', 'mover-2'],
       timing: {
         intensity: { fadeMs: 1200, delayMs: 50 },
         position: { fadeMs: 60000, delayMs: 0 }
