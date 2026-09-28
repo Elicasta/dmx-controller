@@ -62,3 +62,32 @@ The next contained passes should be:
 4. Show timeline/cue inspector refinement
 5. Live hardware assignment and context-menu polish
 6. Full state/accessibility audit
+
+
+## Canonical baseline rule — 2026-09-28
+
+LumaRig 0.3.3 Pro is the canonical desktop shell for future feature work.
+
+New capabilities should be integrated into the existing workspace model with the smallest necessary UI change. Engine growth is not, by itself, a reason to redesign the shell.
+
+Non-negotiable layout rules:
+
+- BUILD / CREATE / SHOW / LIVE remain the primary navigation model.
+- CREATE keeps the stage preview visible in the central work area; faders and attributes must not cover or replace it.
+- LIVE remains a bounded console surface. It must not become an unbounded horizontal canvas or require endless rightward scrolling at normal desktop sizes.
+- FADERS / MA / BUSK remain contained operating surfaces inside LIVE.
+- Secondary tools belong in existing inspectors, rails, drawers, or focused subviews; do not converge unrelated extensions into one catch-all side panel.
+- Faders, stage, programmer, cues, executors, and status areas keep distinct ownership of screen real estate.
+- New Show Engine controls should fit inside existing group, cue, FX, and Busk surfaces before adding new top-level navigation.
+- Preserve the familiar spatial model before introducing new chrome, menus, or panel systems.
+- Responsive behavior may stack or compact secondary inspectors, but must protect the primary task surface first.
+
+Current Show Engine additions intentionally follow this rule:
+
+- tracked cues and split attribute timing live in the existing SHOW cue workflow
+- step phasers and multi-attribute lanes live in the existing CREATE / FX editor
+- 2D fixture selection grids live in the existing group inspector
+- non-destructive Busk uses the existing LIVE / BUSK surface
+- hit, FX, Busk, and master priority are runtime layers rather than separate UI modes
+
+Any future visual pass should compare against this document and the 0.3.3 Pro branch before changing workspace geometry.
