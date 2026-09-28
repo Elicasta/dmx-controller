@@ -103,7 +103,9 @@ export function fixturePhasePositions(count: number, spec: FixtureOrderSpec | Fi
   if (safe === 1) return [0];
 
   const normalized: FixtureOrderSpec = typeof spec === 'string' ? { mode: spec } : spec;
-  if ((normalized.mode ?? 'forward') === 'mirror-pairs'
+  const mode = normalized.mode ?? 'forward';
+
+  if (mode === 'mirror-pairs'
       && (normalized.blocks ?? 1) === 1
       && (normalized.groups ?? 1) === 1
       && (normalized.wings ?? 1) === 1
@@ -112,11 +114,35 @@ export function fixturePhasePositions(count: number, spec: FixtureOrderSpec | Fi
     return Array.from({ length: safe }, (_, index) => Math.min(index, safe - 1 - index) / maxTier);
   }
 
-  const order = fixtureOrderIndices(safe, normalized);
-  const phaseByFixture = Array(safe).fill(0);
-  order.forEach((fixtureIndex, rank) => {
-    phaseByFixture[fixtureIndex] = rank / (safe - 1);
+  const ordered = rotate(baseOrder(safe, mode), normalized.shift ?? 0);
+  const rankByFixture = Array(safe).fill(0);
+  ordered.forEach((fixtureIndex, rank) => { rankByFixture[fixtureIndex] = rank; });
+
+  const blockSize = Math.max(1, Math.floor(normalized.blocks ?? 1));
+  const blockCount = Math.max(1, Math.ceil(safe / blockSize));
+  const groupCount = Math.max(1, Math.min(blockCount, Math.floor(normalized.groups ?? 1)));
+  const wingCount = Math.max(1, Math.min(blockCount, Math.floor(normalized.wings ?? 1)));
+
+  const phaseByFixture = rankByFixture.map((rank) => {
+    const block = Math.floor(rank / blockSize);
+
+    if (groupCount > 1) {
+      const groupSlot = block % groupCount;
+      return groupCount === 1 ? 0 : groupSlot / (groupCount - 1);
+    }
+
+    if (wingCount > 1) {
+      const wingSize = Math.ceil(blockCount / wingCount);
+      const wing = Math.min(wingCount - 1, Math.floor(block / wingSize));
+      const local = block % wingSize;
+      const actualSize = Math.min(wingSize, blockCount - wing * wingSize);
+      const mirrored = wing % 2 === 0 ? local : Math.max(0, actualSize - 1 - local);
+      return actualSize <= 1 ? 0 : mirrored / (actualSize - 1);
+    }
+
+    return blockCount <= 1 ? 0 : block / (blockCount - 1);
   });
+
   return phaseByFixture;
 }
 
