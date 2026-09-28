@@ -952,9 +952,12 @@ body { min-width: 900px; overflow: hidden; background: #070a0d; }
 .stage-bottom-tools header { display: flex; justify-content: space-between; margin-bottom: 7px; }
 .stage-bottom-tools header strong { font-size: 8px; letter-spacing: .8px; }
 .stage-bottom-tools header span { color: #61707b; font-size: 7px; }
-.inline-control-grid { display: grid; grid-template-columns: 1fr 1fr auto; gap: 4px; }
-.inline-control-grid select { height: 29px; padding: 0 6px; border-radius: 4px; font-size: 8px; }
-.inline-control-grid button { height: 29px; padding: 0 8px; font-size: 8px; }
+.inline-control-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 4px; }
+.inline-control-grid select { min-width: 0; height: 29px; padding: 0 6px; border-radius: 4px; font-size: 8px; }
+.inline-control-grid button { grid-column: 1 / -1; height: 29px; padding: 0 8px; font-size: 8px; }
+.inline-control-grid .inline-range { grid-column: 1 / -1; display: grid; grid-template-columns: auto minmax(0, 1fr); align-items: center; gap: 7px; min-height: 28px; padding: 0 6px; border: 1px solid #26323b; border-radius: 4px; background: #090e12; }
+.inline-control-grid .inline-range span { color: #71808a; font-size: 7px; white-space: nowrap; }
+.inline-control-grid .inline-range input { width: 100%; min-width: 0; }
 .palette-chip-row { display: flex; gap: 4px; overflow-x: auto; }
 .palette-chip-row button { flex: 0 0 auto; height: 30px; padding: 0 8px; border: 1px solid #26333c; border-radius: 4px; background: #11181e; color: #b8c2c9; font-size: 8px; }
 .palette-chip-row button span { margin-right: 5px; color: #57e996; font-size: 6px; text-transform: uppercase; }

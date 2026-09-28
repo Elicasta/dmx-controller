@@ -8,6 +8,7 @@ import {
 import type { ControlCommandEnvelope, ControlSource } from './control-command';
 import { aimFixtureAtTarget, fixtureMovementUpdates } from './fixture-geometry';
 import { arrangeTargetPoints } from './targets';
+import { orderFixtures } from './fixture-order';
 
 export type AttributeSourceTrace = {
   source: ControlSource;
@@ -156,9 +157,12 @@ export class ShowRuntime {
       nextBase = applyUniverseUpdates(previousBase, updates);
     } else if (command.type === 'fixture.target') {
       const ids = new Set(command.fixtureIds);
-      const fixtures = this.patch
-        .map((fixture, index) => ({ fixture, index }))
-        .filter(({ fixture }) => (fixture.universe ?? 1) === universe && ids.has(fixture.id));
+      const fixtures = orderFixtures(
+        this.patch
+          .map((fixture, index) => ({ fixture, index }))
+          .filter(({ fixture }) => (fixture.universe ?? 1) === universe && ids.has(fixture.id)),
+        command.orderMode ?? 'forward'
+      );
       const targets = arrangeTargetPoints(command.target, fixtures.length, command.arrangement, command.spreadMeters);
       const updates = fixtures.flatMap(({ fixture, index }, targetIndex) => {
         const solution = aimFixtureAtTarget(previousBase, fixture, targets[targetIndex], index, this.patch.length);

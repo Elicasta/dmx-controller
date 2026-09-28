@@ -3,6 +3,7 @@ import type { DmxUpdate } from './dmx';
 import type { FixtureLookValues } from './looks';
 import type { Vec3 } from '../core/geometry';
 import type { TargetArrangement } from '../core/targets';
+import type { FixtureOrderMode } from '../core/fixture-order';
 
 export type SpatialPositionPalette = {
   id: string;
@@ -13,6 +14,7 @@ export type SpatialPositionPalette = {
   fallbackTarget: Vec3;
   arrangement: TargetArrangement;
   spreadMeters: number;
+  orderMode?: FixtureOrderMode;
 };
 
 export type AbsolutePositionPalette = {
@@ -207,6 +209,7 @@ export function isPositionPalette(value: unknown): value is PositionPalette {
       && typeof spatial.targetName === 'string'
       && isVector(spatial.fallbackTarget)
       && ['converge', 'fan-horizontal', 'fan-vertical', 'mirror', 'cross'].includes(spatial.arrangement ?? '')
+      && (spatial.orderMode === undefined || ['forward', 'reverse', 'center-out', 'outside-in', 'odd-even', 'even-odd', 'mirror-pairs'].includes(spatial.orderMode))
       && typeof spatial.spreadMeters === 'number'
       && Number.isFinite(spatial.spreadMeters);
   }
@@ -324,6 +327,7 @@ export function sanitizeShow(show: ShowFile): ShowFile {
         z: Number.isFinite(palette.fallbackTarget.z) ? palette.fallbackTarget.z : 0
       },
       arrangement: palette.arrangement,
+      ...(palette.orderMode ? { orderMode: palette.orderMode } : {}),
       spreadMeters: Math.max(.1, Math.min(100, Number.isFinite(palette.spreadMeters) ? palette.spreadMeters : 4))
     } : {
       id: palette.id.slice(0, 100),

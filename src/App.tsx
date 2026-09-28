@@ -117,6 +117,7 @@ import { ArtNetOutputDriver } from './core/artnet-output';
 import { ShowRuntime, type RuntimeDispatchResult } from './core/show-runtime';
 import { projectStagePoint, unprojectStagePoint, type StagePoint2D, type StageView } from './core/stage-projection';
 import { arrangeTargetPoints, buildStageTargets, type TargetArrangement, type TargetPoint } from './core/targets';
+import { orderFixtures, type FixtureOrderMode } from './core/fixture-order';
 import { RemoteRelay, type RelayCommandEnvelope, type RemoteRelayConfig, type RemoteRelayStatus } from './core/remote-relay';
 import { StudioBridgeDispatcher } from './core/studio-bridge-dispatcher';
 import type { StudioBridgeCommand, StudioSongIdentity } from './core/studio-bridge-protocol';
@@ -336,7 +337,11 @@ function isCustomEffect(value: unknown): value is CustomEffect {
     && typeof effect.name === 'string'
     && ['dimmer', 'pan', 'tilt', 'uv'].includes(String(effect.parameter))
     && ['sine', 'triangle', 'square', 'saw', 'reverse-saw', 'step'].includes(String(effect.waveform))
-    && [effect.bpm, effect.depth, effect.phaseSpread, effect.offset].every((part) => typeof part === 'number' && Number.isFinite(part));
+    && [effect.bpm, effect.depth, effect.phaseSpread, effect.offset].every((part) => typeof part === 'number' && Number.isFinite(part))
+    && (effect.orderMode === undefined || ['forward', 'reverse', 'center-out', 'outside-in', 'odd-even', 'even-odd', 'mirror-pairs'].includes(String(effect.orderMode)))
+    && [effect.blocks, effect.groups, effect.wings, effect.shift, effect.cycleBeats].every((part) => part === undefined || (typeof part === 'number' && Number.isFinite(part)))
+    && (effect.direction === undefined || ['forward', 'reverse'].includes(String(effect.direction)))
+    && (effect.mode === undefined || ['absolute', 'relative'].includes(String(effect.mode)));
 }
 
 function loadCustomEffects(): CustomEffect[] {
@@ -700,7 +705,15 @@ export default function App() {
     bpm: 100,
     depth: 100,
     phaseSpread: 0,
-    offset: 0
+    offset: 0,
+    orderMode: 'forward',
+    blocks: 1,
+    groups: 1,
+    wings: 1,
+    shift: 0,
+    direction: 'forward',
+    cycleBeats: 1,
+    mode: 'absolute'
   });
   const [selectedFxBankId, setSelectedFxBankId] = useState<string>('pulse');
   const effectTargetIdsRef = useRef<string[]>([]);
@@ -776,6 +789,7 @@ export default function App() {
   const stageDragRef = useRef<{ pointerId: number; kind: 'fixture' | 'element'; id: string; preserved: Vec3; moved: boolean } | null>(null);
   const [selectedTargetId, setSelectedTargetId] = useState('target-center-stage');
   const [aimArrangement, setAimArrangement] = useState<TargetArrangement>('converge');
+  const [aimOrderMode, setAimOrderMode] = useState<FixtureOrderMode>('forward');
   const [aimSpreadMeters, setAimSpreadMeters] = useState(4);
   const [calibrationOpen, setCalibrationOpen] = useState(false);
   const [positionPaletteName, setPositionPaletteName] = useState('');
@@ -1913,8 +1927,9 @@ export default function App() {
       setMessage('Select at least one moving fixture before using AIM.');
       return;
     }
-    const arranged = arrangeTargetPoints(target.position, selectedMovingFixtures.length, aimArrangement, aimSpreadMeters);
-    const unreachable = selectedMovingFixtures.filter((fixture, selectedIndex) => {
+    const orderedFixtures = orderFixtures(selectedMovingFixtures, aimOrderMode);
+    const arranged = arrangeTargetPoints(target.position, orderedFixtures.length, aimArrangement, aimSpreadMeters);
+    const unreachable = orderedFixtures.filter((fixture, selectedIndex) => {
       const patchIndex = patch.findIndex((item) => item.id === fixture.id);
       return !aimFixtureAtTarget(universeRef.current, fixture, arranged[selectedIndex], patchIndex, patch.length, stageSettings.dimensions)?.reachable;
     });
@@ -1924,7 +1939,8 @@ export default function App() {
       fixtureIds: selectedMovingFixtures.map((fixture) => fixture.id),
       target: target.position,
       arrangement: aimArrangement,
-      spreadMeters: aimSpreadMeters
+      spreadMeters: aimSpreadMeters,
+      orderMode: aimOrderMode
     }, 'ui');
     if (!result.warnings.length) {
       setMessage(`${selectedMovingFixtures.length} mover${selectedMovingFixtures.length === 1 ? '' : 's'} aimed at ${target.name} · ${aimArrangement.replace('-', ' ')}.`);
@@ -1949,6 +1965,7 @@ export default function App() {
         targetName: selectedTarget.name,
         fallbackTarget: { ...selectedTarget.position },
         arrangement: aimArrangement,
+        orderMode: aimOrderMode,
         spreadMeters: aimSpreadMeters
       };
     }
@@ -2002,7 +2019,8 @@ export default function App() {
         fixtureIds: movingFixtures.map((fixture) => fixture.id),
         target: target.position,
         arrangement: palette.arrangement,
-        spreadMeters: palette.spreadMeters
+        spreadMeters: palette.spreadMeters,
+        orderMode: palette.orderMode ?? 'forward'
       }, 'ui');
       if (!result.warnings.length) setMessage(`${palette.name} applied to ${movingFixtures.length} selected mover${movingFixtures.length === 1 ? '' : 's'}.`);
       return;
@@ -2658,7 +2676,15 @@ export default function App() {
       bpm: effect.defaultBpm,
       depth: 100,
       phaseSpread: shape.phaseSpread,
-      offset: 0
+      offset: 0,
+      orderMode: 'forward',
+      blocks: 1,
+      groups: 1,
+      wings: 1,
+      shift: 0,
+      direction: 'forward',
+      cycleBeats: 1,
+      mode: 'absolute'
     });
   }
 
@@ -2669,8 +2695,16 @@ export default function App() {
       name: cleanName,
       bpm: Math.max(20, Math.min(300, fxEditor.bpm)),
       depth: Math.max(0, Math.min(100, fxEditor.depth)),
-      phaseSpread: Math.max(0, Math.min(100, fxEditor.phaseSpread)),
-      offset: Math.max(0, Math.min(100, fxEditor.offset)),
+      phaseSpread: Math.max(0, Math.min(200, fxEditor.phaseSpread)),
+      offset: Math.max(-100, Math.min(100, fxEditor.offset)),
+      orderMode: fxEditor.orderMode ?? 'forward',
+      blocks: Math.max(1, Math.min(64, Math.round(fxEditor.blocks ?? 1))),
+      groups: Math.max(1, Math.min(64, Math.round(fxEditor.groups ?? 1))),
+      wings: Math.max(1, Math.min(16, Math.round(fxEditor.wings ?? 1))),
+      shift: Math.max(-256, Math.min(256, Math.round(fxEditor.shift ?? 0))),
+      direction: fxEditor.direction ?? 'forward',
+      cycleBeats: Math.max(.125, Math.min(32, fxEditor.cycleBeats ?? 1)),
+      mode: fxEditor.mode ?? 'absolute',
       id: fxEditor.id.startsWith('custom-') && fxEditor.id !== 'custom-preview'
         ? fxEditor.id
         : `custom-${Date.now().toString(36)}`
@@ -2714,7 +2748,7 @@ export default function App() {
     setActiveCustomEffectId(effect.id);
     const tick = (now: number) => {
       if (activeCustomEffectIdRef.current !== effect.id) return;
-      const updates = renderCustomEffect(effect, effectFixtures, now - startedAt);
+      const updates = renderCustomEffect(effect, effectFixtures, now - startedAt, effectBaseUniverseRef.current);
       void commitUniverse(applyUniverseUpdates(effectBaseUniverseRef.current, updates), 'fx');
       effectAnimationRef.current = requestAnimationFrame(tick);
     };
@@ -3146,7 +3180,7 @@ export default function App() {
             <div className="stage-console-toolbar"><div role="toolbar" aria-label="Stage Designer mode">{STAGE_DESIGNER_MODES.map((mode) => <button key={mode.id} className={stageMode === mode.id ? 'active' : ''} onClick={() => setStageMode(mode.id)}>{mode.label}</button>)}</div><span>{stageSettings.unit === 'feet' ? 'FEET' : 'METERS'} · {stageSettings.dimensions.width.toFixed(1)} × {stageSettings.dimensions.depth.toFixed(1)} m</span></div>
             <div className="dominant-stage">{renderStagePreview(true)}</div>
             <div className="stage-bottom-tools">
-              <section><header><strong>TARGETS &amp; AIM</strong><span>{selectedMovingFixtures.length} mover{selectedMovingFixtures.length === 1 ? '' : 's'} selected</span></header><div className="inline-control-grid"><select value={selectedTargetId} onChange={(event) => setSelectedTargetId(event.target.value)}>{stageTargets.map((target) => <option key={target.id} value={target.id}>{target.name}</option>)}</select><select value={aimArrangement} onChange={(event) => setAimArrangement(event.target.value as TargetArrangement)}><option value="converge">Converge</option><option value="fan-horizontal">Horizontal fan</option><option value="fan-vertical">Vertical fan</option><option value="mirror">Mirror</option><option value="cross">Cross</option></select><button className="console-primary" disabled={!selectedTarget || !selectedMovingFixtures.length} onClick={() => selectedTarget && void aimAtTarget(selectedTarget)}>Aim selected</button></div></section>
+              <section><header><strong>TARGETS &amp; AIM</strong><span>{selectedMovingFixtures.length} mover{selectedMovingFixtures.length === 1 ? '' : 's'} selected</span></header><div className="inline-control-grid"><select value={selectedTargetId} onChange={(event) => setSelectedTargetId(event.target.value)}>{stageTargets.map((target) => <option key={target.id} value={target.id}>{target.name}</option>)}</select><select value={aimArrangement} onChange={(event) => setAimArrangement(event.target.value as TargetArrangement)}><option value="converge">Converge</option><option value="fan-horizontal">Horizontal fan</option><option value="fan-vertical">Vertical fan</option><option value="mirror">Mirror</option><option value="cross">Cross</option></select><select value={aimOrderMode} onChange={(event) => setAimOrderMode(event.target.value as FixtureOrderMode)}><option value="forward">Forward</option><option value="reverse">Reverse</option><option value="center-out">Center Out</option><option value="outside-in">Outside In</option><option value="mirror-pairs">Mirror Pairs</option><option value="odd-even">Odd → Even</option><option value="even-odd">Even → Odd</option></select><label className="inline-range"><span>Spread {aimSpreadMeters.toFixed(1)}m</span><input type="range" min=".1" max="20" step=".1" value={aimSpreadMeters} onChange={(event) => setAimSpreadMeters(Number(event.target.value))}/></label><button className="console-primary" disabled={!selectedTarget || !selectedMovingFixtures.length} onClick={() => selectedTarget && void aimAtTarget(selectedTarget)}>Aim selected</button></div></section>
               <section><header><strong>POSITION PALETTES</strong><span>{showFile.positionPalettes?.length ?? 0} saved</span></header><div className="palette-chip-row">{showFile.positionPalettes?.map((palette) => <button key={palette.id} onClick={() => void runPositionPalette(palette)}><span>{palette.kind}</span>{palette.name}</button>)}<button className="add-palette-chip" onClick={savePositionPalette}>＋ Save current</button></div></section>
               <section><header><strong>STAGE ELEMENTS</strong><span>{stageElements.length}</span></header><div className="palette-chip-row">{STAGE_ELEMENT_LIBRARY.map((element) => <button key={element.type} onClick={() => addStageElement(element.type)}>＋ {element.name}</button>)}</div></section>
             </div>
@@ -3293,10 +3327,26 @@ export default function App() {
                   <label><span>Parameter</span><select value={fxEditor.parameter} onChange={(event) => setFxEditor((current) => ({ ...current, parameter: event.target.value as EffectParameter }))}><option value="dimmer">Dimmer</option><option value="pan">Pan</option><option value="tilt">Tilt</option><option value="uv">UV</option></select></label>
                   <label><span>Waveform</span><select value={fxEditor.waveform} onChange={(event) => setFxEditor((current) => ({ ...current, waveform: event.target.value as EffectWaveform }))}><option value="sine">Sine</option><option value="triangle">Triangle</option><option value="square">Square</option><option value="saw">Saw</option><option value="reverse-saw">Reverse Saw</option><option value="step">Step</option></select></label>
                 </div>
+                <div className="inspector-pair">
+                  <label><span>Fixture Order</span><select value={fxEditor.orderMode ?? 'forward'} onChange={(event) => setFxEditor((current) => ({ ...current, orderMode: event.target.value as CustomEffect['orderMode'] }))}><option value="forward">Forward</option><option value="reverse">Reverse</option><option value="center-out">Center Out</option><option value="outside-in">Outside In</option><option value="mirror-pairs">Mirror Pairs</option><option value="odd-even">Odd → Even</option><option value="even-odd">Even → Odd</option></select></label>
+                  <label><span>Direction</span><select value={fxEditor.direction ?? 'forward'} onChange={(event) => setFxEditor((current) => ({ ...current, direction: event.target.value as CustomEffect['direction'] }))}><option value="forward">Forward</option><option value="reverse">Reverse</option></select></label>
+                </div>
+                <div className="inspector-pair">
+                  <label><span>Blocks</span><input type="number" min="1" max="64" value={fxEditor.blocks ?? 1} onChange={(event) => setFxEditor((current) => ({ ...current, blocks: Number(event.target.value) }))}/></label>
+                  <label><span>Groups</span><input type="number" min="1" max="64" value={fxEditor.groups ?? 1} onChange={(event) => setFxEditor((current) => ({ ...current, groups: Number(event.target.value) }))}/></label>
+                </div>
+                <div className="inspector-pair">
+                  <label><span>Wings</span><input type="number" min="1" max="16" value={fxEditor.wings ?? 1} onChange={(event) => setFxEditor((current) => ({ ...current, wings: Number(event.target.value) }))}/></label>
+                  <label><span>Shift</span><input type="number" min="-256" max="256" value={fxEditor.shift ?? 0} onChange={(event) => setFxEditor((current) => ({ ...current, shift: Number(event.target.value) }))}/></label>
+                </div>
+                <div className="inspector-pair">
+                  <label><span>Cycle</span><select value={String(fxEditor.cycleBeats ?? 1)} onChange={(event) => setFxEditor((current) => ({ ...current, cycleBeats: Number(event.target.value) }))}><option value=".25">1/4 beat</option><option value=".5">1/2 beat</option><option value="1">1 beat</option><option value="2">2 beats</option><option value="4">1 bar</option><option value="8">2 bars</option><option value="16">4 bars</option></select></label>
+                  <label><span>Mode</span><select value={fxEditor.mode ?? 'absolute'} onChange={(event) => setFxEditor((current) => ({ ...current, mode: event.target.value as CustomEffect['mode'] }))}><option value="absolute">Absolute</option><option value="relative">Relative to Look</option></select></label>
+                </div>
                 <label><span>Speed · {fxEditor.bpm} BPM</span><input type="range" min="20" max="300" value={fxEditor.bpm} onChange={(event) => setFxEditor((current) => ({ ...current, bpm: Number(event.target.value) }))}/></label>
                 <label><span>Depth · {fxEditor.depth}%</span><input type="range" min="0" max="100" value={fxEditor.depth} onChange={(event) => setFxEditor((current) => ({ ...current, depth: Number(event.target.value) }))}/></label>
-                <label><span>Phase Spread · {fxEditor.phaseSpread}%</span><input type="range" min="0" max="100" value={fxEditor.phaseSpread} onChange={(event) => setFxEditor((current) => ({ ...current, phaseSpread: Number(event.target.value) }))}/></label>
-                <label><span>Base · {fxEditor.offset}%</span><input type="range" min="0" max="100" value={fxEditor.offset} onChange={(event) => setFxEditor((current) => ({ ...current, offset: Number(event.target.value) }))}/></label>
+                <label><span>Phase Spread · {fxEditor.phaseSpread}%</span><input type="range" min="0" max="200" value={fxEditor.phaseSpread} onChange={(event) => setFxEditor((current) => ({ ...current, phaseSpread: Number(event.target.value) }))}/></label>
+                <label><span>{(fxEditor.mode ?? 'absolute') === 'relative' ? 'Bias' : 'Base'} · {fxEditor.offset}%</span><input type="range" min="-100" max="100" value={fxEditor.offset} onChange={(event) => setFxEditor((current) => ({ ...current, offset: Number(event.target.value) }))}/></label>
                 <div className="fx-editor-actions">
                   <button className={activeCustomEffectId === fxEditor.id ? 'danger-button' : 'console-primary'} disabled={!programEffectFixtures.length} onClick={() => runCustomFx(fxEditor, programEffectFixtures.map((fixture) => fixture.id))}>{activeCustomEffectId === fxEditor.id ? 'STOP FX' : 'RUN FX'}</button>
                   <button onClick={saveCustomFx}>SAVE TO BANK</button>
@@ -3311,7 +3361,7 @@ export default function App() {
                 {EFFECT_PRESETS.map((effect) => <button key={effect.id} className={`${selectedFxBankId === effect.id ? 'selected' : ''} ${activeEffect === effect.id ? 'running' : ''}`} onClick={() => loadFactoryFx(effect)} onDoubleClick={() => toggleEffect(effect.id, programEffectFixtures.map((fixture) => fixture.id))}><i className={`fx-icon fx-${effect.id}`}/><span><strong>{effect.name}</strong><small>{EFFECT_SHAPES[effect.id].waveform} · {effect.defaultBpm} BPM</small></span><b>{activeEffect === effect.id ? 'LIVE' : 'FACTORY'}</b></button>)}
                 {customEffects.map((effect) => <article key={effect.id} className={`${selectedFxBankId === effect.id ? 'selected' : ''} ${activeCustomEffectId === effect.id ? 'running' : ''}`}><button className="fx-bank-load" onClick={() => { setSelectedFxBankId(effect.id); setFxEditor(effect); }} onDoubleClick={() => runCustomFx(effect, programEffectFixtures.map((fixture) => fixture.id))}><i>∿</i><span><strong>{effect.name}</strong><small>{effect.waveform} · {effect.bpm} BPM</small></span><b>{activeCustomEffectId === effect.id ? 'LIVE' : 'CUSTOM'}</b></button><button className="fx-bank-delete" aria-label={`Delete ${effect.name}`} onClick={() => deleteCustomFx(effect.id)}>×</button></article>)}
               </div>
-              <footer><span>Single click loads an effect into the graph. Double-click a bank item to run it immediately.</span><button onClick={() => { setFxEditor({ id: 'custom-preview', name: 'New FX', parameter: 'dimmer', waveform: 'sine', bpm: 100, depth: 100, phaseSpread: 0, offset: 0 }); setSelectedFxBankId('custom-preview'); }}>＋ NEW FX</button></footer>
+              <footer><span>Single click loads an effect into the graph. Double-click a bank item to run it immediately.</span><button onClick={() => { setFxEditor({ id: 'custom-preview', name: 'New FX', parameter: 'dimmer', waveform: 'sine', bpm: 100, depth: 100, phaseSpread: 0, offset: 0, orderMode: 'forward', blocks: 1, groups: 1, wings: 1, shift: 0, direction: 'forward', cycleBeats: 1, mode: 'absolute' }); setSelectedFxBankId('custom-preview'); }}>＋ NEW FX</button></footer>
             </section>
           </div>}
 

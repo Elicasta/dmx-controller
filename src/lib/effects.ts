@@ -1,4 +1,6 @@
 import { clampDmx, type DmxUpdate } from './dmx';
+import { phaserWaveValue, renderPhaserEffect, type PhaserDirection, type PhaserMode } from '../core/phaser-engine';
+import type { FixtureOrderMode } from '../core/fixture-order';
 import {
   fixtureColorUpdates,
   fixtureParameterUpdate,
@@ -40,6 +42,14 @@ export type CustomEffect = {
   depth: number;
   phaseSpread: number;
   offset: number;
+  orderMode?: FixtureOrderMode;
+  blocks?: number;
+  groups?: number;
+  wings?: number;
+  shift?: number;
+  direction?: PhaserDirection;
+  cycleBeats?: number;
+  mode?: PhaserMode;
 };
 
 export const EFFECT_SHAPES: Record<EffectId, { waveform: EffectWaveform; parameter: EffectParameter; phaseSpread: number }> = {
@@ -59,27 +69,29 @@ export const EFFECT_SHAPES: Record<EffectId, { waveform: EffectWaveform; paramet
 };
 
 export function effectWaveValue(waveform: EffectWaveform, phase: number): number {
-  const p = ((phase % 1) + 1) % 1;
-  if (waveform === 'sine') return (Math.sin(p * Math.PI * 2 - Math.PI / 2) + 1) / 2;
-  if (waveform === 'triangle') return 1 - Math.abs(p * 2 - 1);
-  if (waveform === 'square') return p < .5 ? 1 : 0;
-  if (waveform === 'saw') return p;
-  if (waveform === 'reverse-saw') return 1 - p;
-  return p < .18 ? 1 : 0;
+  return phaserWaveValue(waveform, phase);
 }
 
-export function renderCustomEffect(effect: CustomEffect, fixtures: readonly PatchedFixture[], elapsedMs: number): DmxUpdate[] {
-  const active = fixtures.filter((fixture) => fixture.selected);
-  if (!active.length) return [];
-  const beatMs = 60000 / Math.max(20, effect.bpm);
-  const basePhase = (elapsedMs % beatMs) / beatMs;
-  return active.flatMap((fixture, index) => {
-    const spread = active.length > 1 ? (index / (active.length - 1)) * (effect.phaseSpread / 100) : 0;
-    const wave = effectWaveValue(effect.waveform, basePhase + spread);
-    const normalized = Math.max(0, Math.min(1, effect.offset / 100 + wave * effect.depth / 100));
-    const update = fixtureParameterUpdate(fixture, effect.parameter, normalized * 255);
-    return update ? [update] : [];
-  });
+export function renderCustomEffect(
+  effect: CustomEffect,
+  fixtures: readonly PatchedFixture[],
+  elapsedMs: number,
+  baseUniverse?: readonly number[]
+): DmxUpdate[] {
+  return renderPhaserEffect({
+    ...effect,
+    orderMode: effect.orderMode ?? 'forward',
+    order: {
+      mode: effect.orderMode ?? 'forward',
+      blocks: effect.blocks ?? 1,
+      groups: effect.groups ?? 1,
+      wings: effect.wings ?? 1,
+      shift: effect.shift ?? 0
+    },
+    direction: effect.direction ?? 'forward',
+    cycleBeats: effect.cycleBeats ?? 1,
+    mode: effect.mode ?? 'absolute'
+  }, fixtures, elapsedMs, baseUniverse);
 }
 
 export const EFFECT_PRESETS: ReadonlyArray<EffectPreset> = [
