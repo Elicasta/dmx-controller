@@ -1,0 +1,45 @@
+name: Recovery CI
+
+on:
+  push:
+    branches:
+      - recovery/pro-033-show-engine
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: macos-latest
+    steps:
+      - name: Check out recovery source
+        uses: actions/checkout@v7
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: lts/*
+          cache: npm
+
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Rust build
+        uses: swatinem/rust-cache@v2
+        with:
+          workspaces: "./src-tauri -> target"
+
+      - name: Install frontend dependencies
+        run: npm ci
+
+      - name: Frontend tests
+        run: npm test
+
+      - name: Frontend production build
+        run: npm run build
+
+      - name: Bridge disconnect and malformed-traffic tests
+        run: cargo test --manifest-path tests/bridge-harness/Cargo.toml
+
+      - name: Native tests
+        run: cargo test --manifest-path src-tauri/Cargo.toml
