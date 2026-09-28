@@ -11,7 +11,7 @@ import {
   VISIBLE_CHANNELS,
   type DmxUpdate
 } from './lib/dmx';
-import { EFFECT_PRESETS, EFFECT_SHAPES, effectWaveValue, renderEffect, renderCustomEffect, type CustomEffect, type CustomEffectParameter, type EffectId, type EffectParameter, type EffectPreset, type EffectWaveform, type MotionShape } from './lib/effects';
+import { EFFECT_PRESETS, EFFECT_SHAPES, effectWaveValue, renderEffect, renderCustomEffect, type CustomEffect, type CustomEffectParameter, type EffectId, type EffectPreset, type EffectWaveform, type MotionShape } from './lib/effects';
 import {
   DEFAULT_PATCH,
   FIXTURE_LIBRARY,
