@@ -1156,9 +1156,10 @@ export default function App() {
     const totalDuration = cuePlaybackDuration(cue, from, target, patchRef.current);
 
     if (totalDuration === 0) {
-      void commitUniverse(target, source);
-      setMessage(`Cue ${cue.number}: ${cue.name} is live.`);
-      onComplete?.();
+      void commitUniverse(target, source).then(() => {
+        setMessage(`Cue ${cue.number}: ${cue.name} is live.`);
+        onComplete?.();
+      });
       return;
     }
 
@@ -1168,18 +1169,23 @@ export default function App() {
 
     const tick = (now: number) => {
       const elapsed = Math.min(totalDuration, now - startedAt);
-      if (now - fadeLastFrameRef.current >= FRAME_MS || elapsed >= totalDuration) {
-        fadeLastFrameRef.current = now;
-        void commitUniverse(renderCueTimedFrame(cue, from, target, elapsed, patchRef.current), source);
-      }
+      const shouldCommit = now - fadeLastFrameRef.current >= FRAME_MS || elapsed >= totalDuration;
+      const frame = shouldCommit
+        ? renderCueTimedFrame(cue, from, target, elapsed, patchRef.current)
+        : null;
+      if (shouldCommit) fadeLastFrameRef.current = now;
 
       if (elapsed < totalDuration) {
+        if (frame) void commitUniverse(frame, source);
         fadeAnimationRef.current = requestAnimationFrame(tick);
       } else {
         fadeAnimationRef.current = null;
         setIsFading(false);
-        setMessage(`Cue ${cue.number}: ${cue.name} is live.`);
-        onComplete?.();
+        const landed = frame ? commitUniverse(frame, source) : Promise.resolve();
+        void landed.then(() => {
+          setMessage(`Cue ${cue.number}: ${cue.name} is live.`);
+          onComplete?.();
+        });
       }
     };
 
