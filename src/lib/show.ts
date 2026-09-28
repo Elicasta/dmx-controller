@@ -1,3 +1,4 @@
+import { isColorPalette, type ColorPalette } from '../core/color';
 import { applyUniverseUpdates, clampDmx, makeUniverse } from './dmx';
 import type { DmxUpdate } from './dmx';
 import type { FixtureLookValues } from './looks';
@@ -103,6 +104,7 @@ export type ShowFile = {
   cues: ShowCue[];
   groups?: FixtureGroup[];
   positionPalettes?: PositionPalette[];
+  colorPalettes?: ColorPalette[];
   recordings?: ShowRecording[];
   externalTrack?: ExternalTrackSync;
 };
@@ -122,6 +124,7 @@ export const EMPTY_SHOW: ShowFile = {
   cues: [],
   groups: [],
   positionPalettes: [],
+  colorPalettes: [],
   recordings: [],
   externalTrack: { ...DEFAULT_EXTERNAL_TRACK_SYNC }
 };
@@ -238,6 +241,7 @@ export function isShowFile(value: unknown): value is ShowFile {
   );
   return cuesValid
     && externalTrackValid
+    && (candidate.colorPalettes === undefined || (Array.isArray(candidate.colorPalettes) && candidate.colorPalettes.every(isColorPalette)))
     && (candidate.groups === undefined || (Array.isArray(candidate.groups) && candidate.groups.every(isFixtureGroup)))
     && (candidate.positionPalettes === undefined || (Array.isArray(candidate.positionPalettes) && candidate.positionPalettes.every(isPositionPalette)))
     && (candidate.recordings === undefined || (
@@ -433,6 +437,12 @@ export function sanitizeShow(show: ShowFile): ShowFile {
       })),
       universe: cue.universe?.slice(0, 512).map(clampDmx)
     }))),
+    colorPalettes: (show.colorPalettes ?? []).slice(0, 64).filter(isColorPalette).map((palette) => ({
+      id: palette.id.slice(0, 100),
+      name: palette.name.trim().slice(0, 64) || 'Color',
+      folder: palette.folder.trim().slice(0, 64),
+      color: palette.color.toLowerCase()
+    })),
     positionPalettes: (show.positionPalettes ?? []).slice(0, 64).map((palette): PositionPalette => palette.kind === 'spatial' ? {
       id: palette.id.slice(0, 100),
       name: palette.name.trim().slice(0, 64) || 'Position palette',
