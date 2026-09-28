@@ -9,6 +9,7 @@ import type { ControlCommandEnvelope, ControlSource } from './control-command';
 import { aimFixtureAtTarget, fixtureMovementUpdates } from './fixture-geometry';
 import { arrangeTargetPoints } from './targets';
 import { orderFixtures } from './fixture-order';
+import { resolvePlaybackStack, type PlaybackLayer } from './playback-stack';
 
 export type AttributeSourceTrace = {
   source: ControlSource;
@@ -63,6 +64,7 @@ export class ShowRuntime {
   private sourceTrace = new Map<string, AttributeSourceTrace>();
   private groupMasters = new Map<string, number>();
   private flashFixtureIds = new Set<string>();
+  private playbackLayers = new Map<number, Map<string, PlaybackLayer>>();
 
   constructor(initial?: { frame?: readonly number[]; patch?: readonly PatchedFixture[] }) {
     if (initial?.frame) {
@@ -126,6 +128,20 @@ export class ShowRuntime {
       outputOverride = [...nextBase];
     } else if (command.type === 'frame.update') {
       nextBase = applyUniverseUpdates(previousBase, command.updates);
+    } else if (command.type === 'playback.layer.set') {
+      const layers = new Map(this.playbackLayers.get(universe) ?? []);
+      layers.set(command.layerId, {
+        id: command.layerId,
+        priority: command.priority,
+        mode: command.mode,
+        values: new Map(command.updates)
+      });
+      this.playbackLayers.set(universe, layers);
+    } else if (command.type === 'playback.layer.clear') {
+      const layers = new Map(this.playbackLayers.get(universe) ?? []);
+      layers.delete(command.layerId);
+      if (layers.size) this.playbackLayers.set(universe, layers);
+      else this.playbackLayers.delete(universe);
     } else if (command.type === 'fixture.attribute') {
       const updates = this.fixtureUpdates(command.fixtureIds, (fixture) => {
         const update = fixtureParameterUpdate(fixture, command.parameter, command.value);
@@ -232,7 +248,8 @@ export class ShowRuntime {
   }
 
   private resolveFrame(universe: number, base: readonly number[]): number[] {
-    const next = [...base];
+    const layers = [...(this.playbackLayers.get(universe)?.values() ?? [])];
+    const next = resolvePlaybackStack(base, layers);
     this.patch
       .filter((fixture) => (fixture.universe ?? 1) === universe)
       .forEach((fixture) => {
