@@ -1,9 +1,10 @@
 import { clampDmx, type DmxUpdate } from './dmx';
-import { phaserWaveValue, renderPhaserEffect, renderPhaserProgram, type PhaserDirection, type PhaserLane, type PhaserMode } from '../core/phaser-engine';
+import { phaserWaveValue, renderPhaserProgram, type PhaserDirection, type PhaserLane, type PhaserMode, type PhaserStep } from '../core/phaser-engine';
 import type { FixtureOrderMode } from '../core/fixture-order';
 import {
   fixtureColorUpdates,
   fixtureParameterUpdate,
+  type FixtureParameter,
   type PatchedFixture
 } from './fixtures';
 
@@ -26,6 +27,16 @@ export type EffectWaveform = 'sine' | 'triangle' | 'square' | 'saw' | 'reverse-s
 export type EffectParameter = 'dimmer' | 'pan' | 'tilt' | 'uv';
 export type CustomEffectParameter = EffectParameter | 'position';
 export type MotionShape = 'circle' | 'figure-eight' | 'diagonal' | 'pan-sweep' | 'tilt-sweep';
+export type CustomEffectLane = {
+  parameter: FixtureParameter;
+  waveform: EffectWaveform;
+  depth: number;
+  offset: number;
+  phaseOffset?: number;
+  rateMultiplier?: number;
+  mode?: PhaserMode;
+  steps?: PhaserStep[];
+};
 
 export type EffectPreset = {
   id: EffectId;
@@ -53,6 +64,8 @@ export type CustomEffect = {
   direction?: PhaserDirection;
   cycleBeats?: number;
   mode?: PhaserMode;
+  steps?: PhaserStep[];
+  lanes?: CustomEffectLane[];
 };
 
 export const EFFECT_SHAPES: Record<EffectId, { waveform: EffectWaveform; parameter: EffectParameter; phaseSpread: number }> = {
@@ -77,13 +90,14 @@ export function effectWaveValue(waveform: EffectWaveform, phase: number): number
 
 export function motionShapeLanes(
   shape: MotionShape,
-  effect: Pick<CustomEffect, 'waveform' | 'depth' | 'offset' | 'mode'>
+  effect: Pick<CustomEffect, 'waveform' | 'depth' | 'offset' | 'mode' | 'steps'>
 ): PhaserLane[] {
   const common = {
     waveform: effect.waveform,
     depth: effect.depth,
     offset: effect.offset,
-    mode: effect.mode ?? 'relative'
+    mode: effect.mode ?? 'relative',
+    steps: effect.steps
   } as const;
 
   if (shape === 'pan-sweep') return [{ ...common, parameter: 'pan' }];
@@ -127,23 +141,26 @@ export function renderCustomEffect(
     cycleBeats: effect.cycleBeats ?? 1
   } as const;
 
-  if (effect.parameter === 'position') {
-    return renderPhaserProgram({
-      ...timing,
-      lanes: motionShapeLanes(effect.motionShape ?? 'circle', {
+  const primaryLanes: PhaserLane[] = effect.parameter === 'position'
+    ? motionShapeLanes(effect.motionShape ?? 'circle', {
         waveform: effect.waveform,
         depth: effect.depth,
         offset: effect.offset,
-        mode: effect.mode ?? 'relative'
+        mode: effect.mode ?? 'relative',
+        steps: effect.steps
       })
-    }, fixtures, elapsedMs, baseUniverse);
-  }
+    : [{
+        parameter: effect.parameter,
+        waveform: effect.waveform,
+        depth: effect.depth,
+        offset: effect.offset,
+        mode: effect.mode ?? 'absolute',
+        steps: effect.steps
+      }];
 
-  return renderPhaserEffect({
-    ...effect,
+  return renderPhaserProgram({
     ...timing,
-    parameter: effect.parameter,
-    mode: effect.mode ?? 'absolute'
+    lanes: [...primaryLanes, ...(effect.lanes ?? [])]
   }, fixtures, elapsedMs, baseUniverse);
 }
 
