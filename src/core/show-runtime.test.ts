@@ -217,6 +217,42 @@ describe('ShowRuntime', () => {
     expect(mastered.frame[4]).toBe(50);
   });
 
+  it('keeps the main FX layer running underneath an independent hit layer', () => {
+    const runtime = new ShowRuntime({ patch: DEFAULT_PATCH });
+
+    runtime.dispatch(controlCommand('fx', {
+      type: 'playback.layer.set',
+      universe: 1,
+      layerId: 'fx',
+      priority: 30,
+      mode: 'ltp',
+      updates: [[1, 20], [5, 120]]
+    }));
+
+    const hit = runtime.dispatch(controlCommand('surface', {
+      type: 'playback.layer.set',
+      universe: 1,
+      layerId: 'hit',
+      priority: 80,
+      mode: 'ltp',
+      updates: [[1, 255], [5, 255]]
+    }));
+
+    expect(hit.frame[0]).toBe(255);
+    expect(hit.frame[4]).toBe(255);
+
+    const released = runtime.dispatch(controlCommand('surface', {
+      type: 'playback.layer.clear',
+      universe: 1,
+      layerId: 'hit'
+    }));
+
+    expect(released.frame[0]).toBe(20);
+    expect(released.frame[4]).toBe(120);
+    expect(released.baseFrame[0]).toBe(0);
+    expect(released.baseFrame[4]).toBe(0);
+  });
+
   it('supports HTP hit layers without letting a lower hit pull intensity down', () => {
     const runtime = new ShowRuntime({ patch: DEFAULT_PATCH });
     runtime.dispatch(controlCommand('ui', {

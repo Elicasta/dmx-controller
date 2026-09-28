@@ -11,7 +11,7 @@ import {
   VISIBLE_CHANNELS,
   type DmxUpdate
 } from './lib/dmx';
-import { EFFECT_PRESETS, EFFECT_SHAPES, effectWaveValue, renderEffect, renderCustomEffect, type CustomEffect, type EffectId, type EffectParameter, type EffectPreset, type EffectWaveform } from './lib/effects';
+import { EFFECT_PRESETS, EFFECT_SHAPES, effectWaveValue, renderEffect, renderCustomEffect, type CustomEffect, type CustomEffectParameter, type EffectId, type EffectPreset, type EffectWaveform, type MotionShape } from './lib/effects';
 import {
   DEFAULT_PATCH,
   FIXTURE_LIBRARY,
@@ -341,8 +341,9 @@ function isCustomEffect(value: unknown): value is CustomEffect {
   const effect = value as Partial<CustomEffect>;
   return typeof effect.id === 'string'
     && typeof effect.name === 'string'
-    && ['dimmer', 'pan', 'tilt', 'uv'].includes(String(effect.parameter))
+    && ['dimmer', 'pan', 'tilt', 'uv', 'position'].includes(String(effect.parameter))
     && ['sine', 'triangle', 'square', 'saw', 'reverse-saw', 'step'].includes(String(effect.waveform))
+    && (effect.motionShape === undefined || ['circle', 'figure-eight', 'diagonal', 'pan-sweep', 'tilt-sweep'].includes(String(effect.motionShape)))
     && [effect.bpm, effect.depth, effect.phaseSpread, effect.offset].every((part) => typeof part === 'number' && Number.isFinite(part))
     && (effect.orderMode === undefined || ['forward', 'reverse', 'center-out', 'outside-in', 'odd-even', 'even-odd', 'mirror-pairs'].includes(String(effect.orderMode)))
     && [effect.blocks, effect.groups, effect.wings, effect.shift, effect.cycleBeats].every((part) => part === undefined || (typeof part === 'number' && Number.isFinite(part)))
@@ -726,12 +727,7 @@ export default function App() {
   const effectAnimationRef = useRef<number | null>(null);
   const effectStartedRef = useRef(0);
   const effectBaseUniverseRef = useRef<number[]>(makeUniverse());
-  const momentaryEffectRef = useRef<{
-    effect: EffectId;
-    previousEffect: EffectId | null;
-    previousCustomEffectId: string | null;
-    previousTargetIds: string[];
-  } | null>(null);
+  const momentaryEffectRef = useRef<{ effect: EffectId } | null>(null);
   const [effectBpm, setEffectBpm] = useState(120);
   const [effectDepth, setEffectDepth] = useState(100);
   const effectBpmRef = useRef(effectBpm);
@@ -1034,8 +1030,7 @@ export default function App() {
     setIsFading(false);
   }
 
-  function stopEffect(announce = true, clearLayer = true) {
-    momentaryEffectRef.current = null;
+  function stopEffect(announce = true, clearLayer = true, clearHit = true) {
     activeEffectRef.current = null;
     activeCustomEffectIdRef.current = null;
     effectTargetIdsRef.current = [];
@@ -1043,6 +1038,7 @@ export default function App() {
     setActiveCustomEffectId(null);
     if (effectAnimationRef.current !== null) window.cancelAnimationFrame(effectAnimationRef.current);
     effectAnimationRef.current = null;
+
     if (clearLayer && runtimeRef.current) {
       void dispatchControl({
         type: 'playback.layer.clear',
@@ -1050,7 +1046,17 @@ export default function App() {
         layerId: 'fx'
       }, 'fx');
     }
-    if (announce) setMessage('Effect stopped. The underlying cue/programmer look is restored.');
+
+    if (clearHit && runtimeRef.current) {
+      momentaryEffectRef.current = null;
+      void dispatchControl({
+        type: 'playback.layer.clear',
+        universe: 1,
+        layerId: 'hit'
+      }, 'surface');
+    }
+
+    if (announce) setMessage('Effects stopped. The underlying cue/programmer look is restored.');
   }
 
   async function publishRuntimeResult(result: RuntimeDispatchResult) {
@@ -1237,7 +1243,7 @@ export default function App() {
       return false;
     }
     stopFade();
-    stopEffect(false, false);
+    stopEffect(false, false, false);
     setAudioArmed(false);
     const preset = EFFECT_PRESETS.find((item) => item.id === effect);
     effectTargetIdsRef.current = targets.map((fixture) => fixture.id);
@@ -1294,32 +1300,59 @@ export default function App() {
 
   function startMomentaryEffect(effect: EffectId, targetIds?: readonly string[]) {
     if (momentaryEffectRef.current?.effect === effect) return;
-    const previousEffect = activeEffectRef.current;
-    const previousCustomEffectId = activeCustomEffectIdRef.current;
-    const previousTargetIds = [...effectTargetIdsRef.current];
-    if (!startEffect(effect, targetIds)) return;
-    momentaryEffectRef.current = { effect, previousEffect, previousCustomEffectId, previousTargetIds };
+
+    const requested = targetIds?.length
+      ? [...targetIds]
+      : selectedFixtures(patchRef.current).map((fixture) => fixture.id);
+    const targets = requested
+      .map((id) => patchRef.current.find((fixture) => fixture.id === id))
+      .filter((fixture): fixture is PatchedFixture => Boolean(fixture));
+
+    if (!effectSupportedByFixtures(effect, targets)) {
+      setMessage(targets.length ? 'That hit is not supported by the selected fixture capabilities.' : 'Select a fixture or group before firing a hit.');
+      return;
+    }
+
     const preset = EFFECT_PRESETS.find((item) => item.id === effect);
-    setMessage(`${preset?.name ?? effect} held — release to restore the previous playback layer.`);
+    if (!preset?.momentary) {
+      startEffect(effect, requested);
+      return;
+    }
+
+    const hitFixtures = targets.map((fixture) => ({ ...fixture, selected: true }));
+    const bpm = tempoSourceRef.current === 'midi' && midiBpmRef.current ? midiBpmRef.current : effectBpmRef.current;
+    const dimmerChannels = new Set(patchRef.current.map((fixture) => parameterChannel(fixture, 'dimmer')).filter(Boolean));
+    const masterCap = percentToDmx(settingsRef.current.masterLimit);
+    const updates = renderEffect(effect, hitFixtures, 0, bpm, effectDepthRef.current / 100)
+      .map(([channel, value]) => [channel, dimmerChannels.has(channel) ? Math.min(value, masterCap) : value] as const);
+
+    momentaryEffectRef.current = { effect };
+    void dispatchControl({
+      type: 'playback.layer.set',
+      universe: 1,
+      layerId: 'hit',
+      priority: 80,
+      mode: effect === 'bump' ? 'htp' : 'ltp',
+      updates
+    }, 'surface');
+
+    setMessage(`${preset.name} held over the current cue/FX. Release removes only the hit.`);
   }
 
   function releaseMomentaryEffect(effect: EffectId) {
     const held = momentaryEffectRef.current;
     if (!held || held.effect !== effect) return;
-    const previousCustom = held.previousCustomEffectId
-      ? customEffects.find((item) => item.id === held.previousCustomEffectId) ?? null
-      : null;
-    const willResume = Boolean(held.previousEffect || previousCustom);
+
     momentaryEffectRef.current = null;
-    stopEffect(false, !willResume);
     const preset = EFFECT_PRESETS.find((item) => item.id === effect);
-    if (held.previousEffect) {
-      startEffect(held.previousEffect, held.previousTargetIds);
-    } else if (previousCustom) {
-      runCustomFx(previousCustom, held.previousTargetIds);
-    } else {
-      setMessage(`${preset?.name ?? effect} released. Underlying look restored.`);
-    }
+
+    void dispatchControl({
+      type: 'playback.layer.clear',
+      universe: 1,
+      layerId: 'hit'
+    }, 'surface').then(() => {
+      setMessage(`${preset?.name ?? effect} released. Running FX continues underneath.`);
+    });
   }
 
   function tapTempo() {
@@ -2892,7 +2925,7 @@ export default function App() {
       return;
     }
     stopFade();
-    stopEffect(false, false);
+    stopEffect(false, false, false);
     setAudioArmed(false);
     effectTargetIdsRef.current = effectFixtures.filter((fixture) => fixture.selected).map((fixture) => fixture.id);
     effectBaseUniverseRef.current = [...universeRef.current];
@@ -3493,9 +3526,13 @@ export default function App() {
                 <header><span>FX PARAMETERS</span><small>Graphical generator</small></header>
                 <label><span>Name</span><input value={fxEditor.name} onChange={(event) => setFxEditor((current) => ({ ...current, name: event.target.value }))}/></label>
                 <div className="inspector-pair">
-                  <label><span>Parameter</span><select value={fxEditor.parameter} onChange={(event) => setFxEditor((current) => ({ ...current, parameter: event.target.value as EffectParameter }))}><option value="dimmer">Dimmer</option><option value="pan">Pan</option><option value="tilt">Tilt</option><option value="uv">UV</option></select></label>
+                  <label><span>Parameter</span><select value={fxEditor.parameter} onChange={(event) => { const parameter = event.target.value as CustomEffectParameter; setFxEditor((current) => ({ ...current, parameter, motionShape: parameter === 'position' ? current.motionShape ?? 'circle' : current.motionShape, mode: parameter === 'position' ? 'relative' : current.mode })); }}><option value="dimmer">Dimmer</option><option value="position">Position (Pan + Tilt)</option><option value="pan">Pan Only</option><option value="tilt">Tilt Only</option><option value="uv">UV</option></select></label>
                   <label><span>Waveform</span><select value={fxEditor.waveform} onChange={(event) => setFxEditor((current) => ({ ...current, waveform: event.target.value as EffectWaveform }))}><option value="sine">Sine</option><option value="triangle">Triangle</option><option value="square">Square</option><option value="saw">Saw</option><option value="reverse-saw">Reverse Saw</option><option value="step">Step</option></select></label>
                 </div>
+                {fxEditor.parameter === 'position' && <div className="inspector-pair">
+                  <label><span>Motion Shape</span><select value={fxEditor.motionShape ?? 'circle'} onChange={(event) => setFxEditor((current) => ({ ...current, motionShape: event.target.value as MotionShape }))}><option value="circle">Circle</option><option value="figure-eight">Figure Eight</option><option value="diagonal">Diagonal</option><option value="pan-sweep">Pan Sweep</option><option value="tilt-sweep">Tilt Sweep</option></select></label>
+                  <label><span>Movement</span><strong className="fx-semantic-readout">16-bit Pan + Tilt · relative to current look</strong></label>
+                </div>}
                 <div className="inspector-pair">
                   <label><span>Fixture Order</span><select value={fxEditor.orderMode ?? 'forward'} onChange={(event) => setFxEditor((current) => ({ ...current, orderMode: event.target.value as CustomEffect['orderMode'] }))}><option value="forward">Forward</option><option value="reverse">Reverse</option><option value="center-out">Center Out</option><option value="outside-in">Outside In</option><option value="mirror-pairs">Mirror Pairs</option><option value="odd-even">Odd → Even</option><option value="even-odd">Even → Odd</option></select></label>
                   <label><span>Direction</span><select value={fxEditor.direction ?? 'forward'} onChange={(event) => setFxEditor((current) => ({ ...current, direction: event.target.value as CustomEffect['direction'] }))}><option value="forward">Forward</option><option value="reverse">Reverse</option></select></label>
@@ -3528,7 +3565,7 @@ export default function App() {
               <header><div><span>FX BANK</span><strong>Factory + saved custom effects</strong></div><small>{EFFECT_PRESETS.length + customEffects.length} effects</small></header>
               <div className="fx-bank-grid">
                 {EFFECT_PRESETS.map((effect) => <button key={effect.id} className={`${selectedFxBankId === effect.id ? 'selected' : ''} ${activeEffect === effect.id ? 'running' : ''}`} onClick={() => loadFactoryFx(effect)} onDoubleClick={() => toggleEffect(effect.id, programEffectFixtures.map((fixture) => fixture.id))}><i className={`fx-icon fx-${effect.id}`}/><span><strong>{effect.name}</strong><small>{EFFECT_SHAPES[effect.id].waveform} · {effect.defaultBpm} BPM</small></span><b>{activeEffect === effect.id ? 'LIVE' : 'FACTORY'}</b></button>)}
-                {customEffects.map((effect) => <article key={effect.id} className={`${selectedFxBankId === effect.id ? 'selected' : ''} ${activeCustomEffectId === effect.id ? 'running' : ''}`}><button className="fx-bank-load" onClick={() => { setSelectedFxBankId(effect.id); setFxEditor(effect); }} onDoubleClick={() => runCustomFx(effect, programEffectFixtures.map((fixture) => fixture.id))}><i>∿</i><span><strong>{effect.name}</strong><small>{effect.waveform} · {effect.bpm} BPM</small></span><b>{activeCustomEffectId === effect.id ? 'LIVE' : 'CUSTOM'}</b></button><button className="fx-bank-delete" aria-label={`Delete ${effect.name}`} onClick={() => deleteCustomFx(effect.id)}>×</button></article>)}
+                {customEffects.map((effect) => <article key={effect.id} className={`${selectedFxBankId === effect.id ? 'selected' : ''} ${activeCustomEffectId === effect.id ? 'running' : ''}`}><button className="fx-bank-load" onClick={() => { setSelectedFxBankId(effect.id); setFxEditor(effect); }} onDoubleClick={() => runCustomFx(effect, programEffectFixtures.map((fixture) => fixture.id))}><i>∿</i><span><strong>{effect.name}</strong><small>{effect.parameter === 'position' ? (effect.motionShape ?? 'circle').replace('-', ' ') : effect.waveform} · {effect.bpm} BPM</small></span><b>{activeCustomEffectId === effect.id ? 'LIVE' : 'CUSTOM'}</b></button><button className="fx-bank-delete" aria-label={`Delete ${effect.name}`} onClick={() => deleteCustomFx(effect.id)}>×</button></article>)}
               </div>
               <footer><span>Single click loads an effect into the graph. Double-click a bank item to run it immediately.</span><button onClick={() => { setFxEditor({ id: 'custom-preview', name: 'New FX', parameter: 'dimmer', waveform: 'sine', bpm: 100, depth: 100, phaseSpread: 0, offset: 0, orderMode: 'forward', blocks: 1, groups: 1, wings: 1, shift: 0, direction: 'forward', cycleBeats: 1, mode: 'absolute' }); setSelectedFxBankId('custom-preview'); }}>＋ NEW FX</button></footer>
             </section>

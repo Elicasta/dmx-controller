@@ -56,6 +56,14 @@ Current controls:
 
 Relative mode offsets the fixture's current attribute value instead of replacing it. This allows one movement effect to be reused over many looks.
 
+The phaser core also supports multi-lane movement. The FX editor now exposes semantic Position effects that drive paired 16-bit Pan/Tilt as:
+
+- Circle
+- Figure Eight
+- Diagonal
+- Pan Sweep
+- Tilt Sweep
+
 ### cue tracking + timing
 
 Cue tracking is now active in the real cue stack, not just a helper:
@@ -98,7 +106,7 @@ Current runtime order is:
 5. Grand master
 6. Hardware output
 
-Momentary hits use a higher-priority layer and can temporarily replace an existing factory or custom effect without destroying it.
+Momentary hits use a dedicated higher-priority `hit` layer. Bump and Blinder no longer stop or restart the main `fx` layer. Releasing the button removes only the hit, so the running movement/chase continues at the same phase underneath.
 
 ## Spatial positions
 
@@ -131,6 +139,8 @@ The FX editor exposes saved group order all the way into phase assignment, plus:
 - Wings
 - Shift
 - 0–200% phase spread
+- Paired Position (Pan + Tilt)
+- Circle / Figure Eight / Diagonal / Pan Sweep / Tilt Sweep
 
 The stage AIM controls expose:
 
@@ -142,14 +152,14 @@ The stage AIM controls expose:
 
 ## Next engine steps
 
-1. Multi-attribute phasers so Pan + Tilt + Zoom can live in one effect.
-2. Step-based phasers with per-step width, transition, acceleration, and deceleration.
-3. Selection grids persisted on fixture groups.
-4. Dedicated Busk and hit layers with explicit priority controls.
-5. N-shot effects and one-shot hits.
-6. Song-section recipes driven by LumaStudio/Ableton transport.
-7. Art-Net/sACN multi-universe output at a fixed render cadence.
-8. Visualizer preview of phaser geometry before output.
+1. Step-based phasers with per-step width, transition, acceleration, and deceleration.
+2. Selection grids persisted on fixture groups.
+3. Dedicated Busk override layer with explicit priority controls.
+4. N-shot effects and one-shot hits.
+5. Song-section recipes driven by LumaStudio/Ableton transport.
+6. Art-Net/sACN multi-universe output at a fixed render cadence.
+7. Visualizer preview of phaser geometry before output.
+8. Add Zoom / Iris / Focus lanes to multi-attribute movement recipes.
 
 ## Reference concepts
 
