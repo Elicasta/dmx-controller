@@ -84,4 +84,34 @@ describe('portable effects', () => {
     const second = { ...DEFAULT_PATCH[0], id: 'second', address: 11, selected: true };
     expect(renderEffect('chase', [second, first], 0, 120, 1)).toEqual([[15, 255], [5, 0]]);
   });
+
+  it('combines a primary movement shape with independent semantic lanes', () => {
+    const fixture: PatchedFixture = { id: 'combo', name: 'Combo', profileId: 'generic-moving-head', modeId: '14ch-common', address: 20, group: 'Moving', selected: true, collapsed: false };
+    const effect: CustomEffect = {
+      id: 'combo-step',
+      name: 'Combo Step',
+      parameter: 'position',
+      motionShape: 'circle',
+      waveform: 'sine',
+      bpm: 120,
+      depth: 30,
+      phaseSpread: 0,
+      offset: 0,
+      mode: 'relative',
+      lanes: [{
+        parameter: 'dimmer',
+        waveform: 'step',
+        depth: 100,
+        offset: 0,
+        steps: [
+          { value: 100, width: 1, transition: 0 },
+          { value: 0, width: 1, transition: 0 }
+        ]
+      }]
+    };
+    const channels = renderCustomEffect(effect, [fixture], 0, Array(512).fill(0)).map(([channel]) => channel);
+    expect(channels).toContain(27);
+    expect(channels).toEqual(expect.arrayContaining([20, 21, 22, 23]));
+  });
+
 });
