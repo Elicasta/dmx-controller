@@ -565,6 +565,9 @@ export default function App() {
   const [liveBank, setLiveBank] = useState<LiveBank>('fixtures');
   const [liveProgrammerOpen, setLiveProgrammerOpen] = useState(false);
   const [livePaletteFamily, setLivePaletteFamily] = useState<LivePaletteFamily>('groups');
+  const buskLayerRef = useRef<Map<number, number>>(new Map());
+  const [buskActive, setBuskActive] = useState(false);
+  const [buskChannelCount, setBuskChannelCount] = useState(0);
   const [settings, setSettings] = useState<AppSettings>(loadSettings);
   const settingsRef = useRef(settings);
   const [artNetTelemetry, setArtNetTelemetry] = useState({ framesSent: 0, lastError: "" });
@@ -1203,6 +1206,129 @@ export default function App() {
     };
 
     fadeAnimationRef.current = requestAnimationFrame(tick);
+  }
+
+  function applyBuskUpdates(updates: ReadonlyArray<DmxUpdate>, label: string) {
+    if (!updates.length) {
+      setMessage(`${label}: no supported attributes on the current selection.`);
+      return;
+    }
+
+    for (const [channel, value] of updates) {
+      buskLayerRef.current.set(channel, clampDmx(value));
+    }
+
+    const merged = [...buskLayerRef.current.entries()] as DmxUpdate[];
+    setBuskActive(merged.length > 0);
+    setBuskChannelCount(merged.length);
+
+    void dispatchControl({
+      type: 'playback.layer.set',
+      universe: 1,
+      layerId: 'busk',
+      priority: 50,
+      mode: 'ltp',
+      updates: merged
+    }, 'surface');
+
+    setMessage(`${label} added to BUSK · ${merged.length} overridden channel${merged.length === 1 ? '' : 's'}.`);
+  }
+
+  function clearBusk() {
+    buskLayerRef.current.clear();
+    setBuskActive(false);
+    setBuskChannelCount(0);
+    void dispatchControl({
+      type: 'playback.layer.clear',
+      universe: 1,
+      layerId: 'busk'
+    }, 'surface').then(() => {
+      setMessage('BUSK released. The running cue and FX are visible again.');
+    });
+  }
+
+  function applyBuskIntensity(percent: number) {
+    const value = percentToDmx(Math.max(0, Math.min(100, percent)));
+    const updates = selectedFixtureTargets
+      .map((fixture) => fixtureParameterUpdate(fixture, 'dimmer', value))
+      .filter((update): update is DmxUpdate => Boolean(update));
+    applyBuskUpdates(updates, `BUSK intensity ${Math.round(percent)}%`);
+  }
+
+  function applyBuskColor(hex: string) {
+    setGlobalColor(hex);
+    const rgb = hexToRgb(hex);
+    const updates = selectedFixtureTargets.flatMap((fixture) => fixtureColorUpdates(fixture, rgb));
+    applyBuskUpdates(updates, `BUSK color ${hex.toUpperCase()}`);
+  }
+
+  function applyBuskBeam(name: string, zoom: number, focus: number, iris: number) {
+    const updates = selectedFixtureTargets.flatMap((fixture) => {
+      const values: DmxUpdate[] = [];
+      const zoomUpdate = fixtureParameterUpdate(fixture, 'zoom', zoom);
+      const focusUpdate = fixtureParameterUpdate(fixture, 'focus', focus);
+      const irisUpdate = fixtureParameterUpdate(fixture, 'iris', iris);
+      if (zoomUpdate) values.push(zoomUpdate);
+      if (focusUpdate) values.push(focusUpdate);
+      if (irisUpdate) values.push(irisUpdate);
+      return values;
+    });
+    applyBuskUpdates(updates, `BUSK beam ${name}`);
+  }
+
+  function applyBuskPositionPalette(palette: PositionPalette) {
+    const movingFixtures = selectedMovingFixtures;
+    if (!movingFixtures.length) {
+      setMessage('Select at least one moving fixture before busking a position.');
+      return;
+    }
+
+    if (palette.kind === 'absolute') {
+      const selectedIds = new Set(movingFixtures.map((fixture) => fixture.id));
+      const updates = palette.positions.flatMap((position) => {
+        if (!selectedIds.has(position.fixtureId)) return [];
+        const fixture = patchRef.current.find((item) => item.id === position.fixtureId);
+        return fixture
+          ? fixtureMovementUpdates(fixture, position.panNormalized, position.tiltNormalized)
+          : [];
+      });
+      applyBuskUpdates(updates, `BUSK position ${palette.name}`);
+      return;
+    }
+
+    const stageTarget = stageTargets.find((candidate) => candidate.id === palette.targetId);
+    const target = stageTarget?.position ?? palette.fallbackTarget;
+    const ordered = orderFixtures(
+      movingFixtures.map((fixture) => ({
+        fixture,
+        patchIndex: patchRef.current.findIndex((item) => item.id === fixture.id)
+      })),
+      palette.orderMode ?? 'forward'
+    );
+    const targets = arrangeTargetPoints(target, ordered.length, palette.arrangement, palette.spreadMeters);
+    const warnings: string[] = [];
+    const updates = ordered.flatMap(({ fixture, patchIndex }, targetIndex) => {
+      const solution = aimFixtureAtTarget(
+        outputUniverseRef.current,
+        fixture,
+        targets[targetIndex],
+        patchIndex,
+        patchRef.current.length,
+        stageSettings.dimensions
+      );
+      if (!solution) {
+        warnings.push(`${fixture.name} has no Pan/Tilt geometry`);
+        return [];
+      }
+      if (!solution.reachable) {
+        warnings.push(`${fixture.name} cannot reach ${palette.targetName}`);
+        return [];
+      }
+      return solution.updates;
+    });
+
+    applyBuskUpdates(updates, `BUSK position ${palette.name}`);
+    if (warnings.length) setMessage(`${palette.name}: ${warnings.join(' · ')}`);
   }
 
   function runLook(look: FixtureLook, duration = fadeMs) {
@@ -3667,18 +3793,19 @@ export default function App() {
 
         {liveView === 'performance' && liveProgrammerOpen && <section className="live-programmer-drawer">
           <header>
-            <div><span>LIVE PROGRAMMER</span><strong>{selectedFixtureTargets.length ? `${selectedFixtureTargets.length} selected` : 'Select a group or fixture'}</strong></div>
+            <div><span>BUSK PROGRAMMER</span><strong>{buskActive ? `${buskChannelCount} temporary channels` : selectedFixtureTargets.length ? `${selectedFixtureTargets.length} selected` : 'Select a group or fixture'}</strong></div>
             <nav>{(['groups','intensity','position','color','beam','fx'] as LivePaletteFamily[]).map((family)=><button key={family} className={livePaletteFamily===family?'active':''} onClick={()=>setLivePaletteFamily(family)}>{family.toUpperCase()}</button>)}</nav>
+            <button className={`live-busk-release ${buskActive ? 'active' : ''}`} disabled={!buskActive} onClick={clearBusk}>RELEASE</button>
             <button className="live-programmer-close" onClick={()=>setLiveProgrammerOpen(false)}>×</button>
           </header>
           <div className="live-palette-grid">
             {livePaletteFamily==='groups' && <>{fixtureGroups.map((group,index)=><button key={group.id} className={selectedGroupId===group.id?'selected':''} onClick={()=>selectFixtureGroup(group.id)} style={{'--palette-color':group.labelColor} as import('react').CSSProperties}><i/><b>{index+1}</b><span>{group.name}</span><small>{fixturesInGroup(patch,group).length} FIXTURES</small></button>)}</>}
-            {livePaletteFamily==='intensity' && <>{[0,25,50,75,100].map((value)=><button key={value} disabled={!selectedFixtureTargets.length} onClick={()=>selectedFixtureTargets.forEach((fixture)=>void setFixtureAttribute(fixture,'dimmer',percentToDmx(value)))}><b>{value===0?'OUT':value}</b><span>{value===100?'FULL':'Intensity'}</span><small>{value}%</small></button>)}</>}
-            {livePaletteFamily==='position' && <>{(showFile.positionPalettes??[]).map((palette,index)=><button key={palette.id} disabled={!selectedMovingFixtures.length} onClick={()=>void runPositionPalette(palette)}><b>{index+1}</b><span>{palette.name}</span><small>{palette.kind.toUpperCase()}</small></button>)}{!(showFile.positionPalettes??[]).length&&<div className="live-palette-empty">Save position palettes in CREATE and they appear here.</div>}</>}
-            {livePaletteFamily==='color' && <>{consoleColorPresets.map((preset,index)=><button key={preset.name} className="color-palette" disabled={!selectedCompatibleColors.length} onClick={()=>applyGlobalColor(preset.color)} style={{'--palette-color':preset.color} as import('react').CSSProperties}><i/><b>{index+1}</b><span>{preset.name}</span><small>{preset.color.toUpperCase()}</small></button>)}</>}
+            {livePaletteFamily==='intensity' && <>{[0,25,50,75,100].map((value)=><button key={value} disabled={!selectedFixtureTargets.length} onClick={()=>applyBuskIntensity(value)}><b>{value===0?'OUT':value}</b><span>{value===100?'FULL':'Intensity'}</span><small>{value}% · BUSK</small></button>)}</>}
+            {livePaletteFamily==='position' && <>{(showFile.positionPalettes??[]).map((palette,index)=><button key={palette.id} disabled={!selectedMovingFixtures.length} onClick={()=>applyBuskPositionPalette(palette)}><b>{index+1}</b><span>{palette.name}</span><small>{palette.kind.toUpperCase()} · BUSK</small></button>)}{!(showFile.positionPalettes??[]).length&&<div className="live-palette-empty">Save position palettes in CREATE and they appear here.</div>}</>}
+            {livePaletteFamily==='color' && <>{consoleColorPresets.map((preset,index)=><button key={preset.name} className="color-palette" disabled={!selectedCompatibleColors.length} onClick={()=>applyBuskColor(preset.color)} style={{'--palette-color':preset.color} as import('react').CSSProperties}><i/><b>{index+1}</b><span>{preset.name}</span><small>{preset.color.toUpperCase()} · BUSK</small></button>)}</>}
             {livePaletteFamily==='beam' && <>{([
               ['OPEN',255,255,255],['TIGHT',65,180,210],['WIDE',230,110,255],['SOFT',200,80,170]
-            ] as Array<[string,number,number,number]>).map(([name,zoom,focus,iris],index)=><button key={name} disabled={!selectedFixtureTargets.length} onClick={()=>selectedFixtureTargets.forEach((fixture)=>{if(parameterChannel(fixture,'zoom'))void setFixtureAttribute(fixture,'zoom',zoom);if(parameterChannel(fixture,'focus'))void setFixtureAttribute(fixture,'focus',focus);if(parameterChannel(fixture,'iris'))void setFixtureAttribute(fixture,'iris',iris);})}><b>{index+1}</b><span>{name}</span><small>BEAM</small></button>)}</>}
+            ] as Array<[string,number,number,number]>).map(([name,zoom,focus,iris],index)=><button key={name} disabled={!selectedFixtureTargets.length} onClick={()=>applyBuskBeam(name,zoom,focus,iris)}><b>{index+1}</b><span>{name}</span><small>BEAM · BUSK</small></button>)}</>}
             {livePaletteFamily==='fx' && <>{EFFECT_PRESETS.filter((effect)=>effectSupportedByFixtures(effect.id,selectedFixtureTargets)).map((effect,index)=><button key={effect.id} className={activeEffect===effect.id?'selected':''} onClick={()=>toggleEffect(effect.id,selectedFixtureTargets.map((fixture)=>fixture.id))}><b>{index+1}</b><span>{effect.name}</span><small>{effect.defaultBpm} BPM</small></button>)}{customEffects.map((effect,index)=><button key={effect.id} className={activeCustomEffectId===effect.id?'selected':''} disabled={!selectedFixtureTargets.length} onClick={()=>runCustomFx(effect,selectedFixtureTargets.map((fixture)=>fixture.id))}><b>C{index+1}</b><span>{effect.name}</span><small>{effect.waveform.toUpperCase()}</small></button>)}</>}
           </div>
         </section>}
