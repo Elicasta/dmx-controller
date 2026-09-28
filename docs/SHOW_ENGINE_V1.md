@@ -108,6 +108,17 @@ Current runtime order is:
 
 Momentary hits use a dedicated higher-priority `hit` layer. Bump and Blinder no longer stop or restart the main `fx` layer. Releasing the button removes only the hit, so the running movement/chase continues at the same phase underneath.
 
+The live programmer also owns a persistent temporary `busk` layer. Intensity, Color, Position, and Beam palettes merge into that layer instead of rewriting the tracked cue/programmer base. Operators can build a temporary live look across several palette families and remove it with one RELEASE action.
+
+Current live priority is:
+
+1. Base cue / programmer
+2. FX
+3. BUSK
+4. Hit
+5. Group / grand masters
+6. Output
+
 ## Spatial positions
 
 Spatial position palettes now remember fixture order as well as:
@@ -154,7 +165,7 @@ The stage AIM controls expose:
 
 1. Step-based phasers with per-step width, transition, acceleration, and deceleration.
 2. Selection grids persisted on fixture groups.
-3. Dedicated Busk override layer with explicit priority controls.
+3. Busk per-family release controls and optional latch/momentary palette behavior.
 4. N-shot effects and one-shot hits.
 5. Song-section recipes driven by LumaStudio/Ableton transport.
 6. Art-Net/sACN multi-universe output at a fixed render cadence.
