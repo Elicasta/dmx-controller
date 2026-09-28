@@ -145,15 +145,21 @@ export function fixturePhasePositions(
   if (safe === 1) return [0];
 
   const normalized: FixtureOrderSpec = typeof spec === 'string' ? { mode: spec } : spec;
+  if ((normalized.mode ?? 'forward') === 'mirror-pairs'
+      && normalized.wings === undefined
+      && normalized.blocks === undefined
+      && (normalized.groups ?? 1) === 1
+      && (normalized.shift ?? 0) === 0) {
+    const maxTier = Math.max(1, Math.ceil(safe / 2) - 1);
+    return Array.from({ length: safe }, (_, index) => (
+      Math.min(index, safe - 1 - index) / maxTier
+    ));
+  }
+
   const order = fixtureOrderIndices(safe, normalized);
 
-  // Mirror-pairs is a semantic shortcut for symmetric outside-to-center phasing.
-  // Explicit wings/blocks still take precedence so users can build more complex patterns.
-  const implicitWings = (normalized.mode ?? 'forward') === 'mirror-pairs'
-    && normalized.wings === undefined
-    && normalized.blocks === undefined
-    ? 2
-    : 1;
+  // Explicit wings can create repeated/opposed phase ramps across one selection.
+  const implicitWings = 1;
 
   const orderedPhases = blockPhaseRanks(
     safe,
