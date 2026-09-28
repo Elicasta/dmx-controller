@@ -3167,6 +3167,34 @@ export default function App() {
     }));
   }
 
+  function updateGroupGridColumns(group: FixtureGroup, columns: number) {
+    const safeColumns = Math.max(1, Math.min(12, Math.round(columns)));
+    const currentGrid = normalizeSelectionGrid(group.selectionGrid ?? makeSelectionGrid(group.fixtureOrder), group.fixtureOrder);
+    const selectionGrid = normalizeSelectionGrid({
+      ...currentGrid,
+      columns: safeColumns,
+      rows: Math.max(1, Math.ceil(Math.max(1, group.fixtureOrder.length) / safeColumns))
+    }, group.fixtureOrder);
+    updateFixtureGroup(group.id, { selectionGrid });
+  }
+
+  function updateGroupGridTraversal(group: FixtureGroup, traversal: SelectionGridTraversal) {
+    const currentGrid = normalizeSelectionGrid(group.selectionGrid ?? makeSelectionGrid(group.fixtureOrder), group.fixtureOrder);
+    updateFixtureGroup(group.id, { selectionGrid: { ...currentGrid, traversal } });
+  }
+
+  function handleGroupGridCell(group: FixtureGroup, row: number, column: number) {
+    const grid = normalizeSelectionGrid(group.selectionGrid ?? makeSelectionGrid(group.fixtureOrder), group.fixtureOrder);
+    const occupant = grid.cells.find((cell) => cell.row === row && cell.column === column);
+    if (!groupGridFixtureId) {
+      if (occupant) setGroupGridFixtureId(occupant.fixtureId);
+      return;
+    }
+    const selectionGrid = moveFixtureInSelectionGrid(grid, group.fixtureOrder, groupGridFixtureId, row, column);
+    updateFixtureGroup(group.id, { selectionGrid });
+    setGroupGridFixtureId(null);
+  }
+
   function deleteFixtureGroup(groupId: string) {
     const group = fixtureGroups.find((item) => item.id === groupId);
     if (!group || !window.confirm(`Delete the ${group.name} group? Fixtures will remain patched and become unassigned.`)) return;
@@ -3282,12 +3310,80 @@ export default function App() {
     }
   }
 
-  function fxGraphPoints(waveform: EffectWaveform, depth = 100, offset = 0) {
+  function fxGraphPoints(waveform: EffectWaveform, depth = 100, offset = 0, steps?: readonly PhaserStep[]) {
     return Array.from({ length: 65 }, (_, index) => {
       const x = index / 64;
-      const y = Math.max(0, Math.min(1, offset / 100 + effectWaveValue(waveform, x) * depth / 100));
+      const source = steps?.length ? phaserStepValue(steps, x) : effectWaveValue(waveform, x);
+      const y = Math.max(0, Math.min(1, offset / 100 + source * depth / 100));
       return `${(x * 600).toFixed(1)},${(120 - y * 100).toFixed(1)}`;
     }).join(' ');
+  }
+
+  function enableStepRecipe() {
+    setFxEditor((current) => ({
+      ...current,
+      waveform: 'step',
+      steps: current.steps?.length ? current.steps : [
+        { value: 100, width: 1, transition: 0, acceleration: 0, deceleration: 0 },
+        { value: 0, width: 1, transition: 0, acceleration: 0, deceleration: 0 }
+      ]
+    }));
+  }
+
+  function updateFxStep(index: number, updates: Partial<PhaserStep>) {
+    setFxEditor((current) => ({
+      ...current,
+      steps: (current.steps ?? []).map((step, stepIndex) => stepIndex === index ? { ...step, ...updates } : step)
+    }));
+  }
+
+  function addFxStep() {
+    setFxEditor((current) => ({
+      ...current,
+      waveform: 'step',
+      steps: [...(current.steps ?? []), { value: 100, width: 1, transition: 0, acceleration: 0, deceleration: 0 }].slice(0, 16)
+    }));
+  }
+
+  function moveFxStep(index: number, direction: -1 | 1) {
+    setFxEditor((current) => {
+      const steps = [...(current.steps ?? [])];
+      const target = index + direction;
+      if (target < 0 || target >= steps.length) return current;
+      [steps[index], steps[target]] = [steps[target], steps[index]];
+      return { ...current, steps };
+    });
+  }
+
+  function removeFxStep(index: number) {
+    setFxEditor((current) => {
+      const steps = (current.steps ?? []).filter((_, stepIndex) => stepIndex !== index);
+      return { ...current, steps: steps.length ? steps : undefined };
+    });
+  }
+
+  function addFxLane() {
+    setFxEditor((current) => ({
+      ...current,
+      lanes: [...(current.lanes ?? []), {
+        parameter: 'dimmer',
+        waveform: 'sine',
+        depth: 100,
+        offset: 0,
+        mode: 'absolute'
+      } as CustomEffectLane].slice(0, 8)
+    }));
+  }
+
+  function updateFxLane(index: number, updates: Partial<CustomEffectLane>) {
+    setFxEditor((current) => ({
+      ...current,
+      lanes: (current.lanes ?? []).map((lane, laneIndex) => laneIndex === index ? { ...lane, ...updates } : lane)
+    }));
+  }
+
+  function removeFxLane(index: number) {
+    setFxEditor((current) => ({ ...current, lanes: (current.lanes ?? []).filter((_, laneIndex) => laneIndex !== index) }));
   }
 
   function loadFactoryFx(effect: EffectPreset) {
@@ -3301,7 +3397,15 @@ export default function App() {
       bpm: effect.defaultBpm,
       depth: 100,
       phaseSpread: shape.phaseSpread,
-      offset: 0
+      offset: 0,
+      orderMode: 'forward',
+      blocks: 1,
+      groups: 1,
+      wings: 1,
+      shift: 0,
+      direction: 'forward',
+      cycleBeats: 1,
+      mode: 'absolute'
     });
   }
 
@@ -3312,8 +3416,38 @@ export default function App() {
       name: cleanName,
       bpm: Math.max(20, Math.min(300, fxEditor.bpm)),
       depth: Math.max(0, Math.min(100, fxEditor.depth)),
-      phaseSpread: Math.max(0, Math.min(100, fxEditor.phaseSpread)),
-      offset: Math.max(0, Math.min(100, fxEditor.offset)),
+      phaseSpread: Math.max(0, Math.min(200, fxEditor.phaseSpread)),
+      offset: Math.max(-100, Math.min(100, fxEditor.offset)),
+      orderMode: fxEditor.orderMode ?? 'forward',
+      blocks: Math.max(1, Math.min(64, Math.round(fxEditor.blocks ?? 1))),
+      groups: Math.max(1, Math.min(64, Math.round(fxEditor.groups ?? 1))),
+      wings: Math.max(1, Math.min(16, Math.round(fxEditor.wings ?? 1))),
+      shift: Math.max(-256, Math.min(256, Math.round(fxEditor.shift ?? 0))),
+      direction: fxEditor.direction ?? 'forward',
+      cycleBeats: Math.max(.125, Math.min(32, fxEditor.cycleBeats ?? 1)),
+      mode: fxEditor.mode ?? 'absolute',
+      steps: fxEditor.steps?.slice(0, 16).map((step) => ({
+        value: Math.max(0, Math.min(100, step.value)),
+        width: Math.max(.01, Math.min(1000, step.width ?? 1)),
+        transition: Math.max(0, Math.min(100, step.transition ?? 0)),
+        acceleration: Math.max(0, Math.min(100, step.acceleration ?? 0)),
+        deceleration: Math.max(0, Math.min(100, step.deceleration ?? 0))
+      })),
+      lanes: fxEditor.lanes?.slice(0, 8).map((lane) => ({
+        ...lane,
+        depth: Math.max(0, Math.min(100, lane.depth)),
+        offset: Math.max(-100, Math.min(100, lane.offset)),
+        phaseOffset: Math.max(-8, Math.min(8, lane.phaseOffset ?? 0)),
+        rateMultiplier: Math.max(.125, Math.min(8, lane.rateMultiplier ?? 1)),
+        mode: lane.mode ?? 'absolute',
+        steps: lane.steps?.slice(0, 16).map((step) => ({
+          value: Math.max(0, Math.min(100, step.value)),
+          width: Math.max(.01, Math.min(1000, step.width ?? 1)),
+          transition: Math.max(0, Math.min(100, step.transition ?? 0)),
+          acceleration: Math.max(0, Math.min(100, step.acceleration ?? 0)),
+          deceleration: Math.max(0, Math.min(100, step.deceleration ?? 0))
+        }))
+      })),
       id: fxEditor.id.startsWith('custom-') && fxEditor.id !== 'custom-preview'
         ? fxEditor.id
         : `custom-${Date.now().toString(36)}`
@@ -3831,6 +3965,24 @@ export default function App() {
             <label><span>Master Brightness Default</span><input type="range" min="0" max="100" value={selectedGroup.masterDefault} onChange={(event) => updateFixtureGroup(selectedGroup.id, { masterDefault: Number(event.target.value) })} /><b>{selectedGroup.masterDefault}%</b></label>
             <label className="inspector-toggle"><span>FX Enabled</span><input type="checkbox" checked={selectedGroup.fxEnabled} onChange={(event) => updateFixtureGroup(selectedGroup.id, { fxEnabled: event.target.checked })} /></label>
             <label><span>Group Notes</span><textarea maxLength={500} value={selectedGroup.notes} onChange={(event) => updateFixtureGroup(selectedGroup.id, { notes: event.target.value })} /></label>
+            {selectedGroupGrid && <section className="selection-grid-editor">
+              <header><span>SELECTION GRID</span><small>{selectedGroupGrid.rows} × {selectedGroupGrid.columns}</small></header>
+              <div className="selection-grid-controls">
+                <label><span>Columns</span><input type="number" min="1" max="12" value={selectedGroupGrid.columns} onChange={(event) => updateGroupGridColumns(selectedGroup, Number(event.target.value))}/></label>
+                <label><span>Traversal</span><select value={selectedGroupGrid.traversal} onChange={(event) => updateGroupGridTraversal(selectedGroup, event.target.value as SelectionGridTraversal)}><option value="row">Rows</option><option value="column">Columns</option><option value="snake-row">Snake Rows</option><option value="snake-column">Snake Columns</option></select></label>
+              </div>
+              <p>{groupGridFixtureId ? 'Choose a destination cell. Occupied cells swap positions.' : 'Select a fixture, then select its destination cell.'}</p>
+              <div className="selection-grid-cells" style={{ gridTemplateColumns: `repeat(${selectedGroupGrid.columns}, minmax(0, 1fr))` }}>
+                {Array.from({ length: selectedGroupGrid.rows * selectedGroupGrid.columns }, (_, index) => {
+                  const row = Math.floor(index / selectedGroupGrid.columns);
+                  const column = index % selectedGroupGrid.columns;
+                  const cell = selectedGroupGrid.cells.find((item) => item.row === row && item.column === column);
+                  const fixture = cell ? selectedGroupFixtures.find((item) => item.id === cell.fixtureId) : null;
+                  return <button key={`${row}-${column}`} className={cell?.fixtureId === groupGridFixtureId ? 'selected' : ''} onClick={() => handleGroupGridCell(selectedGroup, row, column)}><small>{row + 1}.{column + 1}</small><strong>{fixture?.name ?? 'Empty'}</strong></button>;
+                })}
+              </div>
+            </section>}
+
             <button className="console-primary" disabled={!assignmentIds.length} onClick={() => assignCheckedFixtures()}>Assign Selected ({assignmentIds.length})</button><button onClick={createFixtureGroup}>＋ Create Group</button><button className="danger-button" onClick={() => deleteFixtureGroup(selectedGroup.id)}>Delete Group</button>
           </> : setupView === 'stage' && selectedStageElement ? <>
             <header><span>STAGE OBJECT</span><strong>{selectedStageElement.label}</strong><small>{selectedStageElement.type}</small></header>
@@ -3921,20 +4073,22 @@ export default function App() {
 
             <div className="fx-editor-layout">
               <section className="fx-graph-editor">
-                <header><span>WAVEFORM</span><strong>{fxEditor.waveform.toUpperCase()} · {fxEditor.parameter.toUpperCase()}</strong></header>
+                <header><span>{fxEditor.steps?.length ? 'STEP RECIPE' : 'WAVEFORM'}</span><strong>{fxEditor.steps?.length ? `${fxEditor.steps.length} STEPS` : fxEditor.waveform.toUpperCase()} · {fxEditor.parameter.toUpperCase()}</strong></header>
                 <div className="fx-graph-canvas">
                   <svg viewBox="0 0 600 120" preserveAspectRatio="none" aria-label="FX waveform preview">
                     <defs><pattern id="fx-grid-v4" width="75" height="30" patternUnits="userSpaceOnUse"><path d="M 75 0 L 0 0 0 30" fill="none" stroke="rgba(115,132,142,.18)" strokeWidth="1"/></pattern></defs>
                     <rect width="600" height="120" fill="url(#fx-grid-v4)"/>
                     <line x1="0" y1="110" x2="600" y2="110" stroke="rgba(115,132,142,.28)" strokeWidth="1"/>
-                    <polyline className={activeCustomEffectId === fxEditor.id ? 'running' : ''} points={fxGraphPoints(fxEditor.waveform, fxEditor.depth, fxEditor.offset)} fill="none" strokeWidth="3" vectorEffect="non-scaling-stroke"/>
+                    <polyline className={activeCustomEffectId === fxEditor.id ? 'running' : ''} points={fxGraphPoints(fxEditor.waveform, fxEditor.depth, fxEditor.offset, fxEditor.steps)} fill="none" strokeWidth="3" vectorEffect="non-scaling-stroke"/>
                   </svg>
                 </div>
                 <div className="fx-editor-readouts">
                   <span><small>BPM</small><strong>{fxEditor.bpm}</strong></span>
                   <span><small>DEPTH</small><strong>{fxEditor.depth}%</strong></span>
                   <span><small>PHASE</small><strong>{fxEditor.phaseSpread}%</strong></span>
-                  <span><small>BASE</small><strong>{fxEditor.offset}%</strong></span>
+                  <span><small>{(fxEditor.mode ?? 'absolute') === 'relative' ? 'BIAS' : 'BASE'}</small><strong>{fxEditor.offset}%</strong></span>
+                  <span><small>ORDER</small><strong>{(fxEditor.orderMode ?? 'forward').replace('-', ' ')}</strong></span>
+                  <span><small>LANES</small><strong>{(fxEditor.lanes?.length ?? 0) + (fxEditor.parameter === 'position' ? 2 : 1)}</strong></span>
                   <span><small>TARGETS</small><strong>{programEffectFixtures.length}</strong></span>
                 </div>
               </section>
@@ -3943,13 +4097,60 @@ export default function App() {
                 <header><span>FX PARAMETERS</span><small>Graphical generator</small></header>
                 <label><span>Name</span><input value={fxEditor.name} onChange={(event) => setFxEditor((current) => ({ ...current, name: event.target.value }))}/></label>
                 <div className="inspector-pair">
-                  <label><span>Parameter</span><select value={fxEditor.parameter} onChange={(event) => setFxEditor((current) => ({ ...current, parameter: event.target.value as EffectParameter }))}><option value="dimmer">Dimmer</option><option value="pan">Pan</option><option value="tilt">Tilt</option><option value="uv">UV</option></select></label>
+                  <label><span>Parameter</span><select value={fxEditor.parameter} onChange={(event) => { const parameter = event.target.value as CustomEffectParameter; setFxEditor((current) => ({ ...current, parameter, motionShape: parameter === 'position' ? current.motionShape ?? 'circle' : current.motionShape, mode: parameter === 'position' ? 'relative' : current.mode })); }}><option value="dimmer">Dimmer</option><option value="position">Position (Pan + Tilt)</option><option value="pan">Pan Only</option><option value="tilt">Tilt Only</option><option value="uv">UV</option></select></label>
                   <label><span>Waveform</span><select value={fxEditor.waveform} onChange={(event) => setFxEditor((current) => ({ ...current, waveform: event.target.value as EffectWaveform }))}><option value="sine">Sine</option><option value="triangle">Triangle</option><option value="square">Square</option><option value="saw">Saw</option><option value="reverse-saw">Reverse Saw</option><option value="step">Step</option></select></label>
+                </div>
+                {fxEditor.parameter === 'position' && <div className="inspector-pair">
+                  <label><span>Motion Shape</span><select value={fxEditor.motionShape ?? 'circle'} onChange={(event) => setFxEditor((current) => ({ ...current, motionShape: event.target.value as MotionShape }))}><option value="circle">Circle</option><option value="figure-eight">Figure Eight</option><option value="diagonal">Diagonal</option><option value="pan-sweep">Pan Sweep</option><option value="tilt-sweep">Tilt Sweep</option></select></label>
+                  <label><span>Movement</span><strong className="fx-semantic-readout">16-bit Pan + Tilt · relative to current look</strong></label>
+                </div>}
+                <section className="fx-step-recipe">
+                  <header><span>STEP RECIPE</span><div>{fxEditor.steps?.length ? <><button onClick={addFxStep}>＋ STEP</button><button onClick={() => setFxEditor((current) => ({ ...current, steps: undefined }))}>USE WAVEFORM</button></> : <button onClick={enableStepRecipe}>＋ BUILD STEPS</button>}</div></header>
+                  {fxEditor.steps?.length ? <div className="fx-step-list">{fxEditor.steps.map((step, index) => <article key={index}>
+                    <b>{index + 1}</b>
+                    <label><span>Value</span><input type="number" min="0" max="100" value={step.value} onChange={(event) => updateFxStep(index, { value: Number(event.target.value) })}/></label>
+                    <label><span>Width</span><input type="number" min=".01" max="32" step=".25" value={step.width ?? 1} onChange={(event) => updateFxStep(index, { width: Number(event.target.value) })}/></label>
+                    <label><span>Transition</span><input type="number" min="0" max="100" value={step.transition ?? 0} onChange={(event) => updateFxStep(index, { transition: Number(event.target.value) })}/></label>
+                    <label><span>Accel</span><input type="number" min="0" max="100" value={step.acceleration ?? 0} onChange={(event) => updateFxStep(index, { acceleration: Number(event.target.value) })}/></label>
+                    <label><span>Decel</span><input type="number" min="0" max="100" value={step.deceleration ?? 0} onChange={(event) => updateFxStep(index, { deceleration: Number(event.target.value) })}/></label>
+                    <div className="fx-step-actions"><button disabled={index === 0} onClick={() => moveFxStep(index, -1)}>↑</button><button disabled={index === fxEditor.steps!.length - 1} onClick={() => moveFxStep(index, 1)}>↓</button><button onClick={() => removeFxStep(index)}>×</button></div>
+                  </article>)}</div> : <p>Use a normal waveform, or build a weighted step sequence with hold, transition, acceleration, and deceleration.</p>}
+                </section>
+
+                <div className="inspector-pair">
+                  <label><span>Fixture Order</span><select value={fxEditor.orderMode ?? 'forward'} onChange={(event) => setFxEditor((current) => ({ ...current, orderMode: event.target.value as CustomEffect['orderMode'] }))}><option value="forward">Forward</option><option value="reverse">Reverse</option><option value="center-out">Center Out</option><option value="outside-in">Outside In</option><option value="mirror-pairs">Mirror Pairs</option><option value="odd-even">Odd → Even</option><option value="even-odd">Even → Odd</option></select></label>
+                  <label><span>Direction</span><select value={fxEditor.direction ?? 'forward'} onChange={(event) => setFxEditor((current) => ({ ...current, direction: event.target.value as CustomEffect['direction'] }))}><option value="forward">Forward</option><option value="reverse">Reverse</option></select></label>
+                </div>
+                <div className="inspector-pair">
+                  <label><span>Blocks</span><input type="number" min="1" max="64" value={fxEditor.blocks ?? 1} onChange={(event) => setFxEditor((current) => ({ ...current, blocks: Number(event.target.value) }))}/></label>
+                  <label><span>Groups</span><input type="number" min="1" max="64" value={fxEditor.groups ?? 1} onChange={(event) => setFxEditor((current) => ({ ...current, groups: Number(event.target.value) }))}/></label>
+                </div>
+                <div className="inspector-pair">
+                  <label><span>Wings</span><input type="number" min="1" max="16" value={fxEditor.wings ?? 1} onChange={(event) => setFxEditor((current) => ({ ...current, wings: Number(event.target.value) }))}/></label>
+                  <label><span>Shift</span><input type="number" min="-256" max="256" value={fxEditor.shift ?? 0} onChange={(event) => setFxEditor((current) => ({ ...current, shift: Number(event.target.value) }))}/></label>
+                </div>
+                <div className="inspector-pair">
+                  <label><span>Cycle</span><select value={String(fxEditor.cycleBeats ?? 1)} onChange={(event) => setFxEditor((current) => ({ ...current, cycleBeats: Number(event.target.value) }))}><option value=".25">1/4 beat</option><option value=".5">1/2 beat</option><option value="1">1 beat</option><option value="2">2 beats</option><option value="4">1 bar</option><option value="8">2 bars</option><option value="16">4 bars</option></select></label>
+                  <label><span>Mode</span><select value={fxEditor.mode ?? 'absolute'} onChange={(event) => setFxEditor((current) => ({ ...current, mode: event.target.value as CustomEffect['mode'] }))}><option value="absolute">Absolute</option><option value="relative">Relative to Look</option></select></label>
                 </div>
                 <label><span>Speed · {fxEditor.bpm} BPM</span><input type="range" min="20" max="300" value={fxEditor.bpm} onChange={(event) => setFxEditor((current) => ({ ...current, bpm: Number(event.target.value) }))}/></label>
                 <label><span>Depth · {fxEditor.depth}%</span><input type="range" min="0" max="100" value={fxEditor.depth} onChange={(event) => setFxEditor((current) => ({ ...current, depth: Number(event.target.value) }))}/></label>
-                <label><span>Phase Spread · {fxEditor.phaseSpread}%</span><input type="range" min="0" max="100" value={fxEditor.phaseSpread} onChange={(event) => setFxEditor((current) => ({ ...current, phaseSpread: Number(event.target.value) }))}/></label>
-                <label><span>Base · {fxEditor.offset}%</span><input type="range" min="0" max="100" value={fxEditor.offset} onChange={(event) => setFxEditor((current) => ({ ...current, offset: Number(event.target.value) }))}/></label>
+                <label><span>Phase Spread · {fxEditor.phaseSpread}%</span><input type="range" min="0" max="200" value={fxEditor.phaseSpread} onChange={(event) => setFxEditor((current) => ({ ...current, phaseSpread: Number(event.target.value) }))}/></label>
+                <label><span>{(fxEditor.mode ?? 'absolute') === 'relative' ? 'Bias' : 'Base'} · {fxEditor.offset}%</span><input type="range" min="-100" max="100" value={fxEditor.offset} onChange={(event) => setFxEditor((current) => ({ ...current, offset: Number(event.target.value) }))}/></label>
+                <section className="fx-lane-editor">
+                  <header><span>ATTRIBUTE LANES</span><button onClick={addFxLane}>＋ LANE</button></header>
+                  <p>Layer dimmer, movement, zoom, iris, focus, gobo, strobe, or prism behavior in the same effect.</p>
+                  {(fxEditor.lanes ?? []).map((lane, index) => <article key={index}>
+                    <label><span>Attribute</span><select value={lane.parameter} onChange={(event) => updateFxLane(index, { parameter: event.target.value as FixtureParameter })}>{CUSTOM_FX_LANE_PARAMETERS.map((parameter) => <option key={parameter} value={parameter}>{parameter.replace(/([A-Z])/g, ' $1')}</option>)}</select></label>
+                    <label><span>Wave</span><select value={lane.waveform} onChange={(event) => updateFxLane(index, { waveform: event.target.value as EffectWaveform })}><option value="sine">Sine</option><option value="triangle">Triangle</option><option value="square">Square</option><option value="saw">Saw</option><option value="reverse-saw">Reverse Saw</option><option value="step">Step</option></select></label>
+                    <label><span>Depth</span><input type="number" min="0" max="100" value={lane.depth} onChange={(event) => updateFxLane(index, { depth: Number(event.target.value) })}/></label>
+                    <label><span>Offset</span><input type="number" min="-100" max="100" value={lane.offset} onChange={(event) => updateFxLane(index, { offset: Number(event.target.value) })}/></label>
+                    <label><span>Phase</span><input type="number" min="-8" max="8" step=".05" value={lane.phaseOffset ?? 0} onChange={(event) => updateFxLane(index, { phaseOffset: Number(event.target.value) })}/></label>
+                    <label><span>Rate</span><input type="number" min=".125" max="8" step=".125" value={lane.rateMultiplier ?? 1} onChange={(event) => updateFxLane(index, { rateMultiplier: Number(event.target.value) })}/></label>
+                    <button className="fx-lane-delete" onClick={() => removeFxLane(index)}>×</button>
+                  </article>)}
+                </section>
+
                 <div className="fx-editor-actions">
                   <button className={activeCustomEffectId === fxEditor.id ? 'danger-button' : 'console-primary'} disabled={!programEffectFixtures.length} onClick={() => runCustomFx(fxEditor, programEffectFixtures.map((fixture) => fixture.id))}>{activeCustomEffectId === fxEditor.id ? 'STOP FX' : 'RUN FX'}</button>
                   <button onClick={saveCustomFx}>SAVE TO BANK</button>
@@ -3962,9 +4163,9 @@ export default function App() {
               <header><div><span>FX BANK</span><strong>Factory + saved custom effects</strong></div><small>{EFFECT_PRESETS.length + customEffects.length} effects</small></header>
               <div className="fx-bank-grid">
                 {EFFECT_PRESETS.map((effect) => <button key={effect.id} className={`${selectedFxBankId === effect.id ? 'selected' : ''} ${activeEffect === effect.id ? 'running' : ''}`} onClick={() => loadFactoryFx(effect)} onDoubleClick={() => toggleEffect(effect.id, programEffectFixtures.map((fixture) => fixture.id))}><i className={`fx-icon fx-${effect.id}`}/><span><strong>{effect.name}</strong><small>{EFFECT_SHAPES[effect.id].waveform} · {effect.defaultBpm} BPM</small></span><b>{activeEffect === effect.id ? 'LIVE' : 'FACTORY'}</b></button>)}
-                {customEffects.map((effect) => <article key={effect.id} className={`${selectedFxBankId === effect.id ? 'selected' : ''} ${activeCustomEffectId === effect.id ? 'running' : ''}`}><button className="fx-bank-load" onClick={() => { setSelectedFxBankId(effect.id); setFxEditor(effect); }} onDoubleClick={() => runCustomFx(effect, programEffectFixtures.map((fixture) => fixture.id))}><i>∿</i><span><strong>{effect.name}</strong><small>{effect.waveform} · {effect.bpm} BPM</small></span><b>{activeCustomEffectId === effect.id ? 'LIVE' : 'CUSTOM'}</b></button><button className="fx-bank-delete" aria-label={`Delete ${effect.name}`} onClick={() => deleteCustomFx(effect.id)}>×</button></article>)}
+                {customEffects.map((effect) => <article key={effect.id} className={`${selectedFxBankId === effect.id ? 'selected' : ''} ${activeCustomEffectId === effect.id ? 'running' : ''}`}><button className="fx-bank-load" onClick={() => { setSelectedFxBankId(effect.id); setFxEditor(effect); }} onDoubleClick={() => runCustomFx(effect, programEffectFixtures.map((fixture) => fixture.id))}><i>∿</i><span><strong>{effect.name}</strong><small>{effect.parameter === 'position' ? (effect.motionShape ?? 'circle').replace('-', ' ') : effect.waveform} · {effect.bpm} BPM</small></span><b>{activeCustomEffectId === effect.id ? 'LIVE' : 'CUSTOM'}</b></button><button className="fx-bank-delete" aria-label={`Delete ${effect.name}`} onClick={() => deleteCustomFx(effect.id)}>×</button></article>)}
               </div>
-              <footer><span>Single click loads an effect into the graph. Double-click a bank item to run it immediately.</span><button onClick={() => { setFxEditor({ id: 'custom-preview', name: 'New FX', parameter: 'dimmer', waveform: 'sine', bpm: 100, depth: 100, phaseSpread: 0, offset: 0 }); setSelectedFxBankId('custom-preview'); }}>＋ NEW FX</button></footer>
+              <footer><span>Single click loads an effect into the graph. Double-click a bank item to run it immediately.</span><button onClick={() => { setFxEditor({ id: 'custom-preview', name: 'New FX', parameter: 'dimmer', waveform: 'sine', bpm: 100, depth: 100, phaseSpread: 0, offset: 0, orderMode: 'forward', blocks: 1, groups: 1, wings: 1, shift: 0, direction: 'forward', cycleBeats: 1, mode: 'absolute' }); setSelectedFxBankId('custom-preview'); }}>＋ NEW FX</button></footer>
             </section>
           </div>}
 
