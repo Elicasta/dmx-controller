@@ -217,6 +217,71 @@ describe('ShowRuntime', () => {
     expect(mastered.frame[4]).toBe(50);
   });
 
+  it('resolves the live stack as base < FX < BUSK < hit and restores each layer cleanly', () => {
+    const runtime = new ShowRuntime({ patch: DEFAULT_PATCH });
+
+    runtime.dispatch(controlCommand('ui', {
+      type: 'frame.update',
+      universe: 1,
+      updates: [[1, 10], [5, 40]]
+    }));
+
+    runtime.dispatch(controlCommand('fx', {
+      type: 'playback.layer.set',
+      universe: 1,
+      layerId: 'fx',
+      priority: 30,
+      mode: 'ltp',
+      updates: [[1, 60], [5, 80]]
+    }));
+
+    const busked = runtime.dispatch(controlCommand('surface', {
+      type: 'playback.layer.set',
+      universe: 1,
+      layerId: 'busk',
+      priority: 50,
+      mode: 'ltp',
+      updates: [[1, 140], [5, 160]]
+    }));
+    expect(busked.frame[0]).toBe(140);
+    expect(busked.frame[4]).toBe(160);
+
+    const hit = runtime.dispatch(controlCommand('surface', {
+      type: 'playback.layer.set',
+      universe: 1,
+      layerId: 'hit',
+      priority: 80,
+      mode: 'ltp',
+      updates: [[1, 255], [5, 255]]
+    }));
+    expect(hit.frame[0]).toBe(255);
+    expect(hit.frame[4]).toBe(255);
+
+    const afterHit = runtime.dispatch(controlCommand('surface', {
+      type: 'playback.layer.clear',
+      universe: 1,
+      layerId: 'hit'
+    }));
+    expect(afterHit.frame[0]).toBe(140);
+    expect(afterHit.frame[4]).toBe(160);
+
+    const afterBusk = runtime.dispatch(controlCommand('surface', {
+      type: 'playback.layer.clear',
+      universe: 1,
+      layerId: 'busk'
+    }));
+    expect(afterBusk.frame[0]).toBe(60);
+    expect(afterBusk.frame[4]).toBe(80);
+
+    const afterFx = runtime.dispatch(controlCommand('fx', {
+      type: 'playback.layer.clear',
+      universe: 1,
+      layerId: 'fx'
+    }));
+    expect(afterFx.frame[0]).toBe(10);
+    expect(afterFx.frame[4]).toBe(40);
+  });
+
   it('keeps the main FX layer running underneath an independent hit layer', () => {
     const runtime = new ShowRuntime({ patch: DEFAULT_PATCH });
 
