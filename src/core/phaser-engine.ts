@@ -120,8 +120,12 @@ export function renderPhaserProgram(
   elapsedMs: number,
   baseUniverse?: readonly number[]
 ): DmxUpdate[] {
-  const active = fixtures.filter((fixture) => fixture.selected);
-  if (!active.length || !program.lanes.length) return [];
+  if (!program.lanes.length) return [];
+  const active = fixtures.filter((fixture) => (
+    fixture.selected
+    && program.lanes.some((lane) => parameterChannel(fixture, lane.parameter) !== null)
+  ));
+  if (!active.length) return [];
 
   const orderSpec = program.order ?? { mode: program.orderMode ?? 'forward' };
   const phases = fixturePhasePositions(active.length, orderSpec);
