@@ -30,7 +30,7 @@ export function reconcileFixtureGroups(
   saved: readonly FixtureGroup[],
   patch: readonly PatchedFixture[]
 ): FixtureGroup[] {
-  const next = saved.map((group) => ({ ...group, fixtureOrder: [...group.fixtureOrder], selectionGrid: group.selectionGrid ? { ...group.selectionGrid, cells: group.selectionGrid.cells.map((cell) => ({ ...cell })) } : undefined }));
+  const next: FixtureGroup[] = saved.map((group): FixtureGroup => ({ ...group, fixtureOrder: [...group.fixtureOrder], selectionGrid: group.selectionGrid ? { ...group.selectionGrid, cells: group.selectionGrid.cells.map((cell) => ({ ...cell })) } : undefined }));
   const names = new Set(next.map((group) => group.name));
   patch.forEach((fixture) => {
     const name = fixture.group.trim();
