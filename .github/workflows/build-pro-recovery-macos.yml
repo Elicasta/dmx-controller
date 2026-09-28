@@ -6,6 +6,10 @@ on:
       - recovery/pro-033-show-engine
     paths:
       - '.github/workflows/build-pro-recovery-macos.yml'
+      - 'src/**'
+      - 'src-tauri/**'
+      - 'package.json'
+      - 'package-lock.json'
 
 permissions:
   contents: read
