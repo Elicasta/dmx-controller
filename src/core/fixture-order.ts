@@ -9,9 +9,13 @@ export type FixtureOrderMode =
 
 export type FixtureOrderSpec = {
   mode?: FixtureOrderMode;
+  /** Contiguous fixtures that should behave as one phasing unit. */
   blocks?: number;
+  /** Interleaves the selection into N sub-groups before phasing. */
   groups?: number;
+  /** Splits the selection into mirrored/opposed phasing wings. */
   wings?: number;
+  /** Circularly shifts selection order before phase assignment. */
   shift?: number;
 };
 
@@ -19,9 +23,15 @@ function safeCount(count: number): number {
   return Math.max(0, Math.floor(Number.isFinite(count) ? count : 0));
 }
 
+function clampInteger(value: number | undefined, fallback: number, min: number, max: number): number {
+  const numeric = Number.isFinite(value) ? Math.floor(Number(value)) : fallback;
+  return Math.max(min, Math.min(max, numeric));
+}
+
 function baseOrder(count: number, mode: FixtureOrderMode): number[] {
   const indices = Array.from({ length: safeCount(count) }, (_, index) => index);
   if (mode === 'reverse') return indices.reverse();
+
   if (mode === 'center-out' || mode === 'outside-in') {
     const center = (indices.length - 1) / 2;
     const sorted = [...indices].sort((left, right) => {
@@ -31,8 +41,15 @@ function baseOrder(count: number, mode: FixtureOrderMode): number[] {
     });
     return mode === 'center-out' ? sorted : sorted.reverse();
   }
-  if (mode === 'odd-even') return [...indices.filter((i) => i % 2 === 0), ...indices.filter((i) => i % 2 === 1)];
-  if (mode === 'even-odd') return [...indices.filter((i) => i % 2 === 1), ...indices.filter((i) => i % 2 === 0)];
+
+  if (mode === 'odd-even') {
+    return [...indices.filter((index) => index % 2 === 0), ...indices.filter((index) => index % 2 === 1)];
+  }
+
+  if (mode === 'even-odd') {
+    return [...indices.filter((index) => index % 2 === 1), ...indices.filter((index) => index % 2 === 0)];
+  }
+
   if (mode === 'mirror-pairs') {
     const result: number[] = [];
     let left = 0;
@@ -45,6 +62,7 @@ function baseOrder(count: number, mode: FixtureOrderMode): number[] {
     }
     return result;
   }
+
   return indices;
 }
 
@@ -54,98 +72,111 @@ function rotate<T>(items: readonly T[], shift: number): T[] {
   return [...items.slice(offset), ...items.slice(0, offset)];
 }
 
-function applyBlocks(order: readonly number[], blocks: number): number[] {
-  const size = Math.max(1, Math.floor(blocks));
-  if (size === 1) return [...order];
-  const result: number[] = [];
-  for (let index = 0; index < order.length; index += size) {
-    result.push(...order.slice(index, index + size));
-  }
-  return result;
-}
+function interleaveGroups(order: readonly number[], groups: number): number[] {
+  const groupCount = clampInteger(groups, 1, 1, Math.max(1, order.length));
+  if (groupCount === 1 || order.length < 2) return [...order];
 
-function applyGroups(order: readonly number[], groups: number): number[] {
-  const groupCount = Math.max(1, Math.min(order.length || 1, Math.floor(groups)));
-  if (groupCount === 1 || !order.length) return [...order];
   const result: number[] = [];
   for (let group = 0; group < groupCount; group += 1) {
-    for (let index = group; index < order.length; index += groupCount) result.push(order[index]);
+    for (let index = group; index < order.length; index += groupCount) {
+      result.push(order[index]);
+    }
   }
   return result;
 }
 
-function applyWings(order: readonly number[], wings: number): number[] {
-  const wingCount = Math.max(1, Math.floor(wings));
-  if (wingCount === 1 || order.length < 2) return [...order];
-  const wingSize = Math.ceil(order.length / wingCount);
-  const result: number[] = [];
-  for (let wing = 0; wing < wingCount; wing += 1) {
-    const section = order.slice(wing * wingSize, (wing + 1) * wingSize);
-    result.push(...(wing % 2 === 0 ? section : [...section].reverse()));
-  }
-  return result;
-}
-
-export function fixtureOrderIndices(count: number, spec: FixtureOrderSpec | FixtureOrderMode = 'forward'): number[] {
+/**
+ * Returns the deterministic fixture traversal order. Blocks and wings affect phase
+ * assignment rather than traversal because multiple fixtures can intentionally share
+ * the same phase.
+ */
+export function fixtureOrderIndices(
+  count: number,
+  spec: FixtureOrderSpec | FixtureOrderMode = 'forward'
+): number[] {
+  const safe = safeCount(count);
   const normalized: FixtureOrderSpec = typeof spec === 'string' ? { mode: spec } : spec;
-  const mode = normalized.mode ?? 'forward';
-  let order = baseOrder(count, mode);
-  order = applyBlocks(order, normalized.blocks ?? 1);
-  order = applyGroups(order, normalized.groups ?? 1);
-  order = applyWings(order, normalized.wings ?? 1);
+  let order = baseOrder(safe, normalized.mode ?? 'forward');
+  order = interleaveGroups(order, normalized.groups ?? 1);
   order = rotate(order, normalized.shift ?? 0);
   return order;
 }
 
-export function fixturePhasePositions(count: number, spec: FixtureOrderSpec | FixtureOrderMode = 'forward'): number[] {
+function blockPhaseRanks(count: number, blockSize: number, wings: number): number[] {
+  if (count <= 0) return [];
+  const safeBlock = clampInteger(blockSize, 1, 1, count);
+  const blockCount = Math.ceil(count / safeBlock);
+  if (blockCount <= 1) return Array(count).fill(0);
+
+  const safeWings = clampInteger(wings, 1, 1, blockCount);
+  if (safeWings === 1) {
+    return Array.from({ length: count }, (_, rank) => (
+      Math.floor(rank / safeBlock) / Math.max(1, blockCount - 1)
+    ));
+  }
+
+  const phases = Array(count).fill(0);
+  const wingSize = Math.ceil(blockCount / safeWings);
+
+  for (let block = 0; block < blockCount; block += 1) {
+    const wing = Math.min(safeWings - 1, Math.floor(block / wingSize));
+    const firstBlock = wing * wingSize;
+    const blocksInWing = Math.min(wingSize, blockCount - firstBlock);
+    const localBlock = block - firstBlock;
+    const denominator = Math.max(1, blocksInWing - 1);
+    const localPhase = localBlock / denominator;
+    const phase = wing % 2 === 0 ? localPhase : 1 - localPhase;
+
+    const firstFixture = block * safeBlock;
+    for (let offset = 0; offset < safeBlock && firstFixture + offset < count; offset += 1) {
+      phases[firstFixture + offset] = phase;
+    }
+  }
+
+  return phases;
+}
+
+export function fixturePhasePositions(
+  count: number,
+  spec: FixtureOrderSpec | FixtureOrderMode = 'forward'
+): number[] {
   const safe = safeCount(count);
   if (safe <= 0) return [];
   if (safe === 1) return [0];
 
   const normalized: FixtureOrderSpec = typeof spec === 'string' ? { mode: spec } : spec;
-  const mode = normalized.mode ?? 'forward';
-
-  if (mode === 'mirror-pairs'
-      && (normalized.blocks ?? 1) === 1
+  if ((normalized.mode ?? 'forward') === 'mirror-pairs'
+      && normalized.wings === undefined
+      && normalized.blocks === undefined
       && (normalized.groups ?? 1) === 1
-      && (normalized.wings ?? 1) === 1
       && (normalized.shift ?? 0) === 0) {
     const maxTier = Math.max(1, Math.ceil(safe / 2) - 1);
-    return Array.from({ length: safe }, (_, index) => Math.min(index, safe - 1 - index) / maxTier);
+    return Array.from({ length: safe }, (_, index) => (
+      Math.min(index, safe - 1 - index) / maxTier
+    ));
   }
 
-  const ordered = rotate(baseOrder(safe, mode), normalized.shift ?? 0);
-  const rankByFixture = Array(safe).fill(0);
-  ordered.forEach((fixtureIndex, rank) => { rankByFixture[fixtureIndex] = rank; });
+  const order = fixtureOrderIndices(safe, normalized);
 
-  const blockSize = Math.max(1, Math.floor(normalized.blocks ?? 1));
-  const blockCount = Math.max(1, Math.ceil(safe / blockSize));
-  const groupCount = Math.max(1, Math.min(blockCount, Math.floor(normalized.groups ?? 1)));
-  const wingCount = Math.max(1, Math.min(blockCount, Math.floor(normalized.wings ?? 1)));
+  // Explicit wings can create repeated/opposed phase ramps across one selection.
+  const implicitWings = 1;
 
-  const phaseByFixture = rankByFixture.map((rank) => {
-    const block = Math.floor(rank / blockSize);
+  const orderedPhases = blockPhaseRanks(
+    safe,
+    normalized.blocks ?? 1,
+    normalized.wings ?? implicitWings
+  );
 
-    if (groupCount > 1) {
-      const groupSlot = block % groupCount;
-      return groupCount === 1 ? 0 : groupSlot / (groupCount - 1);
-    }
-
-    if (wingCount > 1) {
-      const wingSize = Math.ceil(blockCount / wingCount);
-      const wing = Math.min(wingCount - 1, Math.floor(block / wingSize));
-      const local = block % wingSize;
-      const actualSize = Math.min(wingSize, blockCount - wing * wingSize);
-      const mirrored = wing % 2 === 0 ? local : Math.max(0, actualSize - 1 - local);
-      return actualSize <= 1 ? 0 : mirrored / (actualSize - 1);
-    }
-
-    return blockCount <= 1 ? 0 : block / (blockCount - 1);
+  const phaseByFixture = Array(safe).fill(0);
+  order.forEach((fixtureIndex, rank) => {
+    phaseByFixture[fixtureIndex] = orderedPhases[rank] ?? 0;
   });
-
   return phaseByFixture;
 }
 
-export function orderFixtures<T>(items: readonly T[], spec: FixtureOrderSpec | FixtureOrderMode = 'forward'): T[] {
+export function orderFixtures<T>(
+  items: readonly T[],
+  spec: FixtureOrderSpec | FixtureOrderMode = 'forward'
+): T[] {
   return fixtureOrderIndices(items.length, spec).map((index) => items[index]);
 }

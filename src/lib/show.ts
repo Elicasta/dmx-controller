@@ -1,4 +1,4 @@
-import { clampDmx } from './dmx';
+import { applyUniverseUpdates, clampDmx, makeUniverse } from './dmx';
 import type { DmxUpdate } from './dmx';
 import type { FixtureLookValues } from './looks';
 import type { Vec3 } from '../core/geometry';
@@ -41,6 +41,16 @@ export type FixtureGroup = {
   fixtureOrder: string[];
 };
 
+export type CueTimingFamily = 'intensity' | 'color' | 'position' | 'beam';
+export type CueTimingCurve = 'linear' | 'ease' | 'snap';
+
+export type CueTimingRule = {
+  family: CueTimingFamily;
+  fadeMs: number;
+  delayMs: number;
+  curve: CueTimingCurve;
+};
+
 export type ShowCue = {
   id: string;
   number: number;
@@ -55,6 +65,10 @@ export type ShowCue = {
   linkedEffectId?: string;
   trackName?: string;
   values: FixtureLookValues;
+  /** Sparse tracked instructions. When present, untouched channels inherit from earlier cues. */
+  changes?: DmxUpdate[];
+  /** Family-level timing overrides resolved to fixture channels at playback. */
+  timing?: CueTimingRule[];
   universe?: number[];
 };
 
@@ -81,7 +95,7 @@ export type ExternalTrackSync = {
 };
 
 export type ShowFile = {
-  version: 1 | 2 | 3;
+  version: 1 | 2 | 3 | 4;
   name: string;
   notes?: string;
   cues: ShowCue[];
@@ -100,7 +114,7 @@ export const DEFAULT_EXTERNAL_TRACK_SYNC: ExternalTrackSync = {
 };
 
 export const EMPTY_SHOW: ShowFile = {
-  version: 3,
+  version: 4,
   name: 'My First Show',
   notes: '',
   cues: [],
@@ -116,6 +130,29 @@ export function renumberCues(cues: readonly ShowCue[]): ShowCue[] {
   return cues.map((cue, index) => ({ ...cue, number: index + 1 }));
 }
 
+function canResolveCueStack(cues: readonly ShowCue[]): boolean {
+  return cues.every((cue) => cue.changes !== undefined || cue.universe?.length === 512);
+}
+
+function preserveResolvedCueStates(
+  original: readonly ShowCue[],
+  reordered: readonly ShowCue[]
+): ShowCue[] {
+  if (!canResolveCueStack(original)) return renumberCues(reordered);
+
+  const frameById = new Map(
+    original.map((cue, index) => [cue.id, resolveShowCueFrame(original, index)])
+  );
+  let previous = makeUniverse();
+
+  return renumberCues(reordered).map((cue) => {
+    const frame = frameById.get(cue.id) ?? previous;
+    const changes = cueChanges(previous, frame);
+    previous = frame;
+    return { ...cue, changes, universe: [...frame] };
+  });
+}
+
 export function moveCue(
   cues: readonly ShowCue[],
   cueId: string,
@@ -126,13 +163,20 @@ export function moveCue(
   if (from < 0 || to < 0 || to >= cues.length) return [...cues];
   const next = [...cues];
   [next[from], next[to]] = [next[to], next[from]];
-  return renumberCues(next);
+  return preserveResolvedCueStates(cues, next);
+}
+
+export function removeCuePreservingTracking(
+  cues: readonly ShowCue[],
+  cueId: string
+): ShowCue[] {
+  return preserveResolvedCueStates(cues, cues.filter((cue) => cue.id !== cueId));
 }
 
 export function isShowFile(value: unknown): value is ShowFile {
   if (!value || typeof value !== 'object') return false;
   const candidate = value as Partial<ShowFile>;
-  if (![1, 2, 3].includes(candidate.version ?? 0) || typeof candidate.name !== 'string' || !Array.isArray(candidate.cues)) {
+  if (![1, 2, 3, 4].includes(candidate.version ?? 0) || typeof candidate.name !== 'string' || !Array.isArray(candidate.cues)) {
     return false;
   }
   const cuesValid = candidate.cues.every((cue) => {
@@ -151,6 +195,27 @@ export function isShowFile(value: unknown): value is ShowFile {
       && (item.linkedLookId === undefined || typeof item.linkedLookId === 'string')
       && (item.linkedEffectId === undefined || typeof item.linkedEffectId === 'string')
       && (item.trackName === undefined || typeof item.trackName === 'string')
+      && (item.changes === undefined || (
+        Array.isArray(item.changes)
+        && item.changes.every((update) => (
+          Array.isArray(update)
+          && update.length === 2
+          && Number.isInteger(update[0])
+          && update[0] >= 1
+          && update[0] <= 512
+          && typeof update[1] === 'number'
+        ))
+      ))
+      && (item.timing === undefined || (
+        Array.isArray(item.timing)
+        && item.timing.every((rule) => (
+          rule && typeof rule === 'object'
+          && ['intensity', 'color', 'position', 'beam'].includes(String((rule as CueTimingRule).family))
+          && typeof (rule as CueTimingRule).fadeMs === 'number'
+          && typeof (rule as CueTimingRule).delayMs === 'number'
+          && ['linear', 'ease', 'snap'].includes(String((rule as CueTimingRule).curve))
+        ))
+      ))
       && (item.universe === undefined || (
         Array.isArray(item.universe)
         && item.universe.length === 512
@@ -261,6 +326,30 @@ export function diffUniverse(previous: readonly number[], next: readonly number[
   return updates;
 }
 
+export function cueChanges(previous: readonly number[], next: readonly number[]): DmxUpdate[] {
+  return diffUniverse(previous, next);
+}
+
+export function resolveShowCueFrame(
+  cues: readonly ShowCue[],
+  targetIndex: number,
+  initialFrame: readonly number[] = makeUniverse()
+): number[] {
+  const lastIndex = Math.min(Math.max(-1, Math.floor(targetIndex)), cues.length - 1);
+  let frame = Array.from({ length: 512 }, (_, index) => clampDmx(initialFrame[index] ?? 0));
+
+  for (let index = 0; index <= lastIndex; index += 1) {
+    const cue = cues[index];
+    if (cue.changes !== undefined) {
+      frame = applyUniverseUpdates(frame, cue.changes);
+    } else if (cue.universe?.length === 512) {
+      frame = cue.universe.map(clampDmx);
+    }
+  }
+
+  return frame;
+}
+
 export function midiSongPositionToMs(position: number, bpm: number) {
   const safePosition = Math.max(0, Math.min(16383, Math.round(position)));
   const safeBpm = Math.max(20, Math.min(300, Number.isFinite(bpm) ? bpm : 120));
@@ -275,7 +364,7 @@ export function applyLightingOffset(positionMs: number, offsetMs: number) {
 
 export function sanitizeShow(show: ShowFile): ShowFile {
   return {
-    version: 3,
+    version: 4,
     name: show.name.trim().slice(0, 64) || EMPTY_SHOW.name,
     notes: typeof show.notes === 'string' ? show.notes.slice(0, 4000) : '',
     groups: (show.groups ?? []).slice(0, 64).map((group) => ({
@@ -313,6 +402,16 @@ export function sanitizeShow(show: ShowFile): ShowFile {
         uv: clampDmx(cue.values.uv),
         dimmer: clampDmx(cue.values.dimmer)
       },
+      changes: cue.changes?.slice(0, 512).map(([channel, value]) => [
+        Math.max(1, Math.min(512, Math.round(channel))),
+        clampDmx(value)
+      ] as const),
+      timing: cue.timing?.slice(0, 8).map((rule) => ({
+        family: rule.family,
+        fadeMs: Math.max(0, Math.min(60000, Math.round(rule.fadeMs))),
+        delayMs: Math.max(0, Math.min(60000, Math.round(rule.delayMs))),
+        curve: rule.curve
+      })),
       universe: cue.universe?.slice(0, 512).map(clampDmx)
     }))),
     positionPalettes: (show.positionPalettes ?? []).slice(0, 64).map((palette): PositionPalette => palette.kind === 'spatial' ? {
