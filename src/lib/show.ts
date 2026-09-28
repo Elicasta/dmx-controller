@@ -4,6 +4,7 @@ import type { FixtureLookValues } from './looks';
 import type { Vec3 } from '../core/geometry';
 import type { TargetArrangement } from '../core/targets';
 import type { FixtureOrderMode } from '../core/fixture-order';
+import type { CueTimingMap, CueTransition } from '../core/cue-engine';
 
 export type SpatialPositionPalette = {
   id: string;
@@ -53,7 +54,12 @@ export type ShowCue = {
   description?: string;
   linkedLookId?: string;
   linkedEffectId?: string;
+  linkedEffectTargetIds?: string[];
   trackName?: string;
+  transition?: CueTransition;
+  timing?: CueTimingMap;
+  tracking?: boolean;
+  changes?: DmxUpdate[];
   values: FixtureLookValues;
   universe?: number[];
 };
@@ -150,7 +156,25 @@ export function isShowFile(value: unknown): value is ShowFile {
       && (item.description === undefined || typeof item.description === 'string')
       && (item.linkedLookId === undefined || typeof item.linkedLookId === 'string')
       && (item.linkedEffectId === undefined || typeof item.linkedEffectId === 'string')
+      && (item.linkedEffectTargetIds === undefined || (
+        Array.isArray(item.linkedEffectTargetIds)
+        && item.linkedEffectTargetIds.every((id) => typeof id === 'string')
+      ))
       && (item.trackName === undefined || typeof item.trackName === 'string')
+      && (item.transition === undefined || ['linear', 'ease-in', 'ease-out', 's-curve'].includes(item.transition))
+      && (item.timing === undefined || isCueTimingMap(item.timing))
+      && (item.tracking === undefined || typeof item.tracking === 'boolean')
+      && (item.changes === undefined || (
+        Array.isArray(item.changes)
+        && item.changes.every((update) => (
+          Array.isArray(update)
+          && update.length === 2
+          && Number.isInteger(update[0])
+          && update[0] >= 1
+          && update[0] <= 512
+          && typeof update[1] === 'number'
+        ))
+      ))
       && (item.universe === undefined || (
         Array.isArray(item.universe)
         && item.universe.length === 512
@@ -176,6 +200,19 @@ export function isShowFile(value: unknown): value is ShowFile {
     && (candidate.recordings === undefined || (
     Array.isArray(candidate.recordings) && candidate.recordings.every(isShowRecording)
   ));
+}
+
+function isCueTimingMap(value: unknown): value is CueTimingMap {
+  if (!value || typeof value !== 'object') return false;
+  const timing = value as Record<string, unknown>;
+  return ['intensity', 'color', 'position', 'beam'].every((family) => {
+    const entry = timing[family];
+    if (entry === undefined) return true;
+    if (!entry || typeof entry !== 'object') return false;
+    const values = entry as { fadeMs?: unknown; delayMs?: unknown };
+    return (values.fadeMs === undefined || (typeof values.fadeMs === 'number' && Number.isFinite(values.fadeMs)))
+      && (values.delayMs === undefined || (typeof values.delayMs === 'number' && Number.isFinite(values.delayMs)));
+  });
 }
 
 export function isFixtureGroup(value: unknown): value is FixtureGroup {
@@ -273,6 +310,19 @@ export function applyLightingOffset(positionMs: number, offsetMs: number) {
   return Math.max(0, safePosition + safeOffset);
 }
 
+function sanitizeCueTiming(timing: CueTimingMap): CueTimingMap {
+  const next: CueTimingMap = {};
+  for (const family of ['intensity', 'color', 'position', 'beam'] as const) {
+    const entry = timing[family];
+    if (!entry) continue;
+    next[family] = {
+      ...(entry.fadeMs !== undefined ? { fadeMs: Math.max(0, Math.min(60_000, Math.round(entry.fadeMs))) } : {}),
+      ...(entry.delayMs !== undefined ? { delayMs: Math.max(0, Math.min(60_000, Math.round(entry.delayMs))) } : {})
+    };
+  }
+  return next;
+}
+
 export function sanitizeShow(show: ShowFile): ShowFile {
   return {
     version: 3,
@@ -305,7 +355,17 @@ export function sanitizeShow(show: ShowFile): ShowFile {
       description: (cue.description ?? '').slice(0, 500),
       linkedLookId: (cue.linkedLookId ?? '').slice(0, 100),
       linkedEffectId: (cue.linkedEffectId ?? '').slice(0, 100),
+      linkedEffectTargetIds: [...new Set((cue.linkedEffectTargetIds ?? []).filter((id) => typeof id === 'string').map((id) => id.slice(0, 100)))].slice(0, 256),
       trackName: (cue.trackName ?? '').slice(0, 180),
+      ...(cue.transition ? { transition: cue.transition } : {}),
+      ...(cue.timing ? { timing: sanitizeCueTiming(cue.timing) } : {}),
+      ...(cue.tracking !== undefined ? { tracking: Boolean(cue.tracking) } : {}),
+      ...(cue.changes ? {
+        changes: cue.changes.slice(0, 512).map(([channel, value]) => [
+          Math.max(1, Math.min(512, Math.round(channel))),
+          clampDmx(value)
+        ] as const)
+      } : {}),
       values: {
         red: clampDmx(cue.values.red),
         green: clampDmx(cue.values.green),
