@@ -54,6 +54,15 @@ describe('cue family timing', () => {
     expect(cuePlaybackDuration(cue(), from, target, [mover()])).toBe(4000);
   });
 
+  it('does not extend snap timing by an unused fade duration', () => {
+    const from = makeUniverse();
+    const target = makeUniverse();
+    target[7] = 255;
+    const snapCue = cue();
+    snapCue.timing = [{ family: 'beam', fadeMs: 5000, delayMs: 250, curve: 'snap' }];
+    expect(cuePlaybackDuration(snapCue, from, target, [mover()])).toBe(250);
+  });
+
   it('uses fade-out timing when intensity falls', () => {
     const from = makeUniverse();
     const target = makeUniverse();
