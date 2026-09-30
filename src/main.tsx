@@ -3,6 +3,7 @@ import ReactDOM from 'react-dom/client';
 import App from './App';
 import StageMonitor from './components/StageMonitor';
 import './styles.css';
+import './operator-cleanup.css';
 
 ReactDOM.createRoot(document.getElementById('root')!).render(
   <React.StrictMode>

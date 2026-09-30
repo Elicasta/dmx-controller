@@ -3940,6 +3940,39 @@ export default function App() {
                   </section>
                 },
                 {
+                  id:'buttons',
+                  title:'BUTTONS',
+                  status:'QUICK CONTROL',
+                  content:<section className="attribute-module buttons-module">
+                    <div className="programmer-button-groups">
+                      <section>
+                        <span>SELECTION</span>
+                        <div><button onClick={selectAllFixtures}>ALL</button><button onClick={clearFixtureSelection}>CLEAR</button></div>
+                      </section>
+                      <section>
+                        <span>LEVEL</span>
+                        <div>{[0,25,50,75,100].map((value)=><button key={value} disabled={!selectedFixtureTargets.length} className={value===100?'accent':''} onClick={()=>selectedFixtureTargets.forEach((fixture)=>void setFixtureAttribute(fixture,'dimmer',percentToDmx(value)))}>{value===0?'OUT':value===100?'FULL':`${value}%`}</button>)}</div>
+                      </section>
+                      <section>
+                        <span>COLOR</span>
+                        <div className="button-color-row">
+                          {[
+                            ['WHITE','#ffffff'],
+                            ['WARM','#ffd2a1'],
+                            ['RED','#ff3030'],
+                            ['GREEN','#35e36b'],
+                            ['BLUE','#3478ff'],
+                          ].map(([label,color])=><button key={label} disabled={!selectedCompatibleColors.length} style={{'--button-color':color} as import('react').CSSProperties} onClick={()=>applyGlobalColor(color)}><i/>{label}</button>)}
+                        </div>
+                      </section>
+                      <section>
+                        <span>FX</span>
+                        <div><button disabled={!selectedFixtureTargets.length} onClick={()=>toggleEffect('pulse',selectedFixtureTargets.map((fixture)=>fixture.id))}>PULSE</button><button disabled={!selectedFixtureTargets.length} onClick={()=>toggleEffect('chase',selectedFixtureTargets.map((fixture)=>fixture.id))}>CHASE</button><button className="danger-soft" onClick={()=>stopEffect()}>STOP FX</button></div>
+                      </section>
+                    </div>
+                  </section>
+                },
+                {
                   id:'color',
                   title:'COLOR',
                   status:selectedCompatibleColors.length ? `${selectedCompatibleColors.length} FIXTURE${selectedCompatibleColors.length===1?'':'S'}` : 'UNAVAILABLE',
