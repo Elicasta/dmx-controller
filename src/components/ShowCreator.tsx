@@ -41,6 +41,7 @@ export default function ShowCreator({
   onTimeline,
   onEditFx,
 }: Props) {
+  const [runSection, setRunSection] = useState(sections[0]?.runSection ?? "Worship");
   const [song, setSong] = useState(sections[0]?.song ?? "New Song");
   const [bpm, setBpm] = useState(sections[0]?.bpm ?? 100);
   const [groupId, setGroupId] = useState(
@@ -84,7 +85,7 @@ export default function ShowCreator({
   const addLayer = (id: string) => {
     if (!selected) {
       add({
-        ...createSection("New Section", song, groupId, bpm),
+        ...{ ...createSection("New Section", song, groupId, bpm), runSection },
         recipeId: id,
       });
       return;
@@ -143,6 +144,10 @@ export default function ShowCreator({
             </header>
             <div className="creator-fields">
               <label>
+                Service section
+                <input value={runSection} placeholder="Worship, Offering, Message…" onChange={(e) => setRunSection(e.target.value)} />
+              </label>
+              <label>
                 Song name
                 <input value={song} onChange={(e) => setSong(e.target.value)} />
               </label>
@@ -175,7 +180,7 @@ export default function ShowCreator({
                   disabled={sections.length + t.sections.length > 200}
                   onClick={() => {
                     const next = t.sections.map((n) =>
-                      createSection(n, song, groupId, bpm),
+                      { ...createSection(n, song, groupId, bpm), runSection },
                     );
                     setSections((all) => [...all, ...next]);
                     setSelectedId(next[0].id);
@@ -194,7 +199,7 @@ export default function ShowCreator({
               <button
                 disabled={sections.length >= 200}
                 onClick={() =>
-                  add(createSection("New Section", song, groupId, bpm))
+                  add({ ...createSection("New Section", song, groupId, bpm), runSection })
                 }
               >
                 ＋ Section
@@ -304,6 +309,14 @@ export default function ShowCreator({
                   <input
                     value={selected.name}
                     onChange={(e) => update({ name: e.target.value })}
+                  />
+                </label>
+                <label>
+                  Service section
+                  <input
+                    value={selected.runSection ?? ""}
+                    placeholder="Worship, Offering, Message…"
+                    onChange={(e) => update({ runSection: e.target.value })}
                   />
                 </label>
                 <label>
@@ -440,7 +453,21 @@ export default function ShowCreator({
                   attributes
                 </small>
               </header>
-              <div className="section-stack">
+              <div
+                className="section-stack fx-drop-zone"
+                onDragOver={(event) => {
+                  if (event.dataTransfer.types.includes("application/x-lumarig-fx")) {
+                    event.preventDefault();
+                    event.dataTransfer.dropEffect = "copy";
+                  }
+                }}
+                onDrop={(event) => {
+                  const recipeId = event.dataTransfer.getData("application/x-lumarig-fx");
+                  if (!recipeId) return;
+                  event.preventDefault();
+                  addLayer(recipeId);
+                }}
+              >
                 {selected.layers.map((l, index) => (
                   <div key={l.id} className="section-layer">
                     <input
@@ -532,7 +559,7 @@ export default function ShowCreator({
               <small>{FX_RECIPES.length} recipes</small>
             </header>
             <p className="creator-hint">
-              Add recipes to the selected section. Row FX use a group's
+              Drag recipes into STACKED FX or use + Layer. Row FX use a group's
               selection grid.
             </p>
             <input
@@ -560,7 +587,15 @@ export default function ShowCreator({
                     .toLowerCase()
                     .includes(query.toLowerCase()),
               ).map((r) => (
-                <article key={r.id}>
+                <article
+                  key={r.id}
+                  draggable
+                  onDragStart={(event) => {
+                    event.dataTransfer.effectAllowed = "copy";
+                    event.dataTransfer.setData("application/x-lumarig-fx", r.id);
+                    event.dataTransfer.setData("text/plain", r.id);
+                  }}
+                >
                   <div>
                     <small>{r.category.toUpperCase()}</small>
                     <strong>{r.name}</strong>
@@ -604,6 +639,7 @@ export default function ShowCreator({
                       add({
                         ...structuredClone(p),
                         id: crypto.randomUUID(),
+                        runSection,
                         song,
                         groupId,
                         layers: p.layers.map((l) => ({
