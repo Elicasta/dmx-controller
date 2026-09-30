@@ -2155,3 +2155,31 @@ body,#root { min-width:0; width:100%; overflow:hidden; }
 .timeline-library-tabs button[aria-pressed=true]{border-color:#55e98d;color:#a5ffd0}
 .cue-integrated-timeline .timeline-library-tabs{flex-direction:column;flex-basis:72px;margin:0}
 .timeline-fx-recipe{flex:0 0 155px}
+
+
+/* ProPresenter-style rundown hierarchy */
+.rundown-library-head>div{display:flex;gap:5px}.rundown-library-head>div button{padding:0 8px}
+.rundown-section-list{display:grid;gap:7px;padding:0 7px 10px;min-width:0;overflow-x:hidden}
+.show-rundown-section{min-width:0;overflow:hidden;border:1px solid #273b46;border-radius:6px;background:#0a1319}
+.show-rundown-section-head{position:sticky;top:0;z-index:4;display:grid;gap:6px;padding:7px;background:#13242d;border-bottom:1px solid #2d4653}
+.rundown-section-toggle{display:grid;width:100%;min-width:0;padding:3px 4px;border:0;background:transparent!important;color:#d4e5ec!important;text-align:left}
+.rundown-section-toggle strong{overflow:hidden;font-size:10px;text-overflow:ellipsis;white-space:nowrap}
+.rundown-section-toggle small{margin-top:3px;color:#7896a6;font-size:7px}
+.rundown-section-actions{display:grid;grid-template-columns:minmax(0,1fr) 25px 25px 25px;gap:4px;min-width:0}
+.rundown-section-actions input{min-width:0;height:28px;padding:0 7px;border:1px solid #314b59;border-radius:4px;background:#091218;color:#cfe1e9;font-size:9px}
+.rundown-section-actions button{width:25px!important;height:28px!important;padding:0!important}
+.rundown-items{display:grid;gap:5px;padding:6px;min-width:0}
+.show-rundown-section .song-cue-group{min-width:0;overflow:hidden;border:1px solid #223640;border-radius:5px;background:#0d181f}
+.show-rundown-section .song-cue-group>header{position:relative;top:auto;z-index:1;display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:start;gap:5px;padding:6px;background:#152832}
+.show-rundown-section .song-cue-group>header>div{display:flex;gap:4px;margin:0}
+.show-rundown-section .song-toggle{display:grid;grid-template-columns:42px minmax(0,1fr);align-items:center;gap:7px;padding:3px 5px!important}
+.show-rundown-section .song-toggle>span{min-width:0}
+.rundown-kind{display:grid;place-items:center;height:22px;border:1px solid #385c6b;border-radius:3px;color:#88b8cc;font-size:6px;letter-spacing:.08em}
+.rundown-item.media .rundown-kind{border-color:#735c34;color:#e2b769}
+.rundown-item.media>header{background:#241e14!important}
+.rundown-empty{margin:0;padding:11px;border:1px dashed #29404b;border-radius:4px;color:#6f8997;font-size:8px;line-height:1.45}
+.show-rundown-section .cue-line{width:100%;min-width:0}
+@media(max-width:900px){
+ .rundown-section-actions{grid-template-columns:minmax(0,1fr) 23px 23px 23px}
+ .show-rundown-section .song-cue-group>header{grid-template-columns:1fr}
+}
