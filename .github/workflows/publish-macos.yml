@@ -62,6 +62,9 @@ jobs:
       - name: Install frontend dependencies
         run: npm ci
 
+      - name: Align Tauri JS API with native runtime
+        run: npm install --no-save --package-lock=false @tauri-apps/api@2.11.1
+
       - name: Validate release secrets
         env:
           RELEASE_TOKEN: ${{ secrets.DMX_RELEASE_TOKEN }}
