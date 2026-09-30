@@ -250,8 +250,8 @@ test('color input, compact panels and detached stage follow actual output', asyn
  await page.getByRole('button',{name:'Programmer',exact:true}).click();
  await expect(page.locator('.position-module')).toHaveCount(0);
  const hue=page.getByRole('slider',{name:'Color hue',exact:true});
- await hue.fill('120');
- await expect(page.locator('.selected-color-readout strong')).toHaveText('#00FF00');
+ await hue.focus();await hue.press('Home');await hue.press('ArrowRight');
+ await expect(page.locator('.selected-color-readout strong')).toHaveText('#FF0400');
  const wheel=page.getByRole('slider',{name:'Color wheel',exact:true});await wheel.click({position:{x:39,y:5}});
  await page.getByRole('button',{name:'Stage Monitor',exact:true}).click();
  await expect(page.locator('.floating-stage-monitor [data-fixture]')).toHaveCount(4);
@@ -291,6 +291,8 @@ test('songs collapse, open inline timelines and preserve imported timeline shows
  await page.getByRole('button',{name:'Open timeline for New Song',exact:true}).click();
  await expect(page.locator('.cue-integrated-timeline .timeline-clip')).toHaveCount(8);
  await page.getByRole('button',{name:'Stage Monitor',exact:true}).click();
+ const monitorHeader=(await page.locator('.floating-stage-monitor>header').boundingBox())!;
+ await page.mouse.move(monitorHeader.x+60,monitorHeader.y+15);await page.mouse.down();await page.mouse.move(monitorHeader.x+710,monitorHeader.y+345,{steps:8});await page.mouse.up();
  await page.getByRole('button',{name:'Play Show',exact:true}).click();
  await expect.poll(()=>page.locator('.floating-stage-monitor [data-fixture="f0"]').getAttribute('data-level')).not.toBe('0');
  await page.getByRole('button',{name:'Stop / Rewind',exact:true}).click();
@@ -320,6 +322,13 @@ test('LIVE remains bounded with all recipe assignments and audio drop avoids see
   expect(await scroll.evaluate(el=>el.scrollWidth<=el.clientWidth+1)).toBe(true);
  }
  await page.locator('.desk-surface-header nav button').first().click();
+ await page.getByRole('button',{name:'ASSIGN',exact:true}).click();
+ await page.locator('.desk-surface-label').first().click();
+ await page.getByRole('button',{name:'List',exact:true}).click();
+ await page.getByPlaceholder('Fixtures, groups, looks, effects…').fill('Row Chase');
+ await expect(page.locator('.desk-assign-grid.list-view button').filter({hasText:'Row Chase'})).toHaveCount(1);
+ await page.locator('.desk-assign-grid.list-view button').filter({hasText:'Row Chase'}).click();
+ await page.getByRole('button',{name:'DONE',exact:true}).click();
  console.log('VISUAL_REVIEW_LIVE:'+ (await page.screenshot({type:'jpeg',quality:55})).toString('base64'));
  await page.getByRole('button',{name:'SHOW',exact:true}).click();
  await page.locator('.show-subtabs').getByRole('button',{name:'Timeline',exact:true}).click();

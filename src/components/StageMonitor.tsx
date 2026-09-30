@@ -50,7 +50,7 @@ export default function StageMonitor({snapshot,floating=false,onClose}:{snapshot
  const data=snapshot??incoming;
  return <section className={`stage-monitor ${floating?'floating-stage-monitor':''} ${collapsed?'collapsed':''}`} style={floating?{left:position.x,top:position.y}:undefined}>
   <header onPointerDown={e=>{if(!floating||(e.target as HTMLElement).closest('button'))return;e.currentTarget.setPointerCapture(e.pointerId);drag.current={x:e.clientX-position.x,y:e.clientY-position.y};}}
-    onPointerMove={e=>{if(drag.current)setPosition({x:Math.max(0,Math.min(window.innerWidth-120,e.clientX-drag.current.x)),y:Math.max(0,Math.min(window.innerHeight-40,e.clientY-drag.current.y))});}}
+    onPointerMove={e=>{if(drag.current)setPosition({x:Math.max(0,Math.min(window.innerWidth-(e.currentTarget.parentElement?.getBoundingClientRect().width??580),e.clientX-drag.current.x)),y:Math.max(0,Math.min(window.innerHeight-(e.currentTarget.parentElement?.getBoundingClientRect().height??360),e.clientY-drag.current.y))});}}
     onPointerUp={e=>{drag.current=null;if(e.currentTarget.hasPointerCapture(e.pointerId))e.currentTarget.releasePointerCapture(e.pointerId);}}>
    <strong>STAGE · LIVE OUTPUT</strong><div>{floating&&<><button onClick={()=>void openStageWindow().then(open=>{if(open)onClose?.();})}>Pop out ↗</button><button aria-label="Collapse stage monitor" onClick={()=>setCollapsed(!collapsed)}>{collapsed?'Expand':'Collapse'}</button></>}{onClose&&<button aria-label="Close stage monitor" onClick={onClose}>×</button>}</div>
   </header>
