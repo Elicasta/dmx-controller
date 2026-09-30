@@ -54,9 +54,13 @@ export type CueTimingRule = {
   curve: CueTimingCurve;
 };
 
+export type ShowItemType = 'cue' | 'song' | 'media' | 'timeline';
+
 export type ShowCue = {
   sourceSectionId?: string;
   effectStack?: EffectStackLayer[];
+  runSection?: string;
+  itemType?: ShowItemType;
   id: string;
   number: number;
   name: string;
@@ -204,6 +208,8 @@ export function isShowFile(value: unknown): value is ShowFile {
       && (item.linkedLookId === undefined || typeof item.linkedLookId === 'string')
       && (item.linkedEffectId === undefined || typeof item.linkedEffectId === 'string')
       && (item.trackName === undefined || typeof item.trackName === 'string')
+      && (item.runSection === undefined || typeof item.runSection === 'string')
+      && (item.itemType === undefined || ['cue', 'song', 'media', 'timeline'].includes(item.itemType))
       && (item.changes === undefined || (
         Array.isArray(item.changes)
         && item.changes.every((update) => (
@@ -425,6 +431,8 @@ export function sanitizeShow(show: ShowFile): ShowFile {
       linkedLookId: (cue.linkedLookId ?? '').slice(0, 100),
       linkedEffectId: (cue.linkedEffectId ?? '').slice(0, 100),
       trackName: (cue.trackName ?? '').slice(0, 180),
+      runSection: (cue.runSection ?? '').trim().slice(0, 64),
+      itemType: ['cue', 'song', 'media', 'timeline'].includes(cue.itemType ?? '') ? cue.itemType : (cue.trackName ? 'song' : 'cue'),
       values: {
         red: clampDmx(cue.values.red),
         green: clampDmx(cue.values.green),
