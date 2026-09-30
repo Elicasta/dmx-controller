@@ -2183,3 +2183,179 @@ body,#root { min-width:0; width:100%; overflow:hidden; }
  .rundown-section-actions{grid-template-columns:minmax(0,1fr) 23px 23px 23px}
  .show-rundown-section .song-cue-group>header{grid-template-columns:1fr}
 }
+
+
+/* Unified draggable Programmer panels */
+.programmer-attribute-deck.programmer-attribute-deck-v4.draggable-panel-deck{
+  display:flex!important;
+  flex-direction:column;
+  gap:0;
+  min-width:0;
+  min-height:min-content;
+  background:#070b0e;
+}
+.draggable-panel-deck-toolbar{
+  display:grid;
+  grid-template-columns:auto minmax(0,1fr) auto;
+  align-items:center;
+  gap:8px;
+  min-height:28px;
+  padding:3px 7px;
+  border-bottom:1px solid #28343c;
+  background:#0c1318;
+}
+.draggable-panel-deck-toolbar>span{
+  color:#8ca1ac;
+  font-size:7px;
+  font-weight:900;
+  letter-spacing:.1em;
+}
+.draggable-panel-deck-toolbar>small{
+  overflow:hidden;
+  color:#596b75;
+  font-size:7px;
+  text-overflow:ellipsis;
+  white-space:nowrap;
+}
+.draggable-panel-deck-toolbar>button{
+  height:22px;
+  padding:0 8px;
+  border:1px solid #33434c;
+  border-radius:3px;
+  background:#101a20;
+  color:#8fa4af;
+  font-size:7px;
+  font-weight:900;
+}
+.draggable-panel-grid{
+  display:grid;
+  grid-template-columns:repeat(auto-fit,minmax(min(220px,100%),1fr));
+  grid-auto-flow:row dense;
+  gap:1px;
+  min-width:0;
+  background:#283039;
+}
+.draggable-programmer-panel{
+  display:grid;
+  grid-template-rows:30px minmax(0,1fr);
+  min-width:0;
+  min-height:180px;
+  overflow:hidden;
+  background:#0c1014;
+  outline:1px solid transparent;
+  transition:opacity .12s ease,outline-color .12s ease,transform .12s ease;
+}
+.draggable-programmer-panel.dragging{
+  opacity:.42;
+  outline-color:#55e98d;
+  transform:scale(.985);
+}
+.draggable-programmer-panel.collapsed{
+  grid-template-rows:30px;
+  min-height:30px;
+}
+.draggable-programmer-panel-handle{
+  display:grid!important;
+  grid-template-columns:28px minmax(0,1fr) 28px!important;
+  align-items:center!important;
+  gap:5px!important;
+  height:30px!important;
+  min-height:30px!important;
+  padding:0 4px!important;
+  border:0!important;
+  border-bottom:1px solid #26323a!important;
+  background:#111920!important;
+  user-select:none;
+}
+.draggable-programmer-panel-handle>div{
+  display:flex;
+  align-items:baseline;
+  justify-content:space-between;
+  gap:6px;
+  min-width:0;
+}
+.draggable-programmer-panel-handle strong{
+  overflow:hidden;
+  color:#c7d3d9;
+  font-size:8px!important;
+  letter-spacing:.08em;
+  text-overflow:ellipsis;
+  white-space:nowrap;
+}
+.draggable-programmer-panel-handle small{
+  overflow:hidden;
+  color:#6d808a;
+  font-size:6px;
+  font-weight:800;
+  letter-spacing:.07em;
+  text-overflow:ellipsis;
+  white-space:nowrap;
+}
+.panel-drag-grip,.panel-collapse-toggle{
+  display:grid;
+  place-items:center;
+  width:26px!important;
+  height:24px!important;
+  min-width:26px!important;
+  padding:0!important;
+  border:1px solid #33434c!important;
+  border-radius:3px!important;
+  background:#0b1217!important;
+  color:#7f939e!important;
+}
+.panel-drag-grip{
+  cursor:grab;
+  font-size:15px!important;
+  touch-action:none;
+}
+.panel-drag-grip:active{cursor:grabbing}
+.panel-drag-grip:hover,.panel-collapse-toggle:hover{
+  border-color:#55e98d!important;
+  color:#9ff5bd!important;
+}
+.draggable-programmer-panel-body{
+  min-width:0;
+  min-height:0;
+  overflow:auto;
+}
+.draggable-programmer-panel-body>.attribute-module,
+.draggable-programmer-panel-body>.color-deck{
+  width:100%;
+  height:100%;
+  min-width:0!important;
+  min-height:0!important;
+  box-sizing:border-box;
+  border:0!important;
+  border-radius:0!important;
+}
+.draggable-programmer-panel-body>.attribute-module>header,
+.draggable-programmer-panel-body>.color-deck>.color-deck-title{
+  display:none!important;
+}
+.draggable-programmer-panel-body>.color-deck{
+  padding:8px!important;
+}
+.draggable-programmer-panel-body .attribute-faders{
+  height:148px!important;
+  flex-wrap:wrap;
+  overflow:auto;
+}
+.draggable-programmer-panel-body .console-fader-strip{
+  height:146px!important;
+  min-height:0!important;
+}
+.draggable-programmer-panel-body .vertical-fader-wrap{
+  height:72px!important;
+  min-height:0!important;
+}
+.draggable-programmer-panel-body .vertical-fader{
+  height:72px!important;
+  min-height:64px!important;
+  max-height:72px!important;
+}
+@media(max-width:900px){
+  .draggable-panel-grid{grid-template-columns:repeat(auto-fit,minmax(min(180px,100%),1fr))}
+  .draggable-panel-deck-toolbar>small{display:none}
+  .draggable-panel-deck-toolbar{grid-template-columns:auto 1fr}
+  .draggable-panel-deck-toolbar>button{justify-self:end}
+}
