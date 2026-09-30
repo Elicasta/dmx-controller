@@ -353,3 +353,34 @@ test('LIVE remains bounded with all recipe assignments and audio drop avoids see
  expect(Number(await page.locator('audio').getAttribute('data-seeks'))).toBeLessThanOrEqual(1);
  await page.getByRole('button',{name:'Pause',exact:true}).click();
 });
+
+
+test('cue rundown keeps nested sections and media items after reload',async({page})=>{
+ await seed(page);await page.goto('/');
+ await page.getByRole('button',{name:'SHOW',exact:true}).click();
+ await page.getByRole('button',{name:'Show Creator',exact:true}).click();
+ await page.getByRole('button',{name:/Worship Song/}).click();
+ await page.getByRole('button',{name:'Build / Update 8 Sections',exact:true}).click();
+ await page.getByRole('button',{name:'Cues',exact:true}).click();
+
+ await expect(page.locator('.show-rundown-section')).toHaveCount(1);
+ await page.locator('.rundown-library-head').getByRole('button',{name:'＋ Section',exact:true}).click();
+ await expect(page.locator('.show-rundown-section')).toHaveCount(2);
+
+ await page.locator('.song-cue-group article .cue-line').first().click();
+ const secondSection=await page.getByLabel('Section name 2').inputValue();
+ await page.getByLabel('Cue show section').selectOption({label:secondSection});
+ await page.getByLabel('Cue item type').selectOption('media');
+ await page.locator('.cue-inspector-console').getByText('Song / media item').locator('..').locator('input').fill('Walk-in Video');
+
+ await expect(page.locator('.rundown-item.media')).toHaveCount(1);
+ await expect(page.locator('.rundown-item.media')).toContainText('Walk-in Video');
+ await expect.poll(async()=>((await readShow(page)).rundownSections??[]).length).toBe(2);
+ await expect.poll(async()=>((await readShow(page)).cues??[]).some((cue:any)=>cue.trackKind==='media'&&cue.trackName==='Walk-in Video')).toBe(true);
+
+ await page.reload();
+ await page.getByRole('button',{name:'SHOW',exact:true}).click();
+ await page.getByRole('button',{name:'Cues',exact:true}).click();
+ await expect(page.locator('.show-rundown-section')).toHaveCount(2);
+ await expect(page.locator('.rundown-item.media')).toContainText('Walk-in Video');
+});
