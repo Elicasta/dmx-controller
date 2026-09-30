@@ -41,4 +41,33 @@ describe('stage presets', () => {
     const second = instantiateStagePreset('apostolic-day-2026');
     expect(second.elements[0].label).not.toBe('Edited locally');
   });
+  it('preserves the original LumaViz venue dimensions', () => {
+    const church = getStagePreset('cornerstone-main-sanctuary');
+    const apostolic = getStagePreset('apostolic-day-2026');
+    const feet = (meters: number) => meters / 0.3048;
+
+    expect(feet(church.dimensions.width)).toBeCloseTo(24, 5);
+    expect(feet(church.dimensions.depth)).toBeCloseTo(9, 5);
+    expect(feet(church.dimensions.roomWidth)).toBeCloseTo(30, 5);
+    expect(feet(church.dimensions.roomDepth)).toBeCloseTo(48, 5);
+
+    expect(feet(apostolic.dimensions.width)).toBeCloseTo(42, 5);
+    expect(feet(apostolic.dimensions.depth)).toBeCloseTo(12, 5);
+    expect(feet(apostolic.dimensions.roomWidth)).toBeCloseTo(50, 5);
+    expect(feet(apostolic.dimensions.roomDepth)).toBeCloseTo(60, 5);
+    expect(feet(apostolic.dimensions.roomHeight)).toBeCloseTo(16, 5);
+  });
+
+  it('ports the original Apostolic Day scenic set without stacking invented scenery', () => {
+    const apostolic = getStagePreset('apostolic-day-2026');
+    const ids = apostolic.elements.map((element) => element.id);
+
+    expect(ids.some((id) => id.endsWith(':cove-boundary'))).toBe(true);
+    expect(ids.some((id) => id.endsWith(':black-drape'))).toBe(true);
+    expect(ids.some((id) => id.endsWith(':choir-riser-a'))).toBe(true);
+    expect(ids.some((id) => id.endsWith(':band-pit'))).toBe(true);
+    expect(ids.some((id) => id.includes('slat'))).toBe(false);
+    expect(ids.some((id) => id.includes('plant'))).toBe(false);
+  });
+
 });
