@@ -422,3 +422,33 @@ test('cue rundown keeps nested sections and media items after reload',async({pag
  await expect(page.locator('.show-rundown-section')).toHaveCount(2);
  await expect(page.locator('.rundown-item.media')).toContainText('Walk-in Video');
 });
+
+
+test('integrated visualizer keeps venue presets isolated and opens the renderer',async({page})=>{
+ await seed(page);
+ page.on('dialog',dialog=>void dialog.accept());
+ await page.goto('/');
+
+ await page.getByRole('button',{name:'BUILD',exact:true}).click();
+ await page.getByRole('button',{name:'Stage',exact:true}).click();
+ await page.getByRole('button',{name:/Apostolic Day 2026/}).first().click();
+
+ await expect.poll(async()=>page.evaluate(()=>{
+   const doc=JSON.parse(localStorage.getItem('dmx-controller.stage-elements.v1')??'{"elements":[]}');
+   return (doc.elements??[]).every((element:any)=>String(element.id).startsWith('apostolic-day-2026:'));
+ })).toBe(true);
+
+ await page.getByRole('button',{name:/Cornerstone · Main Sanctuary/}).first().click();
+ await expect.poll(async()=>page.evaluate(()=>{
+   const doc=JSON.parse(localStorage.getItem('dmx-controller.stage-elements.v1')??'{"elements":[]}');
+   const ids=(doc.elements??[]).map((element:any)=>String(element.id));
+   return ids.length>0
+     && ids.every((id:string)=>id.startsWith('cornerstone-main-sanctuary:'))
+     && !ids.some((id:string)=>id.startsWith('apostolic-day-2026:'));
+ })).toBe(true);
+
+ await page.getByRole('button',{name:'VISUALIZER',exact:true}).click();
+ await expect(page.locator('.visualizer-workspace')).toBeVisible();
+ await expect(page.locator('.visualizer-workspace canvas.visualizer-3d-canvas')).toBeVisible();
+ await expect(page.getByRole('button',{name:'▶ Flyby',exact:true}).first()).toBeVisible();
+});
