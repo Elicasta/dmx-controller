@@ -1,6 +1,7 @@
 import { test, expect, type Page } from "@playwright/test";
 const showKey = "dmx-controller.show.v1";
 async function seed(page: Page) {
+  page.on("pageerror", error => console.error("Browser page error:",error.message));
   await page.addInitScript(() => {
     if (!localStorage.getItem("dmx-controller.patch.v1"))
       localStorage.setItem(
@@ -57,6 +58,7 @@ test("solo creator builds an editable audio-aligned show and preserves the draft
   page.on("pageerror", (e) => errors.push(e.message));
   await seed(page);
   await page.goto("/");
+    await expect(page.getByRole("button", { name: "SHOW", exact: true })).toBeVisible({ timeout: 10000 });
   await page.getByRole("button", { name: "SHOW", exact: true }).click();
   await page.getByRole("button", { name: "Show Creator", exact: true }).click();
   await page.getByRole("button", { name: /Worship Song/ }).click();
@@ -167,6 +169,7 @@ for (const width of [820, 1024, 1280])
     await seed(page);
     await page.setViewportSize({ width, height: 650 });
     await page.goto("/");
+    await expect(page.getByRole("button", { name: "SHOW", exact: true })).toBeVisible({ timeout: 10000 });
     await page.getByRole("button", { name: "CREATE", exact: true }).click();
     await page.getByRole("button", { name: "Programmer", exact: true }).click();
     const blackout = page.getByRole("button", {

@@ -1,6 +1,4 @@
 import { EMPTY_TIMELINE, FX_RECIPES, SHOW_COLORS, buildSectionCues, renderEffectStack, renderShowTimeline, isEffectRecipe, type EffectStackLayer, type ShowSection } from './lib/show-design';
-const ShowCreator = lazy(() => import('./components/ShowCreator'));
-const ShowTimelineEditor = lazy(() => import('./components/ShowTimelineEditor'));
 import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState, type ChangeEvent, type PointerEvent as ReactPointerEvent } from 'react';
 import { lumaVizDirectStatus, pollLumaVizDirectMessages, semanticFrameFromResolvedOutput, sendLumaVizDirectFrame, sendLumaVizDirectMessage, startLumaVizDirect, type LumaVizDirectStatus, type SharedShowPatchMutation } from './core/lumaviz-direct';
 import type { SharedLocationPreset } from './core/shared-locations';
@@ -135,6 +133,9 @@ import { makeSelectionGrid, moveFixtureInSelectionGrid, normalizeSelectionGrid, 
 import { RemoteRelay, type RelayCommandEnvelope, type RemoteRelayConfig, type RemoteRelayStatus } from './core/remote-relay';
 import { StudioBridgeDispatcher } from './core/studio-bridge-dispatcher';
 import type { StudioBridgeCommand, StudioSongIdentity } from './core/studio-bridge-protocol';
+
+const ShowCreator = lazy(() => import('./components/ShowCreator'));
+const ShowTimelineEditor = lazy(() => import('./components/ShowTimelineEditor'));
 
 type Workspace = 'build' | 'create' | 'show' | 'live';
 type SetupView = 'fixtures' | 'groups' | 'stage' | 'settings';
