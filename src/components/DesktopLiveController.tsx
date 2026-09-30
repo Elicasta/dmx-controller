@@ -188,13 +188,21 @@ function AssignmentPanel({ choices, selected, onPick, onClose }: {
   onClose: () => void;
 }) {
   const [filter, setFilter] = useState('');
+  const [layout, setLayout] = useState<'grid' | 'list'>('grid');
   const visible = choices.filter((choice) => `${choice.kind} ${choice.label}`.toLowerCase().includes(filter.toLowerCase()));
   return <div className="desk-assign-overlay">
     <button className="desk-assign-backdrop" aria-label="Close assignment panel" onClick={onClose} />
     <section className="desk-assign-panel">
-      <header><div><small>CONTROL SURFACE</small><strong>Assign control</strong><span>{selected ? `${selected.kind.toUpperCase()} · ${selected.label}` : 'Choose a slot first'}</span></div><button onClick={onClose}>×</button></header>
-      <label className="desk-assign-search"><span>SEARCH CONTROLS</span><input autoFocus value={filter} placeholder="Fixtures, groups, looks, effects…" onChange={(event) => setFilter(event.target.value)} /></label>
-      <div className="desk-assign-grid">
+      <header>
+        <div><small>CONTROL SURFACE</small><strong>Assign control</strong><span>{selected ? `${selected.kind.toUpperCase()} · ${selected.label}` : 'Choose a slot first'}</span></div>
+        <div className="desk-assign-header-actions">
+          <button className={layout === 'grid' ? 'active' : ''} aria-label="Grid view" onClick={() => setLayout('grid')}>▦</button>
+          <button className={layout === 'list' ? 'active' : ''} aria-label="List view" onClick={() => setLayout('list')}>☷</button>
+          <button aria-label="Close" onClick={onClose}>×</button>
+        </div>
+      </header>
+      <label className="desk-assign-search"><span>SEARCH CONTROLS</span><input autoFocus value={filter} placeholder="Fixtures, groups, looks, effects, row FX…" onChange={(event) => setFilter(event.target.value)} /></label>
+      <div className={`desk-assign-grid ${layout === 'list' ? 'list-view' : ''}`}>
         {visible.map((assignment, index) => <button key={`${assignment.kind}-${assignment.targetId ?? assignment.label}-${index}`} style={{ '--slot': assignment.color || '#65727a' } as CSSProperties} onClick={() => onPick(assignment)}><i /><small>{assignment.kind}</small><strong>{assignment.label}</strong></button>)}
       </div>
     </section>
