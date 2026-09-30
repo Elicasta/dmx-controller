@@ -2742,3 +2742,30 @@ body,#root { min-width:0; width:100%; overflow:hidden; }
   .visualizer-3d-toolbar { grid-template-columns: 1fr; }
   .visualizer-haze { grid-template-columns: auto minmax(90px,1fr); }
 }
+
+
+.stage-warehouse-section { min-width: min(100%, 520px); }
+.stage-warehouse-groups { display: grid; gap: 8px; }
+.stage-warehouse-group { display: grid; gap: 5px; min-width: 0; }
+.stage-warehouse-group > span,
+.inspector-section-label {
+  color: #738894;
+  font-size: 8px;
+  font-weight: 800;
+  letter-spacing: .11em;
+  text-transform: uppercase;
+}
+.stage-warehouse-group > div {
+  display: flex;
+  gap: 5px;
+  flex-wrap: wrap;
+}
+.stage-warehouse-group button {
+  min-height: 30px;
+  padding: 5px 8px;
+  font-size: 9px;
+}
+.setup-inspector .inspector-section-label {
+  display: block;
+  margin-top: 5px;
+}
