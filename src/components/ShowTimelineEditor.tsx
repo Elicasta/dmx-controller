@@ -137,7 +137,7 @@ export default function ShowTimelineEditor(props: Props) {
       audio.currentTime = Math.max(0, local / 1000);
     if (playingRef.current && audio.paused && !audioStarting.current) {
       audioStarting.current = true;
-      void audio.play().catch(() => {
+      void audio.play().then(()=>{if(!playingRef.current)audio.pause();}).catch(() => {
         setAudioError(
           "Audio could not play. Relink the track or press Play again.",
         );
@@ -212,6 +212,11 @@ export default function ShowTimelineEditor(props: Props) {
     };
     raf.current = requestAnimationFrame(tick);
   }
+  useEffect(() => {
+    const stopTransport=()=>{playingRef.current=false;setPlaying(false);if(raf.current!==null)cancelAnimationFrame(raf.current);raf.current=null;latest.current.audioRef.current?.pause();latest.current.onStop();};
+    window.addEventListener('lumarig-stop-timeline',stopTransport);
+    return ()=>window.removeEventListener('lumarig-stop-timeline',stopTransport);
+  },[]);
   useEffect(
     () => () => {
       playingRef.current = false;

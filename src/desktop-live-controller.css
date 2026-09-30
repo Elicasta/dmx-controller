@@ -41,3 +41,10 @@
 .desk-assign-grid.list-view button{min-height:40px}
 .desk-assignment-view{display:flex;gap:6px}.desk-assignment-view button{padding:7px 14px;background:#15232b;color:#dae5ec;border:1px solid #40545f}.desk-assignment-view button[aria-pressed=true]{border-color:#55e98d}
 @container(max-width:1050px){.desk-classic-surface{width:100%;grid-template-columns:repeat(8,minmax(0,1fr))}.desk-quick-actions>div{grid-template-columns:repeat(8,minmax(0,1fr))}}
+
+.desk-ma-surface{min-width:0;width:100%;grid-template-columns:65px minmax(0,1fr)}
+.desk-busk-surface{min-width:0;width:100%}
+.desk-ma-surface>main,.desk-busk-surface>*{min-width:0}
+@container(max-width:1050px){.desk-ma-surface,.desk-busk-surface{width:100%;min-width:0}.desk-ma-pool{grid-template-columns:repeat(6,minmax(0,1fr))}}
+
+.desk-ma-executors{grid-template-columns:repeat(8,minmax(0,1fr))}.desk-busk-body>main{grid-template-columns:repeat(8,minmax(0,1fr))}

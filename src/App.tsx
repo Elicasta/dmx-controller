@@ -907,7 +907,7 @@ export default function App() {
     : { x: 0, y: 0, z: 0 };
   const stageSnapshot=useMemo(()=>({patch,output:outputUniverse,dimensions:stageSettings.dimensions,elements:stageElements,blackout:dmxStatus.blackout}),[patch,outputUniverse,stageSettings.dimensions,stageElements,dmxStatus.blackout]);
   useStagePublisher(stageSnapshot);
-  const midiControls = useMemo(() => buildControlRegistry(patch), [patch]);
+  const midiControls = useMemo(() => [...buildControlRegistry(patch),...FX_RECIPES.map(recipe=>({id:'recipe:'+recipe.id,label:recipe.name,group:'FX recipes',type:'button' as const,commandPath:'effect.start',supportsPressRelease:false}))], [patch]);
   const midiControlGroups = useMemo(() => {
     const groups = new Map<string, MidiAssignableControl[]>();
     midiControls.forEach((control) => groups.set(control.group, [...(groups.get(control.group) ?? []), control]));
@@ -1578,6 +1578,8 @@ export default function App() {
   }
 
   function runCue(cue: ShowCue) {
+    window.dispatchEvent(new Event('lumarig-stop-timeline'));
+    stopTimeline();
     if (cueFollowTimerRef.current !== null) window.clearTimeout(cueFollowTimerRef.current);
 
     const launch = () => {
@@ -1750,6 +1752,7 @@ export default function App() {
     const file=event.target.files?.[0]; if(file) loadShowAudioFile(file); event.target.value='';
   }
   function clearShowAudio() {
+    setTimelineShowId('');setCueTimelineSong(null);
     showTrackAudioRef.current?.pause();
     if(showTrackUrlRef.current) URL.revokeObjectURL(showTrackUrlRef.current);
     showTrackUrlRef.current=''; setShowTrackUrl(''); setShowTrackName('');setShowTrackDurationMs(0);setShowTrackPositionMs(0);stopTimeline();
@@ -2596,6 +2599,10 @@ export default function App() {
       else if (control.id === 'blackout') void toggleBlackout();
       else if (control.id === 'tap-tempo') tapTempo();
       else if (control.id === 'stop-effect') stopEffect();
+      else if (control.id.startsWith('recipe:')) {
+        const recipe=FX_RECIPES.find(item=>'recipe:'+item.id===control.id);
+        if(recipe)runCustomFx({...structuredClone(recipe.effect),id:control.id},selectedFixtureTargets.map(f=>f.id));
+      }
       else if (control.id.startsWith('effect:')) {
         const effect = control.id.slice('effect:'.length) as EffectId;
         const preset = EFFECT_PRESETS.find((item) => item.id === effect);
@@ -3287,6 +3294,7 @@ export default function App() {
     setShowFile(current=>timelineShowId ? {...current,timelineShows:(current.timelineShows??[]).map(item=>item.id===timelineShowId?{...item,timeline}:item)} : {...current,timeline});
   }
   function openSongTimeline(song:string) {
+    window.dispatchEvent(new Event('lumarig-stop-timeline'));
     stopTimeline();
     const saved=showFile.timelineShows?.find(item=>item.name===song);
     setTimelineShowId(saved?.id??'');
@@ -4009,8 +4017,8 @@ export default function App() {
           <div className="cue-transport-console"><button onClick={goPreviousCue} disabled={!showFile.cues.length}>BACK</button><span><small>CURRENT</small><strong>{activeCue?.name ?? 'Ready'}</strong></span><button className="giant-go" onClick={goNextCue} disabled={!nextCue}>GO<small>{nextCue?.name ?? 'End'}</small></button><span><small>NEXT</small><strong>{nextCue?.name ?? 'End of show'}</strong></span><button onClick={goNextCue} disabled={!nextCue}>NEXT</button></div>
         </div>}
 
-        {showMode === 'creator' && <Suspense fallback={<p>Loading Show Creator…</p>}><ShowCreator sections={showFile.creatorSections ?? []} setSections={(action) => setShowFile(current => ({...current,creatorSections:typeof action === 'function' ? action(current.creatorSections ?? []) : action}))} groups={showFile.groups ?? []} fixtures={patch} onBuild={buildCreatorSections} onPreview={previewCreatorSection} onStop={() => { stopFade(); stopEffect(); }} onTimeline={() => setShowMode('timeline')} onEditFx={(effect) => { setFxEditor(effect); setWorkspace('create'); setProgramMode('fx'); }}/></Suspense>}
-        {showMode === 'timeline' && <Suspense fallback={<p>Loading Timeline…</p>}><ShowTimelineEditor timeline={editingTimeline} cues={showFile.cues} audioRef={showTrackAudioRef} audioUrl={showTrackUrl} audioName={showTrackName} audioDurationMs={showTrackDurationMs} onLoadAudio={loadShowAudioFile} onChange={updateEditingTimeline} onFrame={renderTimelineFrame} onStop={stopTimeline} onCreator={() => setShowMode('creator')}/></Suspense>}
+        {showMode === 'creator' && <Suspense fallback={<p>Loading Show Creator…</p>}><ShowCreator sections={showFile.creatorSections ?? []} setSections={(action) => setShowFile(current => ({...current,creatorSections:typeof action === 'function' ? action(current.creatorSections ?? []) : action}))} groups={showFile.groups ?? []} fixtures={patch} onBuild={buildCreatorSections} onPreview={previewCreatorSection} onStop={() => { stopFade(); stopEffect(); }} onTimeline={() => {setTimelineShowId('');setShowMode('timeline');}} onEditFx={(effect) => { setFxEditor(effect); setWorkspace('create'); setProgramMode('fx'); }}/></Suspense>}
+        {showMode === 'timeline' && <div className="timeline-workspace"><label className="timeline-show-select">Timeline show <select aria-label="Timeline show" value={timelineShowId} onChange={e=>{window.dispatchEvent(new Event('lumarig-stop-timeline'));stopTimeline();setTimelineShowId(e.target.value);}}><option value="">Current show</option>{(showFile.timelineShows??[]).map(item=><option key={item.id} value={item.id}>{item.name}</option>)}</select></label><Suspense fallback={<p>Loading Timeline…</p>}><ShowTimelineEditor key={timelineShowId} timeline={editingTimeline} cues={showFile.cues} audioRef={showTrackAudioRef} audioUrl={editingTimeline.audioName===showTrackName?showTrackUrl:''} audioName={editingTimeline.audioName??''} audioDurationMs={editingTimeline.audioName===showTrackName?showTrackDurationMs:0} onLoadAudio={loadShowAudioFile} onChange={updateEditingTimeline} onFrame={renderTimelineFrame} onStop={stopTimeline} onCreator={() => setShowMode('creator')}/></Suspense></div>}
 
         {showMode === 'tracks' && <div className="tracks-console tracks-console-v3">
           <section className="console-panel track-source"><header><div><span>LOCAL AUDIO TRACK</span><h2>{showTrackName || 'No track loaded'}</h2></div><label className="file-button"><input type="file" accept="audio/*" onChange={loadShowTrack}/>{showTrackName?'Change Track':'Load Track'}</label></header><div className="track-timeline"><span>{formatShowTime(showTrackPositionMs)}</span><input type="range" min="0" max={Math.max(1,showTrackDurationMs)} value={Math.min(showTrackPositionMs,Math.max(1,showTrackDurationMs))} onChange={(event)=>{const next=Number(event.target.value);if(showTrackAudioRef.current)showTrackAudioRef.current.currentTime=next/1000;setShowTrackPositionMs(next);}}/><span>{formatShowTime(showTrackDurationMs)}</span></div><div className="track-actions"><button onClick={toggleShowTrackPreview}>Play / Pause</button><button onClick={()=>setShowMode('timeline')}>Open Timeline</button></div></section>

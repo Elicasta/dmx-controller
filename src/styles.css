@@ -2128,3 +2128,8 @@ body,#root { min-width:0; width:100%; overflow:hidden; }
 .creator-song-filter{display:flex;gap:8px;padding:10px 0}.creator-song-filter>*{flex:1}
 
 .programmer-attribute-deck-v4 .vertical-fader{min-height:70px!important}
+
+.timeline-workspace{display:flex;flex-direction:column;min-height:0;flex:1;overflow:hidden}
+.timeline-show-select{display:flex;gap:10px;align-items:center;padding:6px 18px;font-size:11px;color:#8fa9b8}
+.timeline-show-select select{background:#11202a;color:#d9e8ed;border:1px solid #3d5462;padding:6px}
+.timeline-workspace>.show-bar-timeline{flex:1;overflow:auto}

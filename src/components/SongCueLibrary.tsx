@@ -23,10 +23,10 @@ export default function SongCueLibrary(p:Props) {
   {names.map((name,index)=>{
    const cues=p.cues.filter(c=>(c.trackName?.trim()||'Unfiled cues')===name&&matches(c));
    if(!cues.length)return null;
-   const expanded=Boolean(query)||!closed[name];
+   const expanded=Boolean(query)||!(closed[name]??(names.length>1));
    return <section className="song-cue-group" key={name}>
     <header><button className="song-toggle" aria-expanded={expanded} onClick={()=>setClosed({...closed,[name]:expanded})}><strong>{expanded?'▾':'▸'} {name}</strong><small>{cues.length} cues{p.timelineNames.includes(name)?' · timeline show':''}</small></button>
-    <div><button aria-label={'Move song '+name+' up'} disabled={index===0} onClick={()=>p.onMoveSong(name,-1)}>↑</button><button aria-label={'Move song '+name+' down'} disabled={index===names.length-1} onClick={()=>p.onMoveSong(name,1)}>↓</button><button onClick={()=>p.onTimeline(name)}>Timeline</button></div></header>
+    <div><button aria-label={'Move song '+name+' up'} disabled={index===0} onClick={()=>p.onMoveSong(name,-1)}>↑</button><button aria-label={'Move song '+name+' down'} disabled={index===names.length-1} onClick={()=>p.onMoveSong(name,1)}>↓</button><button aria-label={'Open timeline for '+name} onClick={()=>p.onTimeline(name)}>Timeline</button></div></header>
     {expanded&&cues.map(cue=><article key={cue.id} className={p.activeId===cue.id?'active':''}>
      <button className="cue-line" onClick={()=>p.onRun(cue)}><b>{cue.number}</b><i style={{background:cue.color||'#55e98d'}}/><span><strong>{cue.name}</strong><small>{cue.fadeMs/1000}s fade · {cue.effectStack?.length||0} FX</small></span></button>
      <div><button aria-label={'Move '+cue.name+' up'} onClick={()=>p.onMove(cue.id,-1)}>↑</button><button aria-label={'Move '+cue.name+' down'} onClick={()=>p.onMove(cue.id,1)}>↓</button><button aria-label={'Delete '+cue.name} onClick={()=>p.onDelete(cue.id)}>×</button></div>
