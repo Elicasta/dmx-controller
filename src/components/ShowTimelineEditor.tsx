@@ -7,12 +7,15 @@ import {
 } from "react";
 import type { ShowCue } from "../lib/show";
 import {
+  FX_RECIPES,
   barMs,
   snapBar,
   type ShowTimeline,
   type TimelineClip,
 } from "../lib/show-design";
 type Props = {
+  onAddFx?: (recipeId:string,startBar:number,lane:number)=>void;
+  fxTargetName?: string;
   initialBar?: number;
   songFilter?: string;
   timeline: ShowTimeline;
@@ -52,6 +55,7 @@ export default function ShowTimelineEditor(props: Props) {
     onCreator,
   } = props;
   const audioStarting = useRef(false);
+  const [libraryMode,setLibraryMode]=useState<"cues"|"fx">("cues");
   const [selectedId, setSelectedId] = useState("");
   const [cursor, setCursor] = useState(props.initialBar ?? 0);
   const [playing, setPlaying] = useState(false);
@@ -323,6 +327,10 @@ export default function ShowTimelineEditor(props: Props) {
   }
   function dropCue(e: import("react").DragEvent<HTMLElement>, lane: number) {
     e.preventDefault();
+    const recipeId=e.dataTransfer.getData("application/lumarig-fx");
+    if(FX_RECIPES.some(r=>r.id===recipeId)){
+      props.onAddFx?.(recipeId,snapBar((e.clientX-e.currentTarget.getBoundingClientRect().left)/zoom,snap),lane);return;
+    }
     const cueId = e.dataTransfer.getData("application/lumarig-cue");
     if (!cues.some((c) => c.id === cueId)) return;
     const rect = e.currentTarget.getBoundingClientRect();
@@ -451,11 +459,12 @@ export default function ShowTimelineEditor(props: Props) {
       </div>
       <div className="timeline-edit-layout">
         <aside className="timeline-cue-library">
+          <div className="timeline-library-tabs"><button aria-pressed={libraryMode==="cues"} onClick={()=>setLibraryMode("cues")}>Cues</button><button aria-pressed={libraryMode==="fx"} onClick={()=>setLibraryMode("fx")}>FX recipes</button></div>
           <header>
             SHOW CUES <small>{cues.length}</small>
           </header>
           <p>Drag to a lane or click to append.</p>
-          {cues.length ? (
+          {libraryMode==="fx" ? <><p>Target: {props.fxTargetName??"current group"}. Drag a recipe to a lane.</p>{FX_RECIPES.map(recipe=><button className="timeline-fx-recipe" key={recipe.id} draggable onDragStart={e=>{e.dataTransfer.setData("application/lumarig-fx",recipe.id);e.dataTransfer.effectAllowed="copy";}} onClick={()=>props.onAddFx?.(recipe.id,clipEnd,0)}><span>{recipe.name}<small>{recipe.category}</small></span></button>)}</> : cues.length ? (
             cues.filter(c=>!props.songFilter||(c.trackName?.trim()||"Unfiled cues")===props.songFilter).map((c) => (
               <button
                 key={c.id}
@@ -612,7 +621,7 @@ export default function ShowTimelineEditor(props: Props) {
                     }
                     onDragOver={(e) => {
                       if (
-                        e.dataTransfer.types.includes("application/lumarig-cue")
+                        (e.dataTransfer.types.includes("application/lumarig-cue") || e.dataTransfer.types.includes("application/lumarig-fx"))
                       ) {
                         e.preventDefault();
                         e.dataTransfer.dropEffect = "copy";

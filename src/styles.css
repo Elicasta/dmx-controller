@@ -2150,3 +2150,8 @@ body,#root { min-width:0; width:100%; overflow:hidden; }
 .cue-integrated-timeline .timeline-cue-library header{flex:0 0 60px;font-size:9px}
 .cue-integrated-timeline .timeline-cue-library>p{display:none}
 @media(max-width:900px){.show-cue-layout.cue-with-timeline{grid-template-columns:190px minmax(0,1fr)!important}}
+
+.timeline-library-tabs{display:flex;gap:5px;margin-bottom:8px;flex:0 0 120px;align-items:flex-start}
+.timeline-library-tabs button[aria-pressed=true]{border-color:#55e98d;color:#a5ffd0}
+.cue-integrated-timeline .timeline-library-tabs{flex-direction:column;flex-basis:72px;margin:0}
+.timeline-fx-recipe{flex:0 0 155px}

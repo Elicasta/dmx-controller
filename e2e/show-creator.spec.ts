@@ -340,6 +340,10 @@ test('LIVE remains bounded with all recipe assignments and audio drop avoids see
  console.log('VISUAL_REVIEW_LIVE:'+ (await page.screenshot({type:'jpeg',quality:55})).toString('base64'));
  await page.getByRole('button',{name:'SHOW',exact:true}).click();
  await page.locator('.show-subtabs').getByRole('button',{name:'Timeline',exact:true}).click();
+ await page.getByRole('button',{name:'FX recipes',exact:true}).click();
+ await page.locator('.timeline-fx-recipe').filter({hasText:'Row Chase'}).dragTo(page.locator('[data-lane="2"]'),{targetPosition:{x:18,y:25}});
+ await expect(page.locator('.timeline-clip')).toHaveCount(1);
+ expect((await readShow(page)).cues[0].effectStack).toHaveLength(1);
  const data=await page.evaluateHandle(bytes=>{const d=new DataTransfer();d.items.add(new File([new Uint8Array(bytes)],'drop-song.wav',{type:''}));return d;},Array.from(wav()));
  await page.locator('.show-bar-timeline').dispatchEvent('drop',{dataTransfer:data});
  await expect(page.locator('.timeline-audio-block')).toContainText('drop-song.wav');
