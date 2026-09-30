@@ -223,6 +223,10 @@ for (const width of [820, 1024, 1280])
         .locator(".programmer-attribute-deck-v4 .color-preset-row")
         .evaluate((e) => getComputedStyle(e).display),
     ).toBe("grid");
+    const deck = (await page.locator(".programmer-attribute-deck-v4").boundingBox())!;
+    const presets = (await page.locator(".programmer-v3>.looks-strip").boundingBox());
+    expect(presets).not.toBeNull();
+    expect(deck.y + deck.height).toBeLessThanOrEqual(presets!.y + 1);
     await page.screenshot({ path: info.outputPath(`programmer-${width}.png`) });
     await page.getByRole("button", { name: "FX", exact: true }).click();
     await page.getByRole("button", { name: /Ocean Color Wave/ }).click();

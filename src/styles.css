@@ -2071,3 +2071,5 @@ body,#root { min-width:0; width:100%; overflow:hidden; }
 .programmer-attribute-deck-v4 .selected-color-readout>div { min-width:0; }
 .program-center>.programmer-v3,.program-center>.create-focus-view { flex:1; height:auto; min-height:0; }
 .fx-workbench-v4 { grid-template-rows:54px minmax(250px,1fr) minmax(150px,.65fr)!important; }
+.programmer-v3 { grid-template-rows:48px minmax(220px,1fr) minmax(min-content,auto) 118px!important; }
+.programmer-attribute-deck.programmer-attribute-deck-v4 { grid-auto-rows:minmax(250px,auto); }
