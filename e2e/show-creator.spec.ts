@@ -293,7 +293,7 @@ test('color input, compact panels and detached stage follow actual output', asyn
  await expect(hue).toHaveValue('1');
  await expect(page.locator('.selected-color-readout strong')).not.toHaveText(oldColor!);
  const wheel=page.getByRole('slider',{name:'Color wheel',exact:true});await wheel.click({position:{x:39,y:5}});
- await page.getByRole('button',{name:'Stage Monitor',exact:true}).click();
+ await page.getByRole('button',{name:'Visualizer',exact:true}).click();
  await expect(page.locator('.floating-stage-monitor [data-fixture]')).toHaveCount(4);
  await expect.poll(()=>page.locator('.floating-stage-monitor [data-fixture="f0"]').getAttribute('data-level')).not.toBe('0');
  const before=(await page.locator('.program-center').boundingBox())!;
@@ -333,7 +333,7 @@ test('songs collapse, open inline timelines and preserve imported timeline shows
  const integrated=(await page.locator('.cue-integrated-timeline').boundingBox())!;
  const cueWorkspace=(await page.locator('.show-cue-layout').boundingBox())!;
  expect(integrated.x+integrated.width).toBeGreaterThan(cueWorkspace.x+cueWorkspace.width-5);
- await page.getByRole('button',{name:'Stage Monitor',exact:true}).click();
+ await page.getByRole('button',{name:'Visualizer',exact:true}).click();
  const monitorHeader=(await page.locator('.floating-stage-monitor>header').boundingBox())!;
  await page.mouse.move(monitorHeader.x+60,monitorHeader.y+15);await page.mouse.down();await page.mouse.move(monitorHeader.x+710,monitorHeader.y+345,{steps:8});await page.mouse.up();
  await page.getByRole('button',{name:'Play Show',exact:true}).click();
