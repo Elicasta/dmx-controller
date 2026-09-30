@@ -948,7 +948,7 @@ export default function Visualizer3D({
       </div>
       {!compact && <label className="visualizer-haze"><span>Haze {Math.round(haze * 100)}%</span><input type="range" min="0" max="1" step=".02" value={haze} onChange={(event) => setHaze(Number(event.target.value))}/></label>}
     </div>
-    <div className="visualizer-fixture-state-list" aria-hidden="true">
+    <div className="visualizer-fixture-state-list" aria-hidden="true" hidden>
       {snapshot.patch.map((fixture) => <span
         key={fixture.id}
         data-fixture={fixture.id}
