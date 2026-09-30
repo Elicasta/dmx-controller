@@ -101,19 +101,40 @@ type ColorDeckProps = {
   presets: ReadonlyArray<{ name: string; color: string }>;
 };
 
+function hsvColor(h: number, s: number): string {
+  const f = (n: number) => {
+    const k = (n + h / 60) % 6;
+    return Math.round(255 * (1 - s * Math.max(0, Math.min(k, 4 - k, 1)))).toString(16).padStart(2, '0');
+  };
+  return '#' + f(5) + f(3) + f(1);
+}
 export const ColorDeck = memo(function ColorDeck({ title, subtitle, color, disabled, onChange, presets }: ColorDeckProps) {
   const red = Number.parseInt(color.slice(1, 3), 16) || 0;
   const green = Number.parseInt(color.slice(3, 5), 16) || 0;
   const blue = Number.parseInt(color.slice(5, 7), 16) || 0;
+  const max = Math.max(red, green, blue), min = Math.min(red, green, blue), delta = max - min;
+  const hue = delta === 0 ? 0 : ((max === red ? (green-blue)/delta : max === green ? (blue-red)/delta+2 : (red-green)/delta+4) * 60 + 360) % 360;
+  const saturation = max ? delta / max : 0;
+  const wheel = (event: ReactPointerEvent<HTMLDivElement>) => {
+    if (disabled) return;
+    const box = event.currentTarget.getBoundingClientRect();
+    const x = (event.clientX - box.left - box.width/2)/(box.width/2);
+    const y = (event.clientY - box.top - box.height/2)/(box.height/2);
+    const h = (Math.atan2(y,x)*180/Math.PI + 90 + 360) % 360;
+    onChange(hsvColor(h, Math.min(1, Math.hypot(x,y))));
+  };
   return <section className={`color-deck ${disabled ? 'disabled' : ''}`}>
     <div className="color-deck-title"><span>{title}</span><small>{subtitle}</small></div>
-    <div className="hue-rail" aria-hidden="true"><span style={{ left: `${(red + green + blue) / 765 * 100}%` }} /></div>
-    <label className="color-wheel-control" title="Choose color">
-      <input type="color" value={color} disabled={disabled} onChange={(event) => onChange(event.target.value)} />
-      <span style={{ background: color }} />
-    </label>
-    <div className="selected-color-readout"><i style={{ background: color }} /><div><span>SELECTED COLOR</span><strong>{color.toUpperCase()}</strong><small>R {red} &nbsp; G {green} &nbsp; B {blue}</small></div></div>
-    <div className="color-preset-row">{presets.map((preset) => <button key={preset.name} disabled={disabled} title={preset.name} aria-label={preset.name} style={{ background: preset.color }} onClick={() => onChange(preset.color)} />)}</div>
+    <input className="hue-rail hue-input" aria-label="Color hue" type="range" min="0" max="359" value={Math.round(hue)} disabled={disabled} onChange={event => onChange(hsvColor(Number(event.target.value), saturation || 1))}/>
+    <div className="color-wheel-control interactive-color-wheel" role="slider" tabIndex={disabled ? -1 : 0} aria-label="Color wheel" aria-valuemin={0} aria-valuemax={359} aria-valuenow={Math.round(hue)} aria-disabled={disabled}
+      onPointerDown={event => { if(disabled) return; event.preventDefault(); event.currentTarget.setPointerCapture(event.pointerId); wheel(event); }}
+      onPointerMove={event => { if(event.currentTarget.hasPointerCapture(event.pointerId)) wheel(event); }}
+      onPointerUp={event => { if(event.currentTarget.hasPointerCapture(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId); }}
+      onKeyDown={event => { if(!disabled && ['ArrowLeft','ArrowRight'].includes(event.key)) {event.preventDefault();onChange(hsvColor((hue+(event.key==='ArrowRight'?5:355))%360,saturation||1));} }}>
+      <span style={{ background:color, left:`${50+Math.sin(hue*Math.PI/180)*saturation*44}%`, top:`${50-Math.cos(hue*Math.PI/180)*saturation*44}%` }}/>
+    </div>
+    <div className="selected-color-readout"><input aria-label="Exact color" type="color" value={color} disabled={disabled} onChange={event=>onChange(event.target.value)}/><div><span>SELECTED COLOR</span><strong>{color.toUpperCase()}</strong><small>R {red} · G {green} · B {blue}</small></div></div>
+    <div className="color-preset-row">{presets.map(preset => <button key={preset.name} disabled={disabled} title={preset.name} aria-label={preset.name} style={{background:preset.color}} onClick={()=>onChange(preset.color)}/>)}</div>
   </section>;
 });
 

@@ -49,6 +49,7 @@ export default function ShowTimelineEditor(props: Props) {
     onLoadAudio,
     onCreator,
   } = props;
+  const audioStarting = useRef(false);
   const [selectedId, setSelectedId] = useState("");
   const [cursor, setCursor] = useState(0);
   const [playing, setPlaying] = useState(false);
@@ -130,15 +131,17 @@ export default function ShowTimelineEditor(props: Props) {
       if (local < 0 && audio.currentTime !== 0) audio.currentTime = 0;
       return;
     }
-    if (force || Math.abs(audio.currentTime * 1000 - local) > 150)
+    if (force)
       audio.currentTime = Math.max(0, local / 1000);
-    if (playingRef.current && audio.paused)
+    if (playingRef.current && audio.paused && !audioStarting.current) {
+      audioStarting.current = true;
       void audio.play().catch(() => {
         setAudioError(
           "Audio could not play. Relink the track or press Play again.",
         );
         pause();
-      });
+      }).finally(() => { audioStarting.current = false; });
+    }
   }
   function pause() {
     playingRef.current = false;
@@ -175,7 +178,17 @@ export default function ShowTimelineEditor(props: Props) {
     const tick = (now: number) => {
       if (!playingRef.current) return;
       const p = latest.current;
-      cursorRef.current += (now - previous) / barMs(p.timeline);
+      const audio = p.audioRef.current;
+      const offset = p.timeline.audioOffsetBars;
+      // Media owns the clock during audio playback, including buffering.
+      // Repeated currentTime corrections cause audible seek artifacts.
+      if (p.audioUrl && audio && cursorRef.current >= offset && !audio.ended &&
+          (!Number.isFinite(audio.duration) || audio.currentTime < audio.duration)) {
+        syncAudio(cursorRef.current * barMs(p.timeline));
+        cursorRef.current = offset + audio.currentTime * 1000 / barMs(p.timeline);
+      } else {
+        cursorRef.current += (now - previous) / barMs(p.timeline);
+      }
       previous = now;
       if (now - lastPaint >= 25) {
         setCursor(cursorRef.current);
@@ -312,7 +325,16 @@ export default function ShowTimelineEditor(props: Props) {
     .map((p, i) => `M ${i} ${24 - p * 22} L ${i} ${24 + p * 22}`)
     .join(" ");
   return (
-    <div className="show-bar-timeline" data-history={historyVersion}>
+    <div className="show-bar-timeline" data-history={historyVersion}
+      onDragOver={(e) => { if (e.dataTransfer.types.includes("Files")) { e.preventDefault(); e.dataTransfer.dropEffect = "copy"; } }}
+      onDrop={(e) => {
+        const file = e.dataTransfer.files?.[0];
+        if (!file) return;
+        e.preventDefault();
+        if (file.type.startsWith("audio/") || /\.(wav|mp3|m4a|aac|aif|aiff|ogg|flac)$/i.test(file.name)) {
+          pause(); onLoadAudio(file);
+        } else setAudioError("Choose an audio file: WAV, MP3, M4A, AIFF, OGG or FLAC.");
+      }}>
       <header className="creator-command">
         <div>
           <span>BAR TIMELINE</span>
@@ -499,8 +521,9 @@ export default function ShowTimelineEditor(props: Props) {
                   }}
                   onDrop={(e) => {
                     const file = e.dataTransfer.files?.[0];
-                    if (file && file.type.startsWith("audio/")) {
+                    if (file && (file.type.startsWith("audio/") || /\.(wav|mp3|m4a|aac|aif|aiff|ogg|flac)$/i.test(file.name))) {
                       e.preventDefault();
+                      e.stopPropagation();
                       pause();
                       onLoadAudio(file);
                     }

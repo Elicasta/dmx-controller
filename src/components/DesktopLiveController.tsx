@@ -188,13 +188,14 @@ function AssignmentPanel({ choices, selected, onPick, onClose }: {
   onClose: () => void;
 }) {
   const [filter, setFilter] = useState('');
+  const [listView, setListView] = useState(false);
   const visible = choices.filter((choice) => `${choice.kind} ${choice.label}`.toLowerCase().includes(filter.toLowerCase()));
   return <div className="desk-assign-overlay">
     <button className="desk-assign-backdrop" aria-label="Close assignment panel" onClick={onClose} />
     <section className="desk-assign-panel">
       <header><div><small>CONTROL SURFACE</small><strong>Assign control</strong><span>{selected ? `${selected.kind.toUpperCase()} · ${selected.label}` : 'Choose a slot first'}</span></div><button onClick={onClose}>×</button></header>
-      <label className="desk-assign-search"><span>SEARCH CONTROLS</span><input autoFocus value={filter} placeholder="Fixtures, groups, looks, effects…" onChange={(event) => setFilter(event.target.value)} /></label>
-      <div className="desk-assign-grid">
+      <div className="desk-assignment-view"><button onClick={()=>setListView(false)} aria-pressed={!listView}>Grid</button><button onClick={()=>setListView(true)} aria-pressed={listView}>List</button></div><label className="desk-assign-search"><span>SEARCH CONTROLS</span><input autoFocus value={filter} placeholder="Fixtures, groups, looks, effects…" onChange={(event) => setFilter(event.target.value)} /></label>
+      <div className={`desk-assign-grid ${listView ? 'list-view' : ''}`}>
         {visible.map((assignment, index) => <button key={`${assignment.kind}-${assignment.targetId ?? assignment.label}-${index}`} style={{ '--slot': assignment.color || '#65727a' } as CSSProperties} onClick={() => onPick(assignment)}><i /><small>{assignment.kind}</small><strong>{assignment.label}</strong></button>)}
       </div>
     </section>

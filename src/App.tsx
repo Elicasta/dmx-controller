@@ -1286,6 +1286,9 @@ export default function App() {
   }
 
   function applyBuskColor(hex: string) {
+    stopFade();
+    stopEffect(false);
+    stopTimeline();
     setGlobalColor(hex);
     const rgb = hexToRgb(hex);
     const updates = selectedFixtureTargets.flatMap((fixture) => fixtureColorUpdates(fixture, rgb));
@@ -4043,6 +4046,7 @@ export default function App() {
           }))}
           looks={allLooks.map((look)=>({id:look.id,name:look.name,color:rgbToHex(look.values.red,look.values.green,look.values.blue)}))}
           effects={[
+            ...FX_RECIPES.map(recipe=>({id:'recipe:'+recipe.id,name:recipe.name,active:activeCustomEffectId==='recipe:'+recipe.id,momentary:false,color:'#77cfef'})),
             ...EFFECT_PRESETS.map((effect)=>({
               id:effect.id,
               name:effect.name,
@@ -4073,6 +4077,8 @@ export default function App() {
             const targets=selectedFixtureTargets.map((fixture)=>fixture.id);
             const effect=EFFECT_PRESETS.find((item)=>item.id===effectId);
             if(effect){if(momentary)startMomentaryEffect(effect.id,targets);else toggleEffect(effect.id,targets);return;}
+            const recipe=FX_RECIPES.find(item=>'recipe:'+item.id===effectId);
+            if(recipe){runCustomFx({...structuredClone(recipe.effect),id:effectId},targets);return;}
             const custom=customEffects.find((item)=>item.id===effectId);
             if(custom)runCustomFx(custom,targets);
           }}
