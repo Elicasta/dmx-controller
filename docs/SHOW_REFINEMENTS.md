@@ -3,6 +3,8 @@
 LIVE retains the September 24 DesktopLiveController surface (Faders, MA and Busk), including the Pro build's fine fader adjustment. Shift-drag gives fine control; double-click resets a fader. Assign includes the row, column and color recipes. Assignment search offers grid and list views.
 
 ## Songs and cues
+Show → Cues is now a three-level rundown: **Show Section → Song / Media item → Cue**. Sections and items collapse independently, section order is editable, and Cue Inspector assigns a cue to a section and classifies the item as Song or Media. Existing shows remain valid; cues without section metadata appear under Unfiled until assigned. Song Creator creates a Songs section automatically, while imported timeline shows enter the rundown and retain their timeline relationship.
+
 Show → Cues groups cues by their Song / cue group field. Song Creator fills this automatically. Songs collapse independently; search finds matching songs and cues. Song arrows reorder whole groups while preserving tracked lighting states. Individual cues retain their move/delete controls.
 
 Each song's Timeline button opens the arranger alongside the cue library. Import timeline show accepts an exported LumaRig show JSON and adds its cues as one collapsible song, with a separately stored timeline and tempo. Imported fixture IDs and DMX patch addresses must match the current rig. Relink the imported show's audio before playback. The Timeline tab selector switches between the current show and imported timelines. Imported shows persist in show exports and local saves.
