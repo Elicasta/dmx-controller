@@ -2073,9 +2073,11 @@ export default function App() {
 
   async function setBlackoutState(active: boolean, source: ControlSource = 'ui') {
     try {
-      await invoke('set_blackout', { enabled: active });
+      const native='__TAURI_INTERNALS__' in window;
+      if(native)await invoke('set_blackout', { enabled: active });
       await dispatchControl({ type: 'blackout.set', active }, source);
-      await refreshDmxStatus();
+      setDmxStatus(current=>({...current,blackout:active}));
+      if(native)await refreshDmxStatus();
       setMessage(active ? 'BLACKOUT active. Programmed values are preserved.' : 'Blackout released.');
     } catch (error) { setMessage(`Blackout failed: ${String(error)}`); }
   }
