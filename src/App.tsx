@@ -91,16 +91,15 @@ import {
 import { DesktopLiveController } from './components/DesktopLiveController';
 import './desktop-live-controller.css';
 import {
-  STAGE_ELEMENT_LIBRARY,
+  STAGE_WAREHOUSE,
   clampStageElement,
   isStageDocument,
   isStageElement,
   makeStageDocument,
-  makeStageElement,
+  makeStageWarehouseElement,
   migrateStageElement,
   stageElementPosition,
-  type StageElement,
-  type StageElementType
+  type StageElement
 } from './lib/stage';
 import { STAGE_PRESETS, instantiateStagePreset, type StagePresetId } from './lib/stage-presets';
 import {
@@ -3003,20 +3002,24 @@ export default function App() {
     }
   }
 
-  function addStageElement(type: StageElementType) {
-    const element = makeStageElement(type, stageElements.filter((item) => item.type === type).length, stageSettings.dimensions);
+  function addWarehouseStageElement(itemId: string) {
+    const count = stageElements.filter((element) => element.id.includes(`warehouse-${itemId}-`)).length;
+    const element = makeStageWarehouseElement(itemId, count, stageSettings.dimensions);
     setStageElements((current) => [...current, element]);
     setSelectedStageElementId(element.id);
-    setMessage(`${element.label} added to the stage design.`);
+    setActiveStagePresetId(null);
+    setMessage(`${element.label} added from the warehouse.`);
   }
 
   function updateStageElement(id: string, updates: Partial<StageElement>) {
+    setActiveStagePresetId(null);
     setStageElements((current) => current.map((element) => element.id === id
       ? migrateStageElement(clampStageElement({ ...element, ...updates }), stageSettings.dimensions)
       : element));
   }
 
   function updateStageElementPosition(id: string, axis: 'x' | 'y' | 'z', value: number) {
+    setActiveStagePresetId(null);
     setStageElements((current) => current.map((element) => {
       if (element.id !== id) return element;
       const migrated = migrateStageElement(element, stageSettings.dimensions);
@@ -3024,7 +3027,27 @@ export default function App() {
     }));
   }
 
+  function updateStageElementRotation(id: string, axis: 'yaw' | 'pitch' | 'roll', value: number) {
+    setActiveStagePresetId(null);
+    setStageElements((current) => current.map((element) => {
+      if (element.id !== id) return element;
+      const migrated = migrateStageElement(element, stageSettings.dimensions);
+      return { ...migrated, transform: { ...migrated.transform!, rotation: { ...migrated.transform!.rotation, [axis]: value } } };
+    }));
+  }
+
+  function updateStageElementDimension(id: string, axis: 'x' | 'y' | 'z', value: number) {
+    setActiveStagePresetId(null);
+    const safeValue = Math.max(.03, Math.min(100, Number.isFinite(value) ? value : .03));
+    setStageElements((current) => current.map((element) => {
+      if (element.id !== id) return element;
+      const migrated = migrateStageElement(element, stageSettings.dimensions);
+      return { ...migrated, dimensions: { ...migrated.dimensions!, [axis]: safeValue } };
+    }));
+  }
+
   function removeStageElement(id: string) {
+    setActiveStagePresetId(null);
     setStageElements((current) => current.filter((element) => element.id !== id));
     setSelectedStageElementId(null);
     setMessage('Stage element removed.');
@@ -3831,7 +3854,7 @@ export default function App() {
               <section><header><strong>TARGETS &amp; AIM</strong><span>{selectedMovingFixtures.length} mover{selectedMovingFixtures.length === 1 ? '' : 's'} selected</span></header><div className="inline-control-grid"><select value={selectedTargetId} onChange={(event) => setSelectedTargetId(event.target.value)}>{stageTargets.map((target) => <option key={target.id} value={target.id}>{target.name}</option>)}</select><select value={aimArrangement} onChange={(event) => setAimArrangement(event.target.value as TargetArrangement)}><option value="converge">Converge</option><option value="fan-horizontal">Horizontal fan</option><option value="fan-vertical">Vertical fan</option><option value="mirror">Mirror</option><option value="cross">Cross</option></select><select value={aimOrderMode} onChange={(event) => setAimOrderMode(event.target.value as FixtureOrderMode)}><option value="forward">Forward</option><option value="reverse">Reverse</option><option value="center-out">Center Out</option><option value="outside-in">Outside In</option><option value="mirror-pairs">Mirror Pairs</option><option value="odd-even">Odd → Even</option><option value="even-odd">Even → Odd</option></select><label className="inline-range"><span>Spread {aimSpreadMeters.toFixed(1)}m</span><input type="range" min=".1" max="20" step=".1" value={aimSpreadMeters} onChange={(event) => setAimSpreadMeters(Number(event.target.value))}/></label><button className="console-primary" disabled={!selectedTarget || !selectedMovingFixtures.length} onClick={() => selectedTarget && void aimAtTarget(selectedTarget)}>Aim selected</button></div></section>
               <section><header><strong>POSITION PALETTES</strong><span>{showFile.positionPalettes?.length ?? 0} saved</span></header><div className="palette-chip-row">{showFile.positionPalettes?.map((palette) => <button key={palette.id} onClick={() => void runPositionPalette(palette)}><span>{palette.kind}</span>{palette.name}</button>)}<button className="add-palette-chip" onClick={savePositionPalette}>＋ Save current</button></div></section>
               <section className="stage-preset-section"><header><strong>STAGE PRESETS</strong><span>{activeStagePresetId ? 'ACTIVE' : 'CUSTOM'}</span></header><div className="stage-preset-grid">{STAGE_PRESETS.map((preset) => <button key={preset.id} className={activeStagePresetId === preset.id ? 'active' : ''} onClick={() => loadStagePreset(preset.id)}><strong>{preset.name}</strong><small>{preset.description}</small></button>)}</div><small className="stage-preset-note">Loading a preset replaces the current stage scene. Church and Apostolic Day never stack into one layout.</small></section>
-              <section><header><strong>STAGE ELEMENTS</strong><span>{stageElements.length}</span></header><div className="palette-chip-row">{STAGE_ELEMENT_LIBRARY.map((element) => <button key={element.type} onClick={() => addStageElement(element.type)}>＋ {element.name}</button>)}</div></section>
+              <section className="stage-warehouse-section"><header><strong>WAREHOUSE</strong><span>{STAGE_WAREHOUSE.length} objects</span></header><div className="stage-warehouse-groups">{(['Stage','Screens','Scenic','Audio','Band','People'] as const).map((category) => <div className="stage-warehouse-group" key={category}><span>{category}</span><div>{STAGE_WAREHOUSE.filter((item) => item.category === category).map((item) => <button key={item.id} onClick={() => addWarehouseStageElement(item.id)}>＋ {item.name}</button>)}</div></div>)}</div></section>
             </div>
           </>}
 
@@ -3887,8 +3910,13 @@ export default function App() {
           </> : setupView === 'stage' && selectedStageElement ? <>
             <header><span>STAGE OBJECT</span><strong>{selectedStageElement.label}</strong><small>{selectedStageElement.type}</small></header>
             <label><span>Name</span><input value={selectedStageElement.label} onChange={(event) => updateStageElement(selectedStageElement.id, { label: event.target.value })} /></label>
+            <span className="inspector-section-label">POSITION · METERS</span>
             <div className="transform-grid">{(['x', 'y', 'z'] as const).map((axis) => <label key={axis}><span>{axis.toUpperCase()}</span><input type="number" step="0.1" value={Number(selectedStagePosition[axis].toFixed(2))} onChange={(event) => updateStageElementPosition(selectedStageElement.id, axis, Number(event.target.value))} /></label>)}</div>
-            <label><span>Size</span><input type="range" min="10" max="100" value={selectedStageElement.size} onChange={(event) => updateStageElement(selectedStageElement.id, { size: Number(event.target.value) })} /></label>
+            <span className="inspector-section-label">ROTATION · DEGREES</span>
+            <div className="transform-grid">{(['yaw', 'pitch', 'roll'] as const).map((axis) => <label key={axis}><span>{axis}</span><input type="number" step="1" value={Number((selectedStageElement.transform?.rotation[axis] ?? 0).toFixed(1))} onChange={(event) => updateStageElementRotation(selectedStageElement.id, axis, Number(event.target.value))} /></label>)}</div>
+            <span className="inspector-section-label">PHYSICAL SIZE · METERS</span>
+            <div className="transform-grid">{(['x', 'y', 'z'] as const).map((axis) => <label key={axis}><span>{axis.toUpperCase()}</span><input type="number" min=".03" step="0.05" value={Number((selectedStageElement.dimensions?.[axis] ?? 1).toFixed(2))} onChange={(event) => updateStageElementDimension(selectedStageElement.id, axis, Number(event.target.value))} /></label>)}</div>
+            <label><span>UI Scale</span><input type="range" min="10" max="100" value={selectedStageElement.size} onChange={(event) => updateStageElement(selectedStageElement.id, { size: Number(event.target.value) })} /></label>
             <label><span>Color</span><input className="inspector-color" type="color" value={selectedStageElement.color} onChange={(event) => updateStageElement(selectedStageElement.id, { color: event.target.value })} /></label>
             {selectedStageElement.type === 'led-screen' && <section className="screen-source-inspector">
               <header><span>SCREEN SOURCE</span><strong>ProPresenter / NDI</strong></header>
