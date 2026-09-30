@@ -2,14 +2,14 @@ import { describe, expect, it } from 'vitest';
 import { normalizePanelOrder, reorderPanelIds } from './DraggablePanelDeck';
 
 describe('draggable programmer panel layout', () => {
-  const defaults = ['intensity', 'color', 'position', 'beam', 'gobo', 'fx'];
+  const defaults = ['intensity', 'buttons', 'color', 'position', 'beam', 'gobo', 'fx'];
 
   it('moves a panel before or after the drop target without losing panels', () => {
     expect(reorderPanelIds(defaults, 'color', 'gobo')).toEqual([
-      'intensity', 'position', 'beam', 'color', 'gobo', 'fx',
+      'intensity', 'buttons', 'position', 'beam', 'color', 'gobo', 'fx',
     ]);
     expect(reorderPanelIds(defaults, 'intensity', 'fx', 'after')).toEqual([
-      'color', 'position', 'beam', 'gobo', 'fx', 'intensity',
+      'buttons', 'color', 'position', 'beam', 'gobo', 'fx', 'intensity',
     ]);
   });
 
@@ -22,6 +22,6 @@ describe('draggable programmer panel layout', () => {
     expect(normalizePanelOrder(
       ['fx', 'color', 'old-panel', 'intensity', 'color'],
       defaults,
-    )).toEqual(['fx', 'color', 'intensity', 'position', 'beam', 'gobo']);
+    )).toEqual(['fx', 'color', 'intensity', 'buttons', 'position', 'beam', 'gobo']);
   });
 });
