@@ -54,6 +54,12 @@ export type CueTimingRule = {
   curve: CueTimingCurve;
 };
 
+export type ShowRundownItemKind = 'song' | 'media';
+export type ShowRundownSection = {
+  id: string;
+  name: string;
+};
+
 export type ShowCue = {
   sourceSectionId?: string;
   effectStack?: EffectStackLayer[];
@@ -69,6 +75,8 @@ export type ShowCue = {
   linkedLookId?: string;
   linkedEffectId?: string;
   trackName?: string;
+  trackKind?: ShowRundownItemKind;
+  rundownSectionId?: string;
   values: FixtureLookValues;
   /** Sparse tracked instructions. When present, untouched channels inherit from earlier cues. */
   changes?: DmxUpdate[];
@@ -103,6 +111,7 @@ export type ShowFile = {
   creatorSections?: ShowSection[];
   timeline?: ShowTimeline;
   timelineShows?: Array<{id:string;name:string;timeline:ShowTimeline}>;
+  rundownSections?: ShowRundownSection[];
   version: 1 | 2 | 3 | 4;
   name: string;
   notes?: string;
@@ -126,6 +135,7 @@ export const EMPTY_SHOW: ShowFile = {
   name: 'My First Show',
   notes: '',
   cues: [],
+  rundownSections: [],
   groups: [],
   positionPalettes: [],
   recordings: [],
@@ -188,6 +198,7 @@ export function isShowFile(value: unknown): value is ShowFile {
     return false;
   }
   if (candidate.timelineShows !== undefined && (!Array.isArray(candidate.timelineShows) || candidate.timelineShows.length > 100 || !candidate.timelineShows.every(item=>item && typeof item.id==='string' && typeof item.name==='string' && isShowTimeline(item.timeline)))) return false;
+  if (candidate.rundownSections !== undefined && (!Array.isArray(candidate.rundownSections) || candidate.rundownSections.length > 64 || !candidate.rundownSections.every(section => section && typeof section.id === 'string' && typeof section.name === 'string'))) return false;
   const cuesValid = candidate.cues.every((cue) => {
     if (!cue || typeof cue !== 'object') return false;
     const item = cue as Partial<ShowCue>;
@@ -206,6 +217,8 @@ export function isShowFile(value: unknown): value is ShowFile {
       && (item.linkedLookId === undefined || typeof item.linkedLookId === 'string')
       && (item.linkedEffectId === undefined || typeof item.linkedEffectId === 'string')
       && (item.trackName === undefined || typeof item.trackName === 'string')
+      && (item.trackKind === undefined || item.trackKind === 'song' || item.trackKind === 'media')
+      && (item.rundownSectionId === undefined || typeof item.rundownSectionId === 'string')
       && (item.changes === undefined || (
         Array.isArray(item.changes)
         && item.changes.every((update) => (
@@ -393,6 +406,10 @@ export function sanitizeShow(show: ShowFile): ShowFile {
     creatorSections: structuredClone(show.creatorSections ?? []),
     timeline: show.timeline ? structuredClone(show.timeline) : undefined,
     timelineShows: structuredClone(show.timelineShows ?? []),
+    rundownSections: (show.rundownSections ?? []).slice(0, 64).map((section, index) => ({
+      id: section.id.slice(0, 100) || `section-${index + 1}`,
+      name: section.name.trim().slice(0, 64) || `Section ${index + 1}`
+    })),
     name: show.name.trim().slice(0, 64) || EMPTY_SHOW.name,
     notes: typeof show.notes === 'string' ? show.notes.slice(0, 4000) : '',
     groups: (show.groups ?? []).slice(0, 64).map((group) => ({
@@ -428,6 +445,8 @@ export function sanitizeShow(show: ShowFile): ShowFile {
       linkedLookId: (cue.linkedLookId ?? '').slice(0, 100),
       linkedEffectId: (cue.linkedEffectId ?? '').slice(0, 100),
       trackName: (cue.trackName ?? '').slice(0, 180),
+      trackKind: cue.trackKind === 'media' ? 'media' : 'song',
+      rundownSectionId: (cue.rundownSectionId ?? '').slice(0, 100),
       values: {
         red: clampDmx(cue.values.red),
         green: clampDmx(cue.values.green),
@@ -495,4 +514,23 @@ export function moveSongCues(cues: readonly ShowCue[], name: string, direction: 
  if(i<0||j<0||j>=names.length)return [...cues];
  [names[i],names[j]]=[names[j],names[i]];
  return preserveResolvedCueStates(cues,names.flatMap(n=>cues.filter(c=>(c.trackName?.trim()||'Unfiled cues')===n)));
+}
+
+export function moveRundownItemCues(
+  cues: readonly ShowCue[],
+  sectionId: string,
+  name: string,
+  direction: -1 | 1
+): ShowCue[] {
+  const inSection = (cue: ShowCue) => (cue.rundownSectionId?.trim() || '') === sectionId;
+  const names = [...new Set(cues.filter(inSection).map((cue) => cue.trackName?.trim() || 'Unfiled cues'))];
+  const from = names.indexOf(name);
+  const to = from + direction;
+  if (from < 0 || to < 0 || to >= names.length) return [...cues];
+  [names[from], names[to]] = [names[to], names[from]];
+  const reordered = names.flatMap((itemName) => cues.filter((cue) => inSection(cue) && (cue.trackName?.trim() || 'Unfiled cues') === itemName));
+  const positions = cues.flatMap((cue, index) => inSection(cue) ? [index] : []);
+  const next = [...cues];
+  positions.forEach((position, index) => { next[position] = reordered[index]; });
+  return preserveResolvedCueStates(cues, next);
 }
