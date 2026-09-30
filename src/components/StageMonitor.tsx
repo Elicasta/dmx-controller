@@ -6,6 +6,7 @@ import { fixtureGeometryState } from '../core/fixture-geometry';
 import { intersectBeamWithStage } from '../core/beam-intersection';
 import { pointAlongRay, type StageDimensions } from '../core/geometry';
 import { projectStagePoint, type StageView } from '../core/stage-projection';
+import { StageMediaSurface } from './StageMediaSurface';
 export type StageSnapshot={patch:PatchedFixture[];output:number[];dimensions:StageDimensions;elements:StageElement[];blackout:boolean};
 const CHANNEL='lumarig-stage-monitor-v1';
 export function useStagePublisher(snapshot:StageSnapshot) {
@@ -22,7 +23,19 @@ function Scene({data,view}:{data:StageSnapshot;view:StageView}) {
  return <svg className="stage-monitor-scene" viewBox="0 0 1000 560" preserveAspectRatio="xMidYMid meet" aria-label="Live stage output">
   <rect x="80" y="56" width="840" height="448" rx="8" fill="#111c26" stroke="#354755"/>
   {Array.from({length:15},(_,i)=><line key={i} x1={80+i*60} y1="56" x2={80+i*60} y2="504" stroke="#1c2d3a"/>)}
-  {data.elements.map(e=>{const p=projectStagePoint(stageElementPosition(e,data.dimensions),data.dimensions,view);return <g key={e.id}><rect x={p.x-18} y={p.y-12} width="36" height="24" fill={e.color} opacity=".4"/><text x={p.x} y={p.y+30} textAnchor="middle" fill="#a9bdca" fontSize="12">{e.label}</text></g>;})}
+  {data.elements.map(e=>{
+   const p=projectStagePoint(stageElementPosition(e,data.dimensions),data.dimensions,view);
+   if(e.type==='led-screen'&&e.mediaSource?.kind==='ndi'){
+    const width=Math.max(90,Math.min(260,e.size*2.4)),height=width*9/16;
+    return <g key={e.id}>
+     <foreignObject x={p.x-width/2} y={p.y-height/2} width={width} height={height}>
+      <div className="stage-monitor-media-frame" style={{borderColor:e.color}}><StageMediaSurface source={e.mediaSource}/></div>
+     </foreignObject>
+     <text x={p.x} y={p.y+height/2+20} textAnchor="middle" fill="#a9bdca" fontSize="12">{e.label}</text>
+    </g>;
+   }
+   return <g key={e.id}><rect x={p.x-18} y={p.y-12} width="36" height="24" fill={e.color} opacity=".4"/><text x={p.x} y={p.y+30} textAnchor="middle" fill="#a9bdca" fontSize="12">{e.label}</text></g>;
+  })}
   {data.patch.map((f,i)=>{
    const g=fixtureGeometryState(data.output,f,i,data.patch.length,data.dimensions);
    const a=projectStagePoint(g.beam.origin,data.dimensions,view);
