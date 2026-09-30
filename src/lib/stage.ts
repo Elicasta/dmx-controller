@@ -2,6 +2,31 @@ import { DEFAULT_STAGE_DIMENSIONS, type EulerDegrees, type StageDimensions, type
 
 export type StageElementType = 'back-wall' | 'drums' | 'person' | 'led-screen' | 'riser';
 
+export type StageAssetKind =
+  | 'generic'
+  | 'pulpit'
+  | 'keyboard'
+  | 'speaker'
+  | 'monitor'
+  | 'projector'
+  | 'door'
+  | 'drape'
+  | 'rug'
+  | 'chair'
+  | 'plant'
+  | 'lighting-stand'
+  | 'drum-shield'
+  | 'choir-riser';
+
+export type StageScreenSource =
+  | { kind: 'none' }
+  | {
+      kind: 'ndi';
+      deviceId?: string;
+      sourceName?: string;
+      fit?: 'contain' | 'cover';
+    };
+
 export type StageElement = {
   id: string;
   type: StageElementType;
@@ -13,6 +38,8 @@ export type StageElement = {
   color: string;
   transform?: { position: Vec3; rotation: EulerDegrees };
   dimensions?: Vec3;
+  assetKind?: StageAssetKind;
+  mediaSource?: StageScreenSource;
 };
 
 export type StageDocument = {
@@ -79,7 +106,27 @@ export function isStageElement(value: unknown): value is StageElement {
     && typeof item.size === 'number'
     && typeof item.color === 'string'
     && (item.transform === undefined || isElementTransform(item.transform))
-    && (item.dimensions === undefined || isVector(item.dimensions));
+    && (item.dimensions === undefined || isVector(item.dimensions))
+    && (item.assetKind === undefined || isStageAssetKind(item.assetKind))
+    && (item.mediaSource === undefined || isStageScreenSource(item.mediaSource));
+}
+
+function isStageAssetKind(value: unknown): value is StageAssetKind {
+  return typeof value === 'string' && [
+    'generic', 'pulpit', 'keyboard', 'speaker', 'monitor', 'projector',
+    'door', 'drape', 'rug', 'chair', 'plant', 'lighting-stand',
+    'drum-shield', 'choir-riser'
+  ].includes(value);
+}
+
+function isStageScreenSource(value: unknown): value is StageScreenSource {
+  if (!value || typeof value !== 'object') return false;
+  const source = value as Partial<StageScreenSource> & { fit?: unknown };
+  if (source.kind === 'none') return true;
+  return source.kind === 'ndi'
+    && (source.deviceId === undefined || typeof source.deviceId === 'string')
+    && (source.sourceName === undefined || typeof source.sourceName === 'string')
+    && (source.fit === undefined || source.fit === 'contain' || source.fit === 'cover');
 }
 
 function isVector(value: unknown): value is Vec3 {
