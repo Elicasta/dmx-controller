@@ -292,6 +292,9 @@ test('songs collapse, open inline timelines and preserve imported timeline shows
  await page.locator('.song-toggle').click();await expect(page.locator('.song-cue-group article')).toHaveCount(8);
  await page.getByRole('button',{name:'Open timeline for New Song',exact:true}).click();
  await expect(page.locator('.cue-integrated-timeline .timeline-clip')).toHaveCount(8);
+ const integrated=(await page.locator('.cue-integrated-timeline').boundingBox())!;
+ const cueWorkspace=(await page.locator('.show-cue-layout').boundingBox())!;
+ expect(integrated.x+integrated.width).toBeGreaterThan(cueWorkspace.x+cueWorkspace.width-5);
  await page.getByRole('button',{name:'Stage Monitor',exact:true}).click();
  const monitorHeader=(await page.locator('.floating-stage-monitor>header').boundingBox())!;
  await page.mouse.move(monitorHeader.x+60,monitorHeader.y+15);await page.mouse.down();await page.mouse.move(monitorHeader.x+710,monitorHeader.y+345,{steps:8});await page.mouse.up();

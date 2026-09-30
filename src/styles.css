@@ -2135,3 +2135,18 @@ body,#root { min-width:0; width:100%; overflow:hidden; }
 .timeline-workspace>.show-bar-timeline{flex:1;overflow:auto}
 
 .console-app>.console-footer{flex:0 0 28px;min-height:28px}.workspace-utility-bar{flex:0 0 28px;box-sizing:border-box}
+
+.show-cue-layout.cue-with-timeline{grid-template-columns:240px minmax(0,1fr)!important}
+.cue-integrated-timeline{background:#090e12}
+.cue-integrated-timeline>header{align-items:center;padding:8px 12px;border-bottom:1px solid #2a3c47;font-size:12px}
+.cue-integrated-timeline>header button,.midi-map-dialog>button{padding:6px 10px;font-size:10px;color:#c5d9e3;background:#14252f;border:1px solid #3c5665;border-radius:4px}
+.cue-integrated-timeline .show-bar-timeline{height:auto;padding:12px}
+.cue-integrated-timeline .creator-command{padding-bottom:8px;margin-bottom:10px;gap:8px}
+.cue-integrated-timeline .creator-command h2{font-size:16px;margin:4px 0}
+.cue-integrated-timeline .creator-command p{display:none}
+.cue-integrated-timeline .timeline-toolbar{gap:7px;margin-bottom:10px}
+.cue-integrated-timeline .timeline-cue-library{display:flex;flex-wrap:nowrap;max-height:90px;overflow:auto;padding:6px}
+.cue-integrated-timeline .timeline-cue-library>button{flex:0 0 155px;margin:0}
+.cue-integrated-timeline .timeline-cue-library header{flex:0 0 60px;font-size:9px}
+.cue-integrated-timeline .timeline-cue-library>p{display:none}
+@media(max-width:900px){.show-cue-layout.cue-with-timeline{grid-template-columns:190px minmax(0,1fr)!important}}
