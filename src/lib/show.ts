@@ -1,3 +1,4 @@
+import { isEffectStack, isShowSection, isShowTimeline, type EffectStackLayer, type ShowSection, type ShowTimeline } from './show-design';
 import { applyUniverseUpdates, clampDmx, makeUniverse } from './dmx';
 import type { DmxUpdate } from './dmx';
 import type { FixtureLookValues } from './looks';
@@ -54,6 +55,8 @@ export type CueTimingRule = {
 };
 
 export type ShowCue = {
+  sourceSectionId?: string;
+  effectStack?: EffectStackLayer[];
   id: string;
   number: number;
   name: string;
@@ -97,6 +100,8 @@ export type ExternalTrackSync = {
 };
 
 export type ShowFile = {
+  creatorSections?: ShowSection[];
+  timeline?: ShowTimeline;
   version: 1 | 2 | 3 | 4;
   name: string;
   notes?: string;
@@ -185,7 +190,9 @@ export function isShowFile(value: unknown): value is ShowFile {
     if (!cue || typeof cue !== 'object') return false;
     const item = cue as Partial<ShowCue>;
     const values = item.values as Partial<FixtureLookValues> | undefined;
-    return typeof item.id === 'string'
+    return (item.effectStack === undefined || isEffectStack(item.effectStack))
+      && (item.sourceSectionId === undefined || typeof item.sourceSectionId === 'string')
+      && typeof item.id === 'string'
       && typeof item.number === 'number'
       && typeof item.name === 'string'
       && typeof item.fadeMs === 'number'
@@ -236,7 +243,9 @@ export function isShowFile(value: unknown): value is ShowFile {
     && (externalTrack.lightingOffsetMs === undefined || typeof externalTrack.lightingOffsetMs === 'number')
     && typeof externalTrack.armed === 'boolean'
   );
-  return cuesValid
+  return (candidate.timeline === undefined || isShowTimeline(candidate.timeline))
+    && (candidate.creatorSections === undefined || (Array.isArray(candidate.creatorSections) && candidate.creatorSections.length <= 200 && candidate.creatorSections.every(isShowSection)))
+    && cuesValid
     && externalTrackValid
     && (candidate.groups === undefined || (Array.isArray(candidate.groups) && candidate.groups.every(isFixtureGroup)))
     && (candidate.positionPalettes === undefined || (Array.isArray(candidate.positionPalettes) && candidate.positionPalettes.every(isPositionPalette)))
@@ -379,6 +388,8 @@ export function applyLightingOffset(positionMs: number, offsetMs: number) {
 export function sanitizeShow(show: ShowFile): ShowFile {
   return {
     version: 4,
+    creatorSections: structuredClone(show.creatorSections ?? []),
+    timeline: show.timeline ? structuredClone(show.timeline) : undefined,
     name: show.name.trim().slice(0, 64) || EMPTY_SHOW.name,
     notes: typeof show.notes === 'string' ? show.notes.slice(0, 4000) : '',
     groups: (show.groups ?? []).slice(0, 64).map((group) => ({

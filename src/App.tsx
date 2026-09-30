@@ -1,4 +1,7 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type ChangeEvent, type PointerEvent as ReactPointerEvent } from 'react';
+import { EMPTY_TIMELINE, FX_RECIPES, SHOW_COLORS, buildSectionCues, renderEffectStack, renderShowTimeline, isEffectRecipe, type EffectStackLayer, type ShowSection } from './lib/show-design';
+const ShowCreator = lazy(() => import('./components/ShowCreator'));
+const ShowTimelineEditor = lazy(() => import('./components/ShowTimelineEditor'));
+import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState, type ChangeEvent, type PointerEvent as ReactPointerEvent } from 'react';
 import { lumaVizDirectStatus, pollLumaVizDirectMessages, semanticFrameFromResolvedOutput, sendLumaVizDirectFrame, sendLumaVizDirectMessage, startLumaVizDirect, type LumaVizDirectStatus, type SharedShowPatchMutation } from './core/lumaviz-direct';
 import type { SharedLocationPreset } from './core/shared-locations';
 import { isSharedShowActivation } from './core/shared-show';
@@ -50,6 +53,7 @@ import {
   removeCuePreservingTracking,
   resolveShowCueFrame,
   sanitizeShow,
+  renumberCues,
   type CueTimingFamily,
   type CueTimingRule,
   type FixtureGroup,
@@ -135,7 +139,7 @@ import type { StudioBridgeCommand, StudioSongIdentity } from './core/studio-brid
 type Workspace = 'build' | 'create' | 'show' | 'live';
 type SetupView = 'fixtures' | 'groups' | 'stage' | 'settings';
 type ProgramMode = 'stage' | 'looks' | 'fx' | 'colors' | 'media' | 'presets';
-type ShowMode = 'cues' | 'timeline' | 'tracks' | 'library' | 'sync' | 'recordings';
+type ShowMode = 'creator' | 'cues' | 'timeline' | 'tracks' | 'library' | 'sync' | 'recordings';
 type LiveView = 'performance' | 'overrides' | 'groups' | 'masters' | 'shortcuts' | 'settings';
 type LiveBank = 'fixtures' | 'groups';
 type LivePaletteFamily = 'groups' | 'intensity' | 'position' | 'color' | 'beam' | 'fx';
@@ -260,6 +264,7 @@ const DEFAULT_SETTINGS: AppSettings = {
 };
 
 const COLOR_PRESETS = [
+  ...SHOW_COLORS.map(c=>({name:c.name,rgb:hexToRgb(c.hex)})),
   { name: 'Red', rgb: [255, 0, 0] },
   { name: 'Amber', rgb: [255, 92, 0] },
   { name: 'Yellow', rgb: [255, 220, 0] },
@@ -364,22 +369,7 @@ function isCustomEffectLane(value: unknown): value is CustomEffectLane {
     && (lane.steps === undefined || (Array.isArray(lane.steps) && lane.steps.every(isPhaserStep)));
 }
 
-function isCustomEffect(value: unknown): value is CustomEffect {
-  if (!value || typeof value !== 'object') return false;
-  const effect = value as Partial<CustomEffect>;
-  return typeof effect.id === 'string'
-    && typeof effect.name === 'string'
-    && ['dimmer', 'pan', 'tilt', 'uv', 'position'].includes(String(effect.parameter))
-    && ['sine', 'triangle', 'square', 'saw', 'reverse-saw', 'step'].includes(String(effect.waveform))
-    && (effect.motionShape === undefined || ['circle', 'figure-eight', 'diagonal', 'pan-sweep', 'tilt-sweep'].includes(String(effect.motionShape)))
-    && [effect.bpm, effect.depth, effect.phaseSpread, effect.offset].every((part) => typeof part === 'number' && Number.isFinite(part))
-    && (effect.orderMode === undefined || ['forward', 'reverse', 'center-out', 'outside-in', 'odd-even', 'even-odd', 'mirror-pairs'].includes(String(effect.orderMode)))
-    && [effect.blocks, effect.groups, effect.wings, effect.shift, effect.cycleBeats].every((part) => part === undefined || (typeof part === 'number' && Number.isFinite(part)))
-    && (effect.direction === undefined || ['forward', 'reverse'].includes(String(effect.direction)))
-    && (effect.mode === undefined || ['absolute', 'relative'].includes(String(effect.mode)))
-    && (effect.steps === undefined || (Array.isArray(effect.steps) && effect.steps.every(isPhaserStep)))
-    && (effect.lanes === undefined || (Array.isArray(effect.lanes) && effect.lanes.every(isCustomEffectLane)));
-}
+function isCustomEffect(value: unknown): value is CustomEffect { return isEffectRecipe(value); }
 
 function loadCustomEffects(): CustomEffect[] {
   return loadJson<CustomEffect[]>(CUSTOM_FX_STORAGE_KEY, [], (value): value is CustomEffect[] => (
@@ -578,7 +568,7 @@ export default function App() {
   const [workspace, setWorkspace] = useState<Workspace>(() => initialConsoleValue('workspace', ['build', 'create', 'show', 'live'], 'create'));
   const [setupView, setSetupView] = useState<SetupView>(() => initialConsoleValue('setup', ['fixtures', 'groups', 'stage', 'settings'], 'stage'));
   const [programMode, setProgramMode] = useState<ProgramMode>(() => initialConsoleValue('program', ['stage', 'looks', 'fx', 'colors', 'media', 'presets'], 'stage'));
-  const [showMode, setShowMode] = useState<ShowMode>(() => initialConsoleValue('show', ['cues', 'timeline', 'tracks', 'library', 'sync', 'recordings'], 'cues'));
+  const [showMode, setShowMode] = useState<ShowMode>(() => initialConsoleValue('show', ['creator', 'cues', 'timeline', 'tracks', 'library', 'sync', 'recordings'], 'cues'));
   const [liveView, setLiveView] = useState<LiveView>(() => initialConsoleValue('live', ['performance', 'overrides', 'groups', 'masters', 'shortcuts', 'settings'], 'performance'));
   const [fixtureSearch, setFixtureSearch] = useState('');
   const [selectedGroupId, setSelectedGroupId] = useState<string | null>(null);
@@ -681,7 +671,7 @@ export default function App() {
             return current.map((fixture) => fixture.id === candidate.id ? candidate : fixture);
           });
         }
-      });
+      }).catch(() => {});
     }, 150);
     return () => window.clearInterval(timer);
   }, []);
@@ -783,6 +773,8 @@ export default function App() {
   const [showTrackDurationMs, setShowTrackDurationMs] = useState(0);
   const [showTrackPositionMs, setShowTrackPositionMs] = useState(0);
   const showTrackAudioRef = useRef<HTMLAudioElement | null>(null);
+  const cueLaunchGenerationRef = useRef(0);
+  const timelineBaseRef = useRef<number[] | null>(null);
   const [recordingTakeName, setRecordingTakeName] = useState('');
   const [showRecordingActive, setShowRecordingActive] = useState(false);
   const showRecordingActiveRef = useRef(false);
@@ -1062,6 +1054,7 @@ export default function App() {
   }, [refreshDmxStatus, scanDevices, scanMidi]);
 
   function stopFade() {
+    cueLaunchGenerationRef.current += 1;
     if (fadeAnimationRef.current !== null) window.cancelAnimationFrame(fadeAnimationRef.current);
     fadeAnimationRef.current = null;
     setIsFading(false);
@@ -1202,13 +1195,15 @@ export default function App() {
   ) {
     stopFade();
     if (activeEffectRef.current || activeCustomEffectIdRef.current) stopEffect(false);
+    const generation = cueLaunchGenerationRef.current;
+    const completed = () => { if (generation !== cueLaunchGenerationRef.current) return; if (cue.effectStack?.length) startEffectStack(cue.effectStack, cue.name); onComplete?.(); };
     const from = [...universeRef.current];
     const totalDuration = cuePlaybackDuration(cue, from, target, patchRef.current);
 
     if (totalDuration === 0) {
       void commitUniverse(target, source).then(() => {
         setMessage(`Cue ${cue.number}: ${cue.name} is live.`);
-        onComplete?.();
+        completed();
       });
       return;
     }
@@ -1234,7 +1229,7 @@ export default function App() {
         const landed = frame ? commitUniverse(frame, source) : Promise.resolve();
         void landed.then(() => {
           setMessage(`Cue ${cue.number}: ${cue.name} is live.`);
-          onComplete?.();
+          completed();
         });
       }
     };
@@ -1582,7 +1577,7 @@ export default function App() {
       void dispatchControl({ type: 'cue.go', cueId: cue.id }, 'cue');
 
       fadeCueToUniverse(cue, target, 'cue', () => {
-        if (cue.linkedEffectId && EFFECT_PRESETS.some((effect) => effect.id === cue.linkedEffectId)) {
+        if (!cue.effectStack?.length && cue.linkedEffectId && EFFECT_PRESETS.some((effect) => effect.id === cue.linkedEffectId)) {
           startEffect(cue.linkedEffectId as EffectId);
         }
       });
@@ -1687,6 +1682,7 @@ export default function App() {
   }
 
   function loadShowProject(snapshot: ShowProjectSnapshot) {
+    clearShowAudio();
     stopFade();
     clearBusk(false);
     if (activeEffectRef.current || activeCustomEffectIdRef.current) stopEffect(false);
@@ -1701,6 +1697,7 @@ export default function App() {
   }
 
   function newShowProject() {
+    clearShowAudio();
     stopFade();
     clearBusk(false);
     if (activeEffectRef.current || activeCustomEffectIdRef.current) stopEffect(false);
@@ -1723,21 +1720,23 @@ export default function App() {
     setMessage(`${item.name} removed from the show library.`);
   }
 
-  function loadShowTrack(event: ChangeEvent<HTMLInputElement>) {
-    const file = event.target.files?.[0];
-    if (!file) return;
+  function loadShowAudioFile(file: File) {
     showTrackAudioRef.current?.pause();
     if (showTrackUrlRef.current) URL.revokeObjectURL(showTrackUrlRef.current);
     const url = URL.createObjectURL(file);
     showTrackUrlRef.current = url;
-    setShowTrackUrl(url);
-    setShowTrackName(file.name);
-    setShowTrackDurationMs(0);
-    setShowTrackPositionMs(0);
-    const baseName = file.name.replace(/\.[^.]+$/, '');
-    setRecordingTakeName(`${baseName} · Take ${(showFile.recordings?.length ?? 0) + 1}`);
-    setMessage(`${file.name} loaded for show recording.`);
-    event.target.value = '';
+    setShowTrackUrl(url); setShowTrackName(file.name); setShowTrackDurationMs(0); setShowTrackPositionMs(0);
+    setShowFile(current=>({...current,timeline:{...(current.timeline ?? EMPTY_TIMELINE),audioName:file.name}}));
+    setRecordingTakeName(`${file.name.replace(/\.[^.]+$/, '')} · Take ${(showFile.recordings?.length ?? 0) + 1}`);
+    setMessage(`${file.name} loaded. Align its waveform on the bar timeline.`);
+  }
+  function loadShowTrack(event: ChangeEvent<HTMLInputElement>) {
+    const file=event.target.files?.[0]; if(file) loadShowAudioFile(file); event.target.value='';
+  }
+  function clearShowAudio() {
+    showTrackAudioRef.current?.pause();
+    if(showTrackUrlRef.current) URL.revokeObjectURL(showTrackUrlRef.current);
+    showTrackUrlRef.current=''; setShowTrackUrl(''); setShowTrackName('');setShowTrackDurationMs(0);setShowTrackPositionMs(0);stopTimeline();
   }
 
   function captureShowRecordingFrame(timeMs: number) {
@@ -3214,7 +3213,7 @@ export default function App() {
     setActiveCustomEffectId(effect.id);
     const tick = (now: number) => {
       if (activeCustomEffectIdRef.current !== effect.id) return;
-      const updates = renderCustomEffect(effect, effectFixtures, now - startedAt, effectBaseUniverseRef.current);
+      const updates = renderCustomEffect(effect, effectFixtures, now - startedAt, effectBaseUniverseRef.current, selectedGroup?.selectionGrid);
       void dispatchControl({
         type: 'playback.layer.set',
         universe: 1,
@@ -3228,6 +3227,46 @@ export default function App() {
     effectAnimationRef.current = requestAnimationFrame(tick);
     setMessage(`${effect.name} running on selected lights.`);
   }
+
+  function startEffectStack(layers: readonly EffectStackLayer[], name: string) {
+    stopFade(); stopEffect(false, false, false); setAudioArmed(false);
+    const id=`stack-${crypto.randomUUID()}`;
+    activeCustomEffectIdRef.current=id;setActiveCustomEffectId(id);
+    const base=[...universeRef.current],startedAt=performance.now();let last=startedAt-FRAME_MS;
+    const tick=(now:number)=>{
+      if(activeCustomEffectIdRef.current!==id)return;
+      if(now-last>=FRAME_MS){last=now;void dispatchControl({type:'playback.layer.set',universe:1,layerId:'fx',priority:30,mode:'ltp',updates:renderEffectStack(layers,patchRef.current,now-startedAt,base)},'fx');}
+      effectAnimationRef.current=requestAnimationFrame(tick);
+    };
+    effectAnimationRef.current=requestAnimationFrame(tick);setMessage(`${name} · stacked FX running.`);
+  }
+  function previewCreatorSection(section: ShowSection) {
+    try {const cue=buildSectionCues([section],patchRef.current,showFile.groups ?? [])[0];fadeCueToUniverse(cue,applyUniverseUpdates(universeRef.current,cue.changes ?? []));}
+    catch(error){setMessage(String(error));}
+  }
+  function buildCreatorSections() {
+    try {
+      const sections=showFile.creatorSections ?? [];
+      const built=buildSectionCues(sections,patchRef.current,showFile.groups ?? [],showFile.cues);
+      const newCount=built.filter(c=>!showFile.cues.some(old=>old.id===c.id)).length;
+      if(showFile.cues.length+newCount>200) throw Error('This show is limited to 200 cues. Remove unused cues first.');
+      setShowFile(current=>{
+        const updates=new Map(built.map(c=>[c.id,c]));
+        const cues=renumberCues([...current.cues.map(c=>updates.get(c.id)??c),...built.filter(c=>!current.cues.some(old=>old.id===c.id))]);
+        const timeline=structuredClone(current.timeline ?? {...EMPTY_TIMELINE,bpm:sections[0]?.bpm ?? 100});
+        let cursor=Math.max(0,...timeline.clips.map(c=>c.startBar+c.lengthBars));
+        built.forEach((cue,index)=>{if(!timeline.clips.some(c=>c.cueId===cue.id)){timeline.clips.push({id:crypto.randomUUID(),cueId:cue.id,startBar:cursor,lengthBars:sections[index].bars,lane:0,enabled:true});cursor+=sections[index].bars;}});
+        return {...current,cues,timeline};
+      });
+      setMessage(`${built.length} sections built. Open Timeline to arrange and align audio.`);
+    } catch(error) {setMessage(String(error));}
+  }
+  function renderTimelineFrame(elapsedMs:number) {
+    if(!timelineBaseRef.current){if(cueFollowTimerRef.current!==null)window.clearTimeout(cueFollowTimerRef.current);stopFade();stopEffect(false);setAudioArmed(false);timelineBaseRef.current=[...universeRef.current];}
+    const timeline=showFile.timeline ?? EMPTY_TIMELINE;
+    void dispatchControl({type:'playback.layer.set',universe:1,layerId:'timeline',priority:35,mode:'ltp',updates:renderShowTimeline(timeline,showFile.cues,patchRef.current,elapsedMs,timelineBaseRef.current)},'cue');
+  }
+  function stopTimeline() {timelineBaseRef.current=null;void dispatchControl({type:'playback.layer.clear',universe:1,layerId:'timeline'},'cue');}
 
   function renderEffectButton(effect: EffectPreset, compact = false) {
     const className = `${compact ? 'show-fx-button' : 'fx-card'} ${activeEffect === effect.id ? 'active' : ''} ${effect.momentary ? 'momentary' : ''}`;
@@ -3735,7 +3774,7 @@ export default function App() {
         </aside>
       </section>}
 
-      {workspace === 'create' && <section className="console-workspace program-console create-console-v3">
+      {workspace === 'create' && <section className={`console-workspace program-console create-console-v3 ${programMode === 'fx' ? 'create-fx-view' : ''}`}>
         <FixtureBrowser patch={patch} groups={fixtureGroups} search={fixtureSearch} onSearchChange={setFixtureSearch} onSelectAll={selectAllFixtures} onClearSelection={clearFixtureSelection} onSelectFixture={selectFixtureFromConsole} onSelectGroup={selectFixtureGroup} selectedGroupId={selectedGroupId} />
         <div className="program-center console-center">
           <nav className="workspace-subtabs program-subtabs">{([
@@ -3824,13 +3863,15 @@ export default function App() {
                 <header><span>FX PARAMETERS</span><small>Graphical generator</small></header>
                 <label><span>Name</span><input value={fxEditor.name} onChange={(event) => setFxEditor((current) => ({ ...current, name: event.target.value }))}/></label>
                 <div className="inspector-pair">
-                  <label><span>Parameter</span><select value={fxEditor.parameter} onChange={(event) => { const parameter = event.target.value as CustomEffectParameter; setFxEditor((current) => ({ ...current, parameter, motionShape: parameter === 'position' ? current.motionShape ?? 'circle' : current.motionShape, mode: parameter === 'position' ? 'relative' : current.mode })); }}><option value="dimmer">Dimmer</option><option value="position">Position (Pan + Tilt)</option><option value="pan">Pan Only</option><option value="tilt">Tilt Only</option><option value="uv">UV</option></select></label>
+                  <label><span>Parameter</span><select value={fxEditor.parameter} onChange={(event) => { const parameter = event.target.value as CustomEffectParameter; setFxEditor((current) => ({ ...current, parameter, motionShape: parameter === 'position' ? current.motionShape ?? 'circle' : current.motionShape, mode: parameter === 'position' ? 'relative' : current.mode })); }}><option value="dimmer">Dimmer</option><option value="position">Position (Pan + Tilt)</option><option value="pan">Pan Only</option><option value="tilt">Tilt Only</option><option value="uv">UV</option><option value="color">Color Palette</option></select></label>
                   <label><span>Waveform</span><select value={fxEditor.waveform} onChange={(event) => setFxEditor((current) => ({ ...current, waveform: event.target.value as EffectWaveform }))}><option value="sine">Sine</option><option value="triangle">Triangle</option><option value="square">Square</option><option value="saw">Saw</option><option value="reverse-saw">Reverse Saw</option><option value="step">Step</option></select></label>
                 </div>
                 {fxEditor.parameter === 'position' && <div className="inspector-pair">
                   <label><span>Motion Shape</span><select value={fxEditor.motionShape ?? 'circle'} onChange={(event) => setFxEditor((current) => ({ ...current, motionShape: event.target.value as MotionShape }))}><option value="circle">Circle</option><option value="figure-eight">Figure Eight</option><option value="diagonal">Diagonal</option><option value="pan-sweep">Pan Sweep</option><option value="tilt-sweep">Tilt Sweep</option></select></label>
                   <label><span>Movement</span><strong className="fx-semantic-readout">16-bit Pan + Tilt · relative to current look</strong></label>
                 </div>}
+                <label><span>Grid phase</span><select aria-label="FX grid phase" value={fxEditor.gridPhaseMode ?? 'selection'} onChange={e=>setFxEditor(current=>({...current,gridPhaseMode:e.target.value as CustomEffect['gridPhaseMode']}))}><option value="selection">Selection order</option><option value="rows">Whole rows</option><option value="columns">Whole columns</option><option value="across-rows">Across every row</option><option value="across-columns">Down every column</option></select></label>
+                {fxEditor.parameter === 'color' && <section className="fx-color-editor"><header><span>COLOR PALETTE</span><button disabled={(fxEditor.colorPalette?.length ?? 2)>=16} onClick={()=>setFxEditor(current=>({...current,colorPalette:[...(current.colorPalette ?? ['#145dff','#00dfb5']),'#ff6b24']}))}>＋ COLOR</button></header><div>{(fxEditor.colorPalette ?? ['#145dff','#00dfb5']).map((color,index)=><label key={index}><input aria-label={`FX color ${index+1}`} type="color" value={color} onChange={e=>setFxEditor(current=>({...current,colorPalette:(current.colorPalette ?? ['#145dff','#00dfb5']).map((c,i)=>i===index?e.target.value:c)}))}/><button disabled={(fxEditor.colorPalette?.length ?? 2)<=1} onClick={()=>setFxEditor(current=>({...current,colorPalette:(current.colorPalette ?? ['#145dff','#00dfb5']).filter((_,i)=>i!==index)}))}>×</button></label>)}</div><label><span>Blend</span><select value={fxEditor.colorBlend ?? 'smooth'} onChange={e=>setFxEditor(current=>({...current,colorBlend:e.target.value as 'smooth'|'step'}))}><option value="smooth">Smooth blend</option><option value="step">Beat stepped</option></select></label></section>}
                 <section className="fx-step-recipe">
                   <header><span>STEP RECIPE</span><div>{fxEditor.steps?.length ? <><button onClick={addFxStep}>＋ STEP</button><button onClick={() => setFxEditor((current) => ({ ...current, steps: undefined }))}>USE WAVEFORM</button></> : <button onClick={enableStepRecipe}>＋ BUILD STEPS</button>}</div></header>
                   {fxEditor.steps?.length ? <div className="fx-step-list">{fxEditor.steps.map((step, index) => <article key={index}>
@@ -3888,7 +3929,7 @@ export default function App() {
 
             <section className="fx-bank-v4">
               <header><div><span>FX BANK</span><strong>Factory + saved custom effects</strong></div><small>{EFFECT_PRESETS.length + customEffects.length} effects</small></header>
-              <div className="fx-bank-grid">
+              <div className="fx-bank-grid">{FX_RECIPES.map(recipe=><button key={recipe.id} onClick={()=>setFxEditor({...structuredClone(recipe.effect),id:crypto.randomUUID()})}><i className="fx-icon">≈</i><span><strong>{recipe.name}</strong><small>{recipe.category}</small></span><b>RECIPE</b></button>)}
                 {EFFECT_PRESETS.map((effect) => <button key={effect.id} className={`${selectedFxBankId === effect.id ? 'selected' : ''} ${activeEffect === effect.id ? 'running' : ''}`} onClick={() => loadFactoryFx(effect)} onDoubleClick={() => toggleEffect(effect.id, programEffectFixtures.map((fixture) => fixture.id))}><i className={`fx-icon fx-${effect.id}`}/><span><strong>{effect.name}</strong><small>{EFFECT_SHAPES[effect.id].waveform} · {effect.defaultBpm} BPM</small></span><b>{activeEffect === effect.id ? 'LIVE' : 'FACTORY'}</b></button>)}
                 {customEffects.map((effect) => <article key={effect.id} className={`${selectedFxBankId === effect.id ? 'selected' : ''} ${activeCustomEffectId === effect.id ? 'running' : ''}`}><button className="fx-bank-load" onClick={() => { setSelectedFxBankId(effect.id); setFxEditor(effect); }} onDoubleClick={() => runCustomFx(effect, programEffectFixtures.map((fixture) => fixture.id))}><i>∿</i><span><strong>{effect.name}</strong><small>{effect.parameter === 'position' ? (effect.motionShape ?? 'circle').replace('-', ' ') : effect.waveform} · {effect.bpm} BPM</small></span><b>{activeCustomEffectId === effect.id ? 'LIVE' : 'CUSTOM'}</b></button><button className="fx-bank-delete" aria-label={`Delete ${effect.name}`} onClick={() => deleteCustomFx(effect.id)}>×</button></article>)}
               </div>
@@ -3908,7 +3949,7 @@ export default function App() {
 
       {workspace === 'show' && <section className="show-console console-workspace-wide show-console-v3">
         <nav className="workspace-subtabs show-subtabs">{([
-          ['cues','Cues'],['timeline','Timeline'],['tracks','Tracks'],['library','Show Library'],['sync','MIDI & Sync'],['recordings','Recordings']
+          ['creator','Show Creator'],['cues','Cues'],['timeline','Timeline'],['tracks','Tracks'],['library','Show Library'],['sync','MIDI & Sync'],['recordings','Recordings']
         ] as Array<[ShowMode,string]>).map(([id,label]) => <button key={id} className={showMode === id ? 'active' : ''} onClick={() => setShowMode(id)}>{label}</button>)}</nav>
 
         {showMode === 'cues' && <div className="show-cue-layout">
@@ -3921,15 +3962,8 @@ export default function App() {
           <div className="cue-transport-console"><button onClick={goPreviousCue} disabled={!showFile.cues.length}>BACK</button><span><small>CURRENT</small><strong>{activeCue?.name ?? 'Ready'}</strong></span><button className="giant-go" onClick={goNextCue} disabled={!nextCue}>GO<small>{nextCue?.name ?? 'End'}</small></button><span><small>NEXT</small><strong>{nextCue?.name ?? 'End of show'}</strong></span><button onClick={goNextCue} disabled={!nextCue}>NEXT</button></div>
         </div>}
 
-        {showMode === 'timeline' && <div className="show-timeline-v3">
-          <header className="timeline-command"><div><span>SHOW TIMELINE</span><h2>{showTrackName || externalTrack.songName || showFile.name}</h2></div><div className="timeline-transport"><button onClick={goPreviousCue}>BACK</button><button onClick={toggleShowTrackPreview}>PLAY / PAUSE</button><button className="console-primary" onClick={goNextCue}>GO</button></div></header>
-          <div className="timeline-ruler"><span>{formatShowTime(showTrackPositionMs)}</span><input type="range" min="0" max={Math.max(1,showTrackDurationMs)} value={Math.min(showTrackPositionMs,Math.max(1,showTrackDurationMs))} onChange={(event)=>{const next=Number(event.target.value);if(showTrackAudioRef.current)showTrackAudioRef.current.currentTime=next/1000;setShowTrackPositionMs(next);}}/><span>{formatShowTime(showTrackDurationMs)}</span></div>
-          <div className="timeline-lanes">
-            <section><header><span>LIGHTING CUES</span><small>{showFile.cues.length}</small></header><div className="timeline-cue-sequence">{showFile.cues.map((cue,index)=><button key={cue.id} className={activeCueId===cue.id?'active':''} onClick={()=>runCue(cue)} style={{'--cue-color':cue.color ?? lookSwatch(cue.values)} as import('react').CSSProperties}><b>{cue.number}</b><span>{cue.name}</span><small>{cue.fadeMs ? `${cue.fadeMs/1000}s`:'SNAP'}</small>{index<showFile.cues.length-1&&<i/>}</button>)}</div></section>
-            <section><header><span>MEDIA / TRACK</span><small>{showTrackName || 'No local track'}</small></header><div className="timeline-media-lane"><div className={externalTransportRunning?'running':''}><span>STUDIO</span><strong>{externalTrack.songName || 'External transport'}</strong><small>{externalTrack.armed ? `${externalTrack.bpm} BPM · ${externalTrack.lightingOffsetMs}ms offset` : 'Not armed'}</small></div></div></section>
-            <section><header><span>RECORDED LIGHTING</span><small>{showFile.recordings?.length ?? 0} takes</small></header><div className="timeline-recording-lane">{showFile.recordings?.map((recording)=><button key={recording.id} onClick={()=>playingRecordingId===recording.id?stopRecordedShowPlayback():playShowRecording(recording)}><strong>{recording.name}</strong><span>{formatShowTime(recording.durationMs)}</span><small>{recording.frames.length} changes</small></button>)}</div></section>
-          </div>
-        </div>}
+        {showMode === 'creator' && <Suspense fallback={<p>Loading Show Creator…</p>}><ShowCreator sections={showFile.creatorSections ?? []} setSections={(action) => setShowFile(current => ({...current,creatorSections:typeof action === 'function' ? action(current.creatorSections ?? []) : action}))} groups={showFile.groups ?? []} fixtures={patch} onBuild={buildCreatorSections} onPreview={previewCreatorSection} onStop={() => { stopFade(); stopEffect(); }} onTimeline={() => setShowMode('timeline')} onEditFx={(effect) => { setFxEditor(effect); setWorkspace('create'); setProgramMode('fx'); }}/></Suspense>}
+        {showMode === 'timeline' && <Suspense fallback={<p>Loading Timeline…</p>}><ShowTimelineEditor timeline={showFile.timeline ?? EMPTY_TIMELINE} cues={showFile.cues} audioRef={showTrackAudioRef} audioUrl={showTrackUrl} audioName={showTrackName} audioDurationMs={showTrackDurationMs} onLoadAudio={loadShowAudioFile} onChange={(timeline) => setShowFile(current=>({...current,timeline}))} onFrame={renderTimelineFrame} onStop={stopTimeline} onCreator={() => setShowMode('creator')}/></Suspense>}
 
         {showMode === 'tracks' && <div className="tracks-console tracks-console-v3">
           <section className="console-panel track-source"><header><div><span>LOCAL AUDIO TRACK</span><h2>{showTrackName || 'No track loaded'}</h2></div><label className="file-button"><input type="file" accept="audio/*" onChange={loadShowTrack}/>{showTrackName?'Change Track':'Load Track'}</label></header><div className="track-timeline"><span>{formatShowTime(showTrackPositionMs)}</span><input type="range" min="0" max={Math.max(1,showTrackDurationMs)} value={Math.min(showTrackPositionMs,Math.max(1,showTrackDurationMs))} onChange={(event)=>{const next=Number(event.target.value);if(showTrackAudioRef.current)showTrackAudioRef.current.currentTime=next/1000;setShowTrackPositionMs(next);}}/><span>{formatShowTime(showTrackDurationMs)}</span></div><div className="track-actions"><button onClick={toggleShowTrackPreview}>Play / Pause</button><button onClick={()=>setShowMode('timeline')}>Open Timeline</button></div></section>

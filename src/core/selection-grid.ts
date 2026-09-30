@@ -139,3 +139,20 @@ export function moveFixtureInSelectionGrid(
     })
   };
 }
+
+export type GridPhaseMode = 'selection' | 'rows' | 'columns' | 'across-rows' | 'across-columns';
+
+/** Spatial phases follow fixture identity, independent of selection array order. */
+export function selectionGridPhases(grid: FixtureSelectionGrid | undefined, ids: readonly string[], mode: GridPhaseMode): number[] {
+  const normalized = normalizeSelectionGrid(grid, ids);
+  const axis = mode === 'rows' || mode === 'across-columns' ? 'row' : 'column';
+  if (mode === 'selection') {
+    const order = selectionGridOrder(normalized, ids);
+    return ids.map(id => order.indexOf(id) / Math.max(1, order.length));
+  }
+  const coordinates = [...new Set(normalized.cells.map(cell => cell[axis]))].sort((a,b) => a-b);
+  return ids.map(id => {
+    const cell = normalized.cells.find(cell => cell.fixtureId === id);
+    return cell ? coordinates.indexOf(cell[axis]) / Math.max(1, coordinates.length) : 0;
+  });
+}

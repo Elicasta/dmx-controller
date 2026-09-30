@@ -1,3 +1,4 @@
+import { selectionGridPhases, type FixtureSelectionGrid, type GridPhaseMode } from './selection-grid';
 import type { DmxUpdate } from '../lib/dmx';
 import {
   fixtureParameterUpdate,
@@ -18,6 +19,8 @@ export type PhaserDirection = 'forward' | 'reverse';
 export type PhaserMode = 'absolute' | 'relative';
 
 export type PhaserTiming = {
+  selectionGrid?: FixtureSelectionGrid;
+  gridPhaseMode?: GridPhaseMode;
   bpm: number;
   phaseSpread: number;
   orderMode?: FixtureOrderMode;
@@ -214,7 +217,9 @@ export function renderPhaserProgram(
   if (!active.length) return [];
 
   const orderSpec = program.order ?? { mode: program.orderMode ?? 'forward' };
-  const phases = fixturePhasePositions(active.length, orderSpec);
+  const phases = program.gridPhaseMode && program.gridPhaseMode !== 'selection'
+    ? selectionGridPhases(program.selectionGrid, active.map(f => f.id), program.gridPhaseMode)
+    : fixturePhasePositions(active.length, orderSpec);
 
   return active.flatMap((fixture, index) => {
     const phase = phases[index];
@@ -271,6 +276,8 @@ export function renderPhaserEffect(
   baseUniverse?: readonly number[]
 ): DmxUpdate[] {
   return renderPhaserProgram({
+    selectionGrid: effect.selectionGrid,
+    gridPhaseMode: effect.gridPhaseMode,
     bpm: effect.bpm,
     phaseSpread: effect.phaseSpread,
     orderMode: effect.orderMode,
