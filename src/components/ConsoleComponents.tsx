@@ -92,6 +92,33 @@ export const FixtureBrowser = memo(function FixtureBrowser({
   </aside>;
 });
 
+function rgbToHsv(red: number, green: number, blue: number): [number, number, number] {
+  const r = red / 255, g = green / 255, b = blue / 255;
+  const max = Math.max(r, g, b), min = Math.min(r, g, b), delta = max - min;
+  let hue = 0;
+  if (delta) {
+    if (max === r) hue = 60 * (((g - b) / delta) % 6);
+    else if (max === g) hue = 60 * ((b - r) / delta + 2);
+    else hue = 60 * ((r - g) / delta + 4);
+  }
+  if (hue < 0) hue += 360;
+  return [hue, max === 0 ? 0 : delta / max, max];
+}
+
+function hsvToHex(hue: number, saturation: number, value: number) {
+  const chroma = value * saturation;
+  const segment = ((hue % 360) + 360) % 360 / 60;
+  const x = chroma * (1 - Math.abs((segment % 2) - 1));
+  const [r1, g1, b1] =
+    segment < 1 ? [chroma, x, 0] :
+    segment < 2 ? [x, chroma, 0] :
+    segment < 3 ? [0, chroma, x] :
+    segment < 4 ? [0, x, chroma] :
+    segment < 5 ? [x, 0, chroma] : [chroma, 0, x];
+  const m = value - chroma;
+  return `#${[r1, g1, b1].map((channel) => Math.round((channel + m) * 255).toString(16).padStart(2, '0')).join('')}`;
+}
+
 type ColorDeckProps = {
   title: string;
   subtitle: string;
@@ -105,11 +132,16 @@ export const ColorDeck = memo(function ColorDeck({ title, subtitle, color, disab
   const red = Number.parseInt(color.slice(1, 3), 16) || 0;
   const green = Number.parseInt(color.slice(3, 5), 16) || 0;
   const blue = Number.parseInt(color.slice(5, 7), 16) || 0;
+  const [hue, saturation, value] = rgbToHsv(red, green, blue);
+  const applyHue = (nextHue: number) => onChange(hsvToHex(nextHue, Math.max(.82, saturation), Math.max(.35, value)));
   return <section className={`color-deck ${disabled ? 'disabled' : ''}`}>
     <div className="color-deck-title"><span>{title}</span><small>{subtitle}</small></div>
-    <div className="hue-rail" aria-hidden="true"><span style={{ left: `${(red + green + blue) / 765 * 100}%` }} /></div>
+    <label className="hue-rail" title="Hue">
+      <input aria-label="Hue" type="range" min="0" max="360" value={Math.round(hue)} disabled={disabled} onChange={(event) => applyHue(Number(event.target.value))} />
+      <span style={{ left: `calc(${(hue / 360) * 100}% - 2px)` }} />
+    </label>
     <label className="color-wheel-control" title="Choose color">
-      <input type="color" value={color} disabled={disabled} onChange={(event) => onChange(event.target.value)} />
+      <input aria-label="Choose color" type="color" value={color} disabled={disabled} onInput={(event) => onChange(event.currentTarget.value)} onChange={(event) => onChange(event.target.value)} />
       <span style={{ background: color }} />
     </label>
     <div className="selected-color-readout"><i style={{ background: color }} /><div><span>SELECTED COLOR</span><strong>{color.toUpperCase()}</strong><small>R {red} &nbsp; G {green} &nbsp; B {blue}</small></div></div>
