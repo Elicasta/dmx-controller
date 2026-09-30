@@ -45,7 +45,7 @@ function Scene({data,view}:{data:StageSnapshot;view:StageView}) {
 }
 export default function StageMonitor({snapshot,floating=false,onClose}:{snapshot?:StageSnapshot;floating?:boolean;onClose?:()=>void}) {
  const [incoming,setIncoming]=useState<StageSnapshot|null>(null),[view,setView]=useState<StageView>('perspective'),[collapsed,setCollapsed]=useState(false);
- const [position,setPosition]=useState({x:30,y:100});const drag=useRef<{x:number;y:number}|null>(null);
+ const [position,setPosition]=useState(()=>({x:Math.max(20,window.innerWidth-600),y:Math.max(80,window.innerHeight-420)}));const drag=useRef<{x:number;y:number}|null>(null);
  useEffect(()=>{if(snapshot)return;const c=new BroadcastChannel(CHANNEL);c.onmessage=e=>{if(e.data?.type==='frame')setIncoming(e.data.snapshot);};c.postMessage({type:'ready'});return()=>c.close();},[Boolean(snapshot)]);
  const data=snapshot??incoming;
  return <section className={`stage-monitor ${floating?'floating-stage-monitor':''} ${collapsed?'collapsed':''}`} style={floating?{left:position.x,top:position.y}:undefined}>

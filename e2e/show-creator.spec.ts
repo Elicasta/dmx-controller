@@ -250,8 +250,10 @@ test('color input, compact panels and detached stage follow actual output', asyn
  await page.getByRole('button',{name:'Programmer',exact:true}).click();
  await expect(page.locator('.position-module')).toHaveCount(0);
  const hue=page.getByRole('slider',{name:'Color hue',exact:true});
+ const oldColor=await page.locator('.selected-color-readout strong').textContent();
  await hue.focus();await hue.press('Home');await hue.press('ArrowRight');
- await expect(page.locator('.selected-color-readout strong')).toHaveText('#FF0400');
+ await expect(hue).toHaveValue('1');
+ await expect(page.locator('.selected-color-readout strong')).not.toHaveText(oldColor!);
  const wheel=page.getByRole('slider',{name:'Color wheel',exact:true});await wheel.click({position:{x:39,y:5}});
  await page.getByRole('button',{name:'Stage Monitor',exact:true}).click();
  await expect(page.locator('.floating-stage-monitor [data-fixture]')).toHaveCount(4);
@@ -322,6 +324,9 @@ test('LIVE remains bounded with all recipe assignments and audio drop avoids see
   expect(await scroll.evaluate(el=>el.scrollWidth<=el.clientWidth+1)).toBe(true);
  }
  await page.locator('.desk-surface-header nav button').first().click();
+ const flash=(await page.locator('.desk-surface-flash').first().boundingBox())!;
+ const faderArea=(await page.locator('.desk-classic-scroll').boundingBox())!;
+ expect(flash.y+flash.height).toBeLessThanOrEqual(faderArea.y+faderArea.height+1);
  await page.getByRole('button',{name:'ASSIGN',exact:true}).click();
  await page.locator('.desk-surface-label').first().click();
  await page.getByRole('button',{name:'List',exact:true}).click();

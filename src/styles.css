@@ -2133,3 +2133,5 @@ body,#root { min-width:0; width:100%; overflow:hidden; }
 .timeline-show-select{display:flex;gap:10px;align-items:center;padding:6px 18px;font-size:11px;color:#8fa9b8}
 .timeline-show-select select{background:#11202a;color:#d9e8ed;border:1px solid #3d5462;padding:6px}
 .timeline-workspace>.show-bar-timeline{flex:1;overflow:auto}
+
+.console-app>.console-footer{flex:0 0 28px;min-height:28px}.workspace-utility-bar{flex:0 0 28px;box-sizing:border-box}
