@@ -207,6 +207,20 @@ function objectFaces(element: StageElement, stage: StageDimensions, camera: Visu
   const corners = elementCorners(element, stage);
   const projected = corners.map((corner) => projectVisualizerPoint(corner, camera, width, height));
   const factors = [.58, .82, .68, .72, 1, .48];
+  const wireLike = element.type === 'person'
+    || element.assetKind === 'chair'
+    || element.assetKind === 'plant'
+    || element.assetKind === 'lighting-stand'
+    || element.assetKind === 'camera';
+  const translucent = wireLike
+    ? .035
+    : element.type === 'drums' || element.assetKind === 'truss'
+      ? .16
+      : element.assetKind === 'pulpit'
+        ? .5
+        : element.type === 'back-wall'
+          ? .88
+          : .96;
 
   return FACE_INDICES.flatMap((indices, faceIndex) => {
     const points = indices.map((index) => projected[index]);
@@ -214,8 +228,8 @@ function objectFaces(element: StageElement, stage: StageDimensions, camera: Visu
     return [{
       depth: averageDepth(points),
       points,
-      fill: shade(element.color, factors[faceIndex], element.type === 'back-wall' ? .88 : .96),
-      stroke: shade(element.color, Math.min(1.25, factors[faceIndex] + .25), .8),
+      fill: shade(element.color, factors[faceIndex], translucent),
+      stroke: shade(element.color, Math.min(1.25, factors[faceIndex] + .25), wireLike ? .16 : .8),
       elementId: element.id,
       label: faceIndex === 1 ? element.label : undefined,
       screenElement: element.type === 'led-screen' && faceIndex === 1 ? element : undefined
@@ -461,6 +475,206 @@ function drawFaces(
   }
 }
 
+
+function worldFromElementLocal(element: StageElement, stage: StageDimensions, local: Vec3): Vec3 {
+  const position = stageElementPosition(element, stage);
+  const rotation = element.transform?.rotation ?? { yaw: 0, pitch: 0, roll: 0 };
+  return add(position, rotateLocal(local, rotation));
+}
+
+function drawWorldLine(
+  ctx: CanvasRenderingContext2D,
+  camera: VisualizerCamera,
+  width: number,
+  height: number,
+  a: Vec3,
+  b: Vec3,
+  stroke: string,
+  lineWidth = 1.2
+) {
+  const start = projectVisualizerPoint(a, camera, width, height);
+  const end = projectVisualizerPoint(b, camera, width, height);
+  if (start.depth <= .02 || end.depth <= .02) return;
+  ctx.strokeStyle = stroke;
+  ctx.lineWidth = lineWidth;
+  ctx.beginPath();
+  ctx.moveTo(start.x, start.y);
+  ctx.lineTo(end.x, end.y);
+  ctx.stroke();
+}
+
+function drawWorldCircle(
+  ctx: CanvasRenderingContext2D,
+  camera: VisualizerCamera,
+  width: number,
+  height: number,
+  center: Vec3,
+  radiusMeters: number,
+  fill: string,
+  stroke?: string
+) {
+  const projected = projectVisualizerPoint(center, camera, width, height);
+  const edge = projectVisualizerPoint({ ...center, x: center.x + radiusMeters }, camera, width, height);
+  if (projected.depth <= .02 || edge.depth <= .02) return;
+  const radius = clamp(Math.hypot(edge.x - projected.x, edge.y - projected.y), 1.8, 34);
+  ctx.beginPath();
+  ctx.arc(projected.x, projected.y, radius, 0, Math.PI * 2);
+  ctx.fillStyle = fill;
+  ctx.fill();
+  if (stroke) {
+    ctx.strokeStyle = stroke;
+    ctx.lineWidth = 1;
+    ctx.stroke();
+  }
+}
+
+function drawAssetDetails(
+  ctx: CanvasRenderingContext2D,
+  elements: readonly StageElement[],
+  stage: StageDimensions,
+  camera: VisualizerCamera,
+  width: number,
+  height: number,
+  selectedElementId?: string,
+  quality: VisualizerQuality = 'quality'
+) {
+  const ordered = elements
+    .map((element) => ({ element, depth: projectVisualizerPoint(stageElementPosition(element, stage), camera, width, height).depth }))
+    .filter((item) => item.depth > .02)
+    .sort((a, b) => b.depth - a.depth);
+
+  ctx.save();
+  ctx.lineCap = 'round';
+  ctx.lineJoin = 'round';
+
+  for (const { element } of ordered) {
+    const dims = element.dimensions ?? { x: 1, y: 1, z: 1 };
+    const h = Math.max(.15, dims.y);
+    const w = Math.max(.12, dims.x);
+    const d = Math.max(.08, dims.z);
+    const selected = element.id === selectedElementId;
+    const stroke = selected ? '#64e18e' : shade(element.color, 1.18, .92);
+    const soft = selected ? 'rgba(100,225,142,.28)' : shade(element.color, .9, .52);
+
+    if (element.type === 'person' && element.assetKind !== 'chair' && element.assetKind !== 'plant') {
+      const head = worldFromElementLocal(element, stage, { x: 0, y: h * .37, z: 0 });
+      const neck = worldFromElementLocal(element, stage, { x: 0, y: h * .24, z: 0 });
+      const hips = worldFromElementLocal(element, stage, { x: 0, y: -h * .12, z: 0 });
+      const leftHand = worldFromElementLocal(element, stage, { x: -w * .48, y: h * .08, z: 0 });
+      const rightHand = worldFromElementLocal(element, stage, { x: w * .48, y: h * .08, z: 0 });
+      const leftFoot = worldFromElementLocal(element, stage, { x: -w * .2, y: -h * .5, z: 0 });
+      const rightFoot = worldFromElementLocal(element, stage, { x: w * .2, y: -h * .5, z: 0 });
+      drawWorldCircle(ctx, camera, width, height, head, Math.max(.09, w * .18), shade(element.color, 1.08, .95), stroke);
+      drawWorldLine(ctx, camera, width, height, neck, hips, stroke, selected ? 2.4 : 1.8);
+      drawWorldLine(ctx, camera, width, height, neck, leftHand, stroke, 1.5);
+      drawWorldLine(ctx, camera, width, height, neck, rightHand, stroke, 1.5);
+      drawWorldLine(ctx, camera, width, height, hips, leftFoot, stroke, 1.6);
+      drawWorldLine(ctx, camera, width, height, hips, rightFoot, stroke, 1.6);
+      continue;
+    }
+
+    if (element.assetKind === 'chair') {
+      const seatY = -h * .05;
+      const backY = h * .45;
+      const left = -w * .42;
+      const right = w * .42;
+      const front = d * .34;
+      const back = -d * .34;
+      drawWorldLine(ctx, camera, width, height, worldFromElementLocal(element, stage, {x:left,y:seatY,z:front}), worldFromElementLocal(element, stage, {x:right,y:seatY,z:front}), stroke, 1.5);
+      drawWorldLine(ctx, camera, width, height, worldFromElementLocal(element, stage, {x:left,y:seatY,z:back}), worldFromElementLocal(element, stage, {x:right,y:seatY,z:back}), stroke, 1.5);
+      drawWorldLine(ctx, camera, width, height, worldFromElementLocal(element, stage, {x:left,y:seatY,z:back}), worldFromElementLocal(element, stage, {x:left,y:backY,z:back}), stroke, 1.4);
+      drawWorldLine(ctx, camera, width, height, worldFromElementLocal(element, stage, {x:right,y:seatY,z:back}), worldFromElementLocal(element, stage, {x:right,y:backY,z:back}), stroke, 1.4);
+      for (const x of [left,right]) for (const z of [front,back]) {
+        drawWorldLine(ctx, camera, width, height, worldFromElementLocal(element, stage, {x,y:seatY,z}), worldFromElementLocal(element, stage, {x,y:-h*.5,z}), soft, 1);
+      }
+      continue;
+    }
+
+    if (element.assetKind === 'plant') {
+      const base = worldFromElementLocal(element, stage, {x:0,y:-h*.36,z:0});
+      const stem = worldFromElementLocal(element, stage, {x:0,y:h*.08,z:0});
+      drawWorldLine(ctx, camera, width, height, base, stem, stroke, 2);
+      const leafColor = selected ? 'rgba(100,225,142,.72)' : 'rgba(89,132,86,.8)';
+      for (const [x,y,z,r] of [
+        [-.24,.18,0,.22],[.22,.24,.05,.24],[0,.38,-.03,.28],[-.12,.34,.08,.22],[.14,.12,-.05,.2]
+      ] as const) {
+        drawWorldCircle(ctx, camera, width, height, worldFromElementLocal(element, stage, {x:x*w,y:y*h,z:z*d}), Math.max(.08,r*w), leafColor, selected ? stroke : undefined);
+      }
+      continue;
+    }
+
+    if (element.assetKind === 'lighting-stand' || element.assetKind === 'camera') {
+      const bottom = worldFromElementLocal(element, stage, {x:0,y:-h*.5,z:0});
+      const top = worldFromElementLocal(element, stage, {x:0,y:h*.5,z:0});
+      drawWorldLine(ctx, camera, width, height, bottom, top, stroke, 1.8);
+      for (const x of [-w*.34,w*.34]) {
+        drawWorldLine(ctx, camera, width, height, worldFromElementLocal(element, stage, {x:0,y:-h*.35,z:0}), worldFromElementLocal(element, stage, {x,y:-h*.5,z:d*.28}), soft, 1.2);
+      }
+      if (element.assetKind === 'camera') {
+        const body = worldFromElementLocal(element, stage, {x:0,y:h*.48,z:0});
+        const lens = worldFromElementLocal(element, stage, {x:0,y:h*.48,z:-d*.36});
+        drawWorldCircle(ctx, camera, width, height, body, Math.max(.08,w*.18), '#252c33', stroke);
+        drawWorldLine(ctx, camera, width, height, body, lens, stroke, 3);
+      } else {
+        drawWorldLine(ctx, camera, width, height, worldFromElementLocal(element, stage, {x:-w*.35,y:h*.46,z:0}), worldFromElementLocal(element, stage, {x:w*.35,y:h*.46,z:0}), stroke, 2.2);
+      }
+      continue;
+    }
+
+    if (element.type === 'drums' || element.assetKind === 'drum-shield') {
+      drawWorldCircle(ctx, camera, width, height, worldFromElementLocal(element, stage, {x:0,y:-h*.14,z:d*.08}), Math.max(.16,w*.2), '#161b20', stroke);
+      drawWorldCircle(ctx, camera, width, height, worldFromElementLocal(element, stage, {x:-w*.22,y:h*.08,z:0}), Math.max(.1,w*.12), '#20272d', stroke);
+      drawWorldCircle(ctx, camera, width, height, worldFromElementLocal(element, stage, {x:w*.22,y:h*.12,z:0}), Math.max(.1,w*.12), '#20272d', stroke);
+      drawWorldLine(ctx, camera, width, height, worldFromElementLocal(element, stage, {x:-w*.4,y:h*.28,z:0}), worldFromElementLocal(element, stage, {x:-w*.06,y:h*.28,z:0}), '#c5a95d', 1.4);
+      drawWorldLine(ctx, camera, width, height, worldFromElementLocal(element, stage, {x:w*.08,y:h*.34,z:0}), worldFromElementLocal(element, stage, {x:w*.42,y:h*.34,z:0}), '#c5a95d', 1.4);
+      if (element.assetKind === 'drum-shield' && quality === 'quality') {
+        for (const x of [-w*.48,-w*.16,w*.16,w*.48]) {
+          drawWorldLine(ctx, camera, width, height, worldFromElementLocal(element, stage, {x,y:-h*.45,z:-d*.48}), worldFromElementLocal(element, stage, {x,y:h*.48,z:-d*.48}), 'rgba(190,215,225,.42)', 1);
+        }
+      }
+      continue;
+    }
+
+    if (element.assetKind === 'truss') {
+      const corners = elementCorners(element, stage);
+      const pairs = [[0,2],[1,3],[4,6],[5,7],[0,5],[1,4],[3,6],[2,7]] as const;
+      for (const [a,b] of pairs) drawWorldLine(ctx, camera, width, height, corners[a], corners[b], stroke, .9);
+      continue;
+    }
+
+    if (element.assetKind === 'speaker' || element.assetKind === 'subwoofer' || element.assetKind === 'monitor') {
+      const front = worldFromElementLocal(element, stage, {x:0,y:0,z:-d*.51});
+      const upper = worldFromElementLocal(element, stage, {x:0,y:h*.2,z:-d*.52});
+      const lower = worldFromElementLocal(element, stage, {x:0,y:-h*.2,z:-d*.52});
+      drawWorldCircle(ctx, camera, width, height, upper, Math.max(.06,Math.min(w,h)*.22), '#0b0e11', stroke);
+      drawWorldCircle(ctx, camera, width, height, lower, Math.max(.07,Math.min(w,h)*.27), '#0b0e11', soft);
+      if (element.assetKind === 'monitor') drawWorldLine(ctx, camera, width, height, front, worldFromElementLocal(element, stage, {x:0,y:-h*.35,z:d*.25}), soft, 1);
+      continue;
+    }
+
+    if (element.assetKind === 'keyboard' || element.assetKind === 'piano') {
+      const y = h * .18;
+      const z = -d * .46;
+      const keyCount = quality === 'quality' ? 9 : 5;
+      for (let index = 0; index <= keyCount; index += 1) {
+        const x = -w*.44 + (w*.88)*(index/keyCount);
+        drawWorldLine(ctx, camera, width, height, worldFromElementLocal(element, stage, {x,y,z}), worldFromElementLocal(element, stage, {x,y,z:d*.18}), 'rgba(225,230,234,.55)', .7);
+      }
+      continue;
+    }
+
+    if (element.assetKind === 'pulpit' || element.assetKind === 'projector') {
+      const center = worldFromElementLocal(element, stage, {x:0,y:0,z:-d*.52});
+      if (element.assetKind === 'projector') drawWorldCircle(ctx, camera, width, height, center, Math.max(.05,Math.min(w,h)*.15), '#101419', stroke);
+      else {
+        drawWorldLine(ctx, camera, width, height, worldFromElementLocal(element, stage, {x:-w*.35,y:h*.35,z:-d*.52}), worldFromElementLocal(element, stage, {x:w*.35,y:-h*.35,z:-d*.52}), stroke, 1);
+        drawWorldLine(ctx, camera, width, height, worldFromElementLocal(element, stage, {x:w*.35,y:h*.35,z:-d*.52}), worldFromElementLocal(element, stage, {x:-w*.35,y:-h*.35,z:-d*.52}), stroke, 1);
+      }
+    }
+  }
+  ctx.restore();
+}
+
 function cameraLabel(selection: CameraSelection) {
   if (selection === 'foh') return 'FOH';
   if (selection === 'stage-left') return 'Stage Left';
@@ -631,6 +845,7 @@ export default function Visualizer3D({
 
         const faces = snapshot.elements.flatMap((element) => objectFaces(element, snapshot.dimensions, camera, cssWidth, cssHeight));
         drawFaces(context, faces, mediaRef.current, quality, selectedElementId ?? undefined);
+        drawAssetDetails(context, snapshot.elements, snapshot.dimensions, camera, cssWidth, cssHeight, selectedElementId ?? undefined, quality);
         drawFixtureBodies(context, snapshot, camera, cssWidth, cssHeight);
         if (showCrowd) drawCrowd(context, camera, snapshot.dimensions, cssWidth, cssHeight, quality);
 
