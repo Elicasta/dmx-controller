@@ -1,7 +1,9 @@
 import { test, expect, type Page } from "@playwright/test";
 const showKey = "dmx-controller.show.v1";
 async function seed(page: Page) {
-  page.on("pageerror", error => console.error("Browser page error:",error.message));
+  page.on("pageerror", (error) =>
+    console.error("Browser page error:", error.message),
+  );
   await page.addInitScript(() => {
     if (!localStorage.getItem("dmx-controller.patch.v1"))
       localStorage.setItem(
@@ -58,7 +60,9 @@ test("solo creator builds an editable audio-aligned show and preserves the draft
   page.on("pageerror", (e) => errors.push(e.message));
   await seed(page);
   await page.goto("/");
-    await expect(page.getByRole("button", { name: "SHOW", exact: true })).toBeVisible({ timeout: 10000 });
+  await expect(
+    page.getByRole("button", { name: "SHOW", exact: true }),
+  ).toBeVisible({ timeout: 10000 });
   await page.getByRole("button", { name: "SHOW", exact: true }).click();
   await page.getByRole("button", { name: "Show Creator", exact: true }).click();
   await page.getByRole("button", { name: /Worship Song/ }).click();
@@ -96,6 +100,16 @@ test("solo creator builds an editable audio-aligned show and preserves the draft
   await page
     .getByRole("button", { name: "Open Timeline ↗", exact: true })
     .click();
+  await expect(page.locator(".timeline-clip")).toHaveCount(8);
+  await page
+    .locator(".timeline-cue-library>button")
+    .first()
+    .dragTo(page.locator('[data-lane="2"]'), {
+      targetPosition: { x: 72, y: 25 },
+    });
+  await expect(page.locator(".timeline-clip")).toHaveCount(9);
+  await expect(page.getByLabel("Clip lane")).toHaveValue("2");
+  await page.getByRole("button", { name: "Delete Clip", exact: true }).click();
   await expect(page.locator(".timeline-clip")).toHaveCount(8);
   const clip = page.locator(".timeline-clip").first();
   await clip.scrollIntoViewIfNeeded();
@@ -169,7 +183,9 @@ for (const width of [820, 1024, 1280])
     await seed(page);
     await page.setViewportSize({ width, height: 650 });
     await page.goto("/");
-    await expect(page.getByRole("button", { name: "SHOW", exact: true })).toBeVisible({ timeout: 10000 });
+    await expect(
+      page.getByRole("button", { name: "SHOW", exact: true }),
+    ).toBeVisible({ timeout: 10000 });
     await page.getByRole("button", { name: "CREATE", exact: true }).click();
     await page.getByRole("button", { name: "Programmer", exact: true }).click();
     const blackout = page.getByRole("button", {
