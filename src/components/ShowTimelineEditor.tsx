@@ -123,15 +123,15 @@ export default function ShowTimelineEditor(props: Props) {
   function syncAudio(positionMs: number, force = false) {
     const p = latest.current,
       audio = p.audioRef.current;
-    if (!audio || !p.audioUrl) return;
+    if (!audio || !p.audioUrl) return false;
     const local = positionMs - p.timeline.audioOffsetBars * barMs(p.timeline);
-    if (local < 0 || local >= audio.duration * 1000) {
+    const durationMs = Number.isFinite(audio.duration) ? audio.duration * 1000 : p.audioDurationMs;
+    if (local < 0 || local >= durationMs) {
       audio.pause();
       if (local < 0 && audio.currentTime !== 0) audio.currentTime = 0;
-      return;
+      return false;
     }
-    if (force || Math.abs(audio.currentTime * 1000 - local) > 150)
-      audio.currentTime = Math.max(0, local / 1000);
+    if (force) audio.currentTime = Math.max(0, local / 1000);
     if (playingRef.current && audio.paused)
       void audio.play().catch(() => {
         setAudioError(
@@ -139,6 +139,7 @@ export default function ShowTimelineEditor(props: Props) {
         );
         pause();
       });
+    return true;
   }
   function pause() {
     playingRef.current = false;
@@ -171,22 +172,34 @@ export default function ShowTimelineEditor(props: Props) {
     setPlaying(true);
     let previous = performance.now(),
       lastPaint = previous - 40;
-    syncAudio(cursorRef.current * barMs(latest.current.timeline), true);
+    let audioStarted = syncAudio(cursorRef.current * barMs(latest.current.timeline), true);
     const tick = (now: number) => {
       if (!playingRef.current) return;
       const p = latest.current;
-      cursorRef.current += (now - previous) / barMs(p.timeline);
+      const duration = barMs(p.timeline);
+      const audio = p.audioRef.current;
+      const audioOffsetMs = p.timeline.audioOffsetBars * duration;
+      const timelineMs = cursorRef.current * duration;
+
+      if (audio && p.audioUrl && audioStarted && !audio.paused) {
+        cursorRef.current = (audioOffsetMs + audio.currentTime * 1000) / duration;
+      } else {
+        cursorRef.current += (now - previous) / duration;
+        if (!audioStarted && audio && p.audioUrl && cursorRef.current * duration >= audioOffsetMs) {
+          audioStarted = syncAudio(cursorRef.current * duration, true);
+        }
+      }
       previous = now;
+
       if (now - lastPaint >= 25) {
         setCursor(cursorRef.current);
-        p.onFrame(cursorRef.current * barMs(p.timeline));
-        syncAudio(cursorRef.current * barMs(p.timeline));
+        p.onFrame(cursorRef.current * duration);
         lastPaint = now;
       }
       const end = Math.max(
         1,
         ...p.timeline.clips.map((c) => c.startBar + c.lengthBars),
-        p.timeline.audioOffsetBars + p.audioDurationMs / barMs(p.timeline),
+        p.timeline.audioOffsetBars + p.audioDurationMs / duration,
       );
       if (cursorRef.current >= end) {
         pause();
@@ -312,7 +325,23 @@ export default function ShowTimelineEditor(props: Props) {
     .map((p, i) => `M ${i} ${24 - p * 22} L ${i} ${24 + p * 22}`)
     .join(" ");
   return (
-    <div className="show-bar-timeline" data-history={historyVersion}>
+    <div
+      className="show-bar-timeline"
+      data-history={historyVersion}
+      onDragOver={(event) => {
+        if (event.dataTransfer.types.includes("Files")) {
+          event.preventDefault();
+          event.dataTransfer.dropEffect = "copy";
+        }
+      }}
+      onDrop={(event) => {
+        const file = event.dataTransfer.files?.[0];
+        if (!file || !file.type.startsWith("audio/")) return;
+        event.preventDefault();
+        pause();
+        onLoadAudio(file);
+      }}
+    >
       <header className="creator-command">
         <div>
           <span>BAR TIMELINE</span>
