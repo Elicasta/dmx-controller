@@ -146,8 +146,9 @@ export default function DraggablePanelDeck({
 
   const placementFor = (event: DragEvent<HTMLElement>) => {
     const box = event.currentTarget.getBoundingClientRect();
-    const horizontal = box.width >= box.height;
-    const after = horizontal
+    const gridBox = gridRef.current?.getBoundingClientRect();
+    const multiColumn = Boolean(gridBox && gridBox.width > box.width * 1.35);
+    const after = multiColumn
       ? event.clientX >= box.left + box.width / 2
       : event.clientY >= box.top + box.height / 2;
     return after ? 'after' as const : 'before' as const;
@@ -221,26 +222,27 @@ export default function DraggablePanelDeck({
           }}
           onDrop={(event) => dropOn(event, item.id)}
         >
-          <header className="draggable-programmer-panel-handle">
-            <button
-              className="panel-drag-grip"
-              draggable
-              aria-label={`Move ${item.title} panel`}
-              title={`Drag ${item.title}`}
-              onDragStart={(event) => {
-                draggingRef.current = item.id;
-                setDragging(item.id);
-                event.dataTransfer.effectAllowed = 'move';
-                event.dataTransfer.setData('text/plain', item.id);
-              }}
-              onDragEnd={() => {
-                draggingRef.current = null;
-                setDragging(null);
-                setDropTarget(null);
-              }}
-            >⠿</button>
+          <header
+            className="draggable-programmer-panel-handle"
+            draggable
+            aria-label={`Move ${item.title} panel`}
+            title={`Drag ${item.title}`}
+            onDragStart={(event) => {
+              draggingRef.current = item.id;
+              setDragging(item.id);
+              event.dataTransfer.effectAllowed = 'move';
+              event.dataTransfer.setData('text/plain', item.id);
+            }}
+            onDragEnd={() => {
+              draggingRef.current = null;
+              setDragging(null);
+              setDropTarget(null);
+            }}
+          >
+            <span className="panel-drag-grip" aria-hidden="true">⠿</span>
             <div><strong>{item.title}</strong>{item.status && <small>{item.status}</small>}</div>
             <button
+              draggable={false}
               className="panel-collapse-toggle"
               aria-label={`Collapse ${item.title}`}
               title={`Collapse ${item.title}`}
