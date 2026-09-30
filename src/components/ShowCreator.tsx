@@ -420,7 +420,8 @@ export default function ShowCreator({
                 <label>
                   Primary FX
                   <select
-                    value={selected.recipeId}
+                    aria-label="Primary FX"
+                value={selected.recipeId}
                     onChange={(e) => update({ recipeId: e.target.value })}
                   >
                     <option value="">Static look</option>

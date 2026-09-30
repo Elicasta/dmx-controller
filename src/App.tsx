@@ -3269,7 +3269,7 @@ export default function App() {
     } catch(error) {setMessage(String(error));}
   }
   function renderTimelineFrame(elapsedMs:number) {
-    if(!timelineBaseRef.current){if(cueFollowTimerRef.current!==null)window.clearTimeout(cueFollowTimerRef.current);stopFade();stopEffect(false);setAudioArmed(false);timelineBaseRef.current=[...universeRef.current];}
+    if(!timelineBaseRef.current){stopRecordedShowPlayback(false);if(cueFollowTimerRef.current!==null)window.clearTimeout(cueFollowTimerRef.current);stopFade();stopEffect(false);setAudioArmed(false);timelineBaseRef.current=[...universeRef.current];}
     const timeline=showFile.timeline ?? EMPTY_TIMELINE;
     void dispatchControl({type:'playback.layer.set',universe:1,layerId:'timeline',priority:35,mode:'ltp',updates:renderShowTimeline(timeline,showFile.cues,patchRef.current,elapsedMs,timelineBaseRef.current)},'cue');
   }

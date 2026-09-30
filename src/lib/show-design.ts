@@ -370,7 +370,7 @@ export function sectionStack(
         throw Error("Patch fixtures into the selected target first.");
       if (found.effect.gridPhaseMode && !group)
         throw Error(
-          "Row FX need a group. Arrange its selection grid in CREATE → Groups.",
+          "Row FX need a group. Arrange its selection grid in BUILD → Groups.",
         );
       if (
         found.category === "Movement" &&

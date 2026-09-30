@@ -10,7 +10,7 @@ Preview Section sends the look and FX through the existing playback/output engin
 
 ## Row and column FX
 
-In CREATE → Groups, select the group and arrange its selection grid. Fixture identity determines row and column membership, even if the patch or selection order changes.
+In BUILD → Groups, select the group and arrange its selection grid. Fixture identity determines row and column membership, even if the patch or selection order changes.
 
 - Whole rows: every fixture in one row runs in phase; rows chase each other.
 - Whole columns: every fixture in one column runs in phase; columns chase each other.
