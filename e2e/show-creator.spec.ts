@@ -77,10 +77,11 @@ test("solo creator builds an editable audio-aligned show and preserves the draft
     .getByRole("button", { name: "＋ Layer", exact: true })
     .click();
   await expect(page.locator(".section-layer")).toHaveCount(1);
-  await page
-    .getByRole("button", { name: "Preview Section", exact: true })
-    .click();
-  await page.getByRole("button", { name: "Stop Preview", exact: true }).click();
+  await page.locator(".section-preview-controls").getByRole("button", { name: /Preview/ }).click();
+  await page.locator(".section-preview-controls").getByRole("button", { name: /Stop/ }).click();
+  await page.getByRole("button", { name: "Preview Verse 1", exact: true }).click();
+  await expect(page.locator(".section-preview.active")).toHaveCount(1);
+  await page.locator(".section-preview-controls").getByRole("button", { name: /Stop/ }).click();
   await page
     .getByRole("button", { name: "Save Section Preset", exact: true })
     .click();
@@ -244,12 +245,14 @@ for (const width of [820, 1024, 1280])
     await page.screenshot({ path: info.outputPath(`fx-${width}.png`) });
   });
 
-test('programmer panels reorder, resize, collapse and stay docked',async({page})=>{
+test('programmer panels reorder, resize, collapse into a shelf and stay docked',async({page})=>{
  await seed(page);await page.setViewportSize({width:1280,height:760});await page.goto('/');
  await page.getByRole('button',{name:'CREATE',exact:true}).click();
  await page.getByRole('button',{name:'Programmer',exact:true}).click();
  const deck=page.locator('.draggable-panel-deck');
  await expect(deck).toBeVisible();
+ await expect(page.locator('[data-panel-id="buttons"]')).toBeVisible();
+ await expect(page.locator('[data-panel-id="buttons"]').getByRole('button',{name:'FULL',exact:true})).toBeVisible();
  const color=page.locator('[data-panel-id="color"]');
  const intensity=page.locator('[data-panel-id="intensity"]');
  const colorHandle=page.getByRole('button',{name:'Move COLOR panel'});
@@ -263,13 +266,18 @@ test('programmer panels reorder, resize, collapse and stay docked',async({page})
  const after=(await color.boundingBox())!;
  expect(after.height).toBeGreaterThan(before.height+60);
  expect(after.width).toBeGreaterThanOrEqual(before.width);
+ const expandedBefore=await page.locator('.draggable-panel-grid>.draggable-programmer-panel').count();
  await page.getByRole('button',{name:'Collapse COLOR'}).click();
- await expect(color).toHaveClass(/collapsed/);
+ await expect(page.locator('[data-panel-id="color"]')).toHaveCount(0);
+ await expect(page.locator('[data-collapsed-panel="color"]')).toBeVisible();
+ await expect(page.locator('.draggable-panel-grid>.draggable-programmer-panel')).toHaveCount(expandedBefore-1);
  await page.reload();
  await page.getByRole('button',{name:'CREATE',exact:true}).click();
  await page.getByRole('button',{name:'Programmer',exact:true}).click();
- await expect(page.locator('.draggable-programmer-panel').first()).toHaveAttribute('data-panel-id','color');
- await expect(page.locator('[data-panel-id="color"]')).toHaveClass(/collapsed/);
+ await expect(page.locator('[data-panel-id="color"]')).toHaveCount(0);
+ await expect(page.locator('[data-collapsed-panel="color"]')).toBeVisible();
+ await page.locator('[data-collapsed-panel="color"]').click();
+ await expect(page.locator('[data-panel-id="color"]')).toBeVisible();
  await expect(page.locator('.draggable-panel-deck').getByText(/pop out/i)).toHaveCount(0);
 });
 
