@@ -29,6 +29,7 @@ type Face = {
   points: Projected[];
   fill: string;
   stroke: string;
+  elementId: string;
   label?: string;
   screenElement?: StageElement;
 };
@@ -144,6 +145,18 @@ function polygon(ctx: CanvasRenderingContext2D, points: readonly Projected[]) {
   ctx.closePath();
 }
 
+function pointInsideFace(x: number, y: number, points: readonly Projected[]) {
+  let inside = false;
+  for (let index = 0, previous = points.length - 1; index < points.length; previous = index++) {
+    const a = points[index];
+    const b = points[previous];
+    const crosses = ((a.y > y) !== (b.y > y))
+      && x < (b.x - a.x) * (y - a.y) / ((b.y - a.y) || 1e-9) + a.x;
+    if (crosses) inside = !inside;
+  }
+  return inside;
+}
+
 function averageDepth(points: readonly Projected[]) {
   return points.reduce((sum, point) => sum + point.depth, 0) / Math.max(1, points.length);
 }
@@ -203,6 +216,7 @@ function objectFaces(element: StageElement, stage: StageDimensions, camera: Visu
       points,
       fill: shade(element.color, factors[faceIndex], element.type === 'back-wall' ? .88 : .96),
       stroke: shade(element.color, Math.min(1.25, factors[faceIndex] + .25), .8),
+      elementId: element.id,
       label: faceIndex === 1 ? element.label : undefined,
       screenElement: element.type === 'led-screen' && faceIndex === 1 ? element : undefined
     }];
@@ -410,14 +424,15 @@ function drawFaces(
   ctx: CanvasRenderingContext2D,
   faces: Face[],
   media: Map<string, MediaEntry>,
-  quality: VisualizerQuality
+  quality: VisualizerQuality,
+  selectedElementId?: string
 ) {
   for (const face of faces.sort((a, b) => b.depth - a.depth)) {
     polygon(ctx, face.points);
     ctx.fillStyle = face.fill;
     ctx.fill();
-    ctx.strokeStyle = face.stroke;
-    ctx.lineWidth = 1;
+    ctx.strokeStyle = face.elementId === selectedElementId ? '#64e18e' : face.stroke;
+    ctx.lineWidth = face.elementId === selectedElementId ? 2.2 : 1;
     ctx.stroke();
 
     if (face.screenElement) {
@@ -458,16 +473,21 @@ function cameraLabel(selection: CameraSelection) {
 export default function Visualizer3D({
   snapshot,
   compact = false,
-  className = ''
+  className = '',
+  selectedElementId,
+  onSelectElement
 }: {
   snapshot: VisualizerSnapshot;
   compact?: boolean;
   className?: string;
+  selectedElementId?: string | null;
+  onSelectElement?: (id: string) => void;
 }) {
   const hostRef = useRef<HTMLDivElement | null>(null);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const mediaRef = useRef<Map<string, MediaEntry>>(new Map());
-  const dragRef = useRef<{ pointerId: number; x: number; y: number } | null>(null);
+  const dragRef = useRef<{ pointerId: number; x: number; y: number; startX: number; startY: number; moved: boolean } | null>(null);
+  const cameraRef = useRef<VisualizerCamera>(visualizerCameraPreset('foh', snapshot.dimensions));
   const flybyStartRef = useRef(0);
   const [cameraSelection, setCameraSelection] = useState<CameraSelection>('foh');
   const [orbit, setOrbit] = useState(() => cameraOrbitFromPose(visualizerCameraPreset('foh', snapshot.dimensions)));
@@ -606,10 +626,11 @@ export default function Visualizer3D({
         drawRoom(context, camera, snapshot.dimensions, cssWidth, cssHeight);
         drawFloorGrid(context, camera, snapshot.dimensions, cssWidth, cssHeight, quality);
         drawStageDeck(context, camera, snapshot.dimensions, cssWidth, cssHeight);
+        cameraRef.current = camera;
         drawBeams(context, snapshot, camera, cssWidth, cssHeight, haze, quality);
 
         const faces = snapshot.elements.flatMap((element) => objectFaces(element, snapshot.dimensions, camera, cssWidth, cssHeight));
-        drawFaces(context, faces, mediaRef.current, quality);
+        drawFaces(context, faces, mediaRef.current, quality, selectedElementId ?? undefined);
         drawFixtureBodies(context, snapshot, camera, cssWidth, cssHeight);
         if (showCrowd) drawCrowd(context, camera, snapshot.dimensions, cssWidth, cssHeight, quality);
 
@@ -632,14 +653,12 @@ export default function Visualizer3D({
       disposed = true;
       window.cancelAnimationFrame(frame);
     };
-  }, [snapshot, orbit, haze, showCrowd, quality, compact, playingFlyby, cameraSelection, target, mediaRevision]);
+  }, [snapshot, orbit, haze, showCrowd, quality, compact, playingFlyby, cameraSelection, target, mediaRevision, selectedElementId]);
 
   function beginOrbit(event: ReactPointerEvent<HTMLCanvasElement>) {
     if (event.button !== 0 && event.pointerType === 'mouse') return;
     event.currentTarget.setPointerCapture(event.pointerId);
-    dragRef.current = { pointerId: event.pointerId, x: event.clientX, y: event.clientY };
-    setPlayingFlyby(false);
-    setCameraSelection('custom');
+    dragRef.current = { pointerId: event.pointerId, x: event.clientX, y: event.clientY, startX: event.clientX, startY: event.clientY, moved: false };
   }
 
   function moveOrbit(event: ReactPointerEvent<HTMLCanvasElement>) {
@@ -649,6 +668,12 @@ export default function Visualizer3D({
     const dy = event.clientY - drag.y;
     drag.x = event.clientX;
     drag.y = event.clientY;
+    if (!drag.moved && Math.hypot(event.clientX - drag.startX, event.clientY - drag.startY) > 4) {
+      drag.moved = true;
+      setPlayingFlyby(false);
+      setCameraSelection('custom');
+    }
+    if (!drag.moved) return;
     setOrbit((current) => ({
       ...current,
       yaw: current.yaw - dx * .006,
@@ -657,9 +682,20 @@ export default function Visualizer3D({
   }
 
   function endOrbit(event: ReactPointerEvent<HTMLCanvasElement>) {
-    if (dragRef.current?.pointerId !== event.pointerId) return;
+    const drag = dragRef.current;
+    if (!drag || drag.pointerId !== event.pointerId) return;
     dragRef.current = null;
     if (event.currentTarget.hasPointerCapture(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId);
+    if (!drag.moved && onSelectElement) {
+      const bounds = event.currentTarget.getBoundingClientRect();
+      const x = event.clientX - bounds.left;
+      const y = event.clientY - bounds.top;
+      const camera = cameraRef.current;
+      const candidates = snapshot.elements.flatMap((element) => objectFaces(element, snapshot.dimensions, camera, bounds.width, bounds.height))
+        .filter((face) => pointInsideFace(x, y, face.points))
+        .sort((a, b) => a.depth - b.depth);
+      if (candidates[0]) onSelectElement(candidates[0].elementId);
+    }
   }
 
   function zoom(event: ReactWheelEvent<HTMLCanvasElement>) {
