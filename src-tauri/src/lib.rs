@@ -16,9 +16,9 @@ fn open_stage_monitor(app: tauri::AppHandle) -> Result<(), String> {
         return window.set_focus().map_err(|e| e.to_string());
     }
     tauri::WebviewWindowBuilder::new(&app, "stage-monitor", tauri::WebviewUrl::App("index.html?stage-monitor=1".into()))
-        .title("LumaRig · Stage Monitor")
-        .inner_size(960.0, 620.0)
-        .min_inner_size(400.0, 280.0)
+        .title("LumaRig · Visualizer")
+        .inner_size(1280.0, 800.0)
+        .min_inner_size(720.0, 480.0)
         .build().map(|_| ()).map_err(|e| e.to_string())
 }
 
