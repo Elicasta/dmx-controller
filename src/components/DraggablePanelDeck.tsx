@@ -89,6 +89,7 @@ export default function DraggablePanelDeck({
 }) {
   const ids = items.map((item) => item.id);
   const gridRef = useRef<HTMLDivElement | null>(null);
+  const draggingRef = useRef<string | null>(null);
   const resizing = useRef<{
     id: string;
     startX: number;
@@ -154,9 +155,10 @@ export default function DraggablePanelDeck({
 
   const dropOn = (event: DragEvent<HTMLElement>, targetId: string) => {
     event.preventDefault();
-    const draggedId = event.dataTransfer.getData('text/plain') || dragging;
+    const draggedId = event.dataTransfer.getData('text/plain') || draggingRef.current || dragging;
     if (!draggedId) return;
     persistOrder(reorderPanelIds(normalized, draggedId, targetId, placementFor(event)));
+    draggingRef.current = null;
     setDragging(null);
     setDropTarget(null);
   };
@@ -208,7 +210,8 @@ export default function DraggablePanelDeck({
             '--panel-height': `${size.height}px`,
           } as CSSProperties}
           onDragOver={(event) => {
-            if (!dragging || dragging === item.id) return;
+            const activeDrag = draggingRef.current || dragging;
+            if (!activeDrag || activeDrag === item.id) return;
             event.preventDefault();
             event.dataTransfer.dropEffect = 'move';
             setDropTarget({ id: item.id, placement: placementFor(event) });
@@ -225,11 +228,13 @@ export default function DraggablePanelDeck({
               aria-label={`Move ${item.title} panel`}
               title={`Drag ${item.title}`}
               onDragStart={(event) => {
+                draggingRef.current = item.id;
                 setDragging(item.id);
                 event.dataTransfer.effectAllowed = 'move';
                 event.dataTransfer.setData('text/plain', item.id);
               }}
               onDragEnd={() => {
+                draggingRef.current = null;
                 setDragging(null);
                 setDropTarget(null);
               }}
