@@ -2392,3 +2392,64 @@ body,#root { min-width:0; width:100%; overflow:hidden; }
   .draggable-panel-deck-toolbar{grid-template-columns:auto 1fr}
   .draggable-panel-deck-toolbar>button{justify-self:end}
 }
+
+
+/* Draggable deck containment: nested modules must size to their panel, not the old direct-child grid. */
+.draggable-programmer-panel-body>.color-deck{
+  display:grid!important;
+  grid-template-columns:minmax(0,1fr) 78px!important;
+  grid-template-rows:20px 78px auto!important;
+  align-content:start!important;
+  gap:6px!important;
+  width:100%!important;
+  min-width:0!important;
+  max-width:100%!important;
+  overflow:hidden!important;
+}
+.draggable-programmer-panel-body>.color-deck>.hue-rail{
+  grid-column:1/-1!important;
+  width:100%!important;
+  min-width:0!important;
+}
+.draggable-programmer-panel-body>.color-deck>.color-wheel-control{
+  grid-column:2!important;
+  grid-row:2!important;
+  width:72px!important;
+  height:72px!important;
+  max-width:100%!important;
+  justify-self:end!important;
+}
+.draggable-programmer-panel-body>.color-deck>.selected-color-readout{
+  grid-column:1!important;
+  grid-row:2!important;
+  width:100%!important;
+  min-width:0!important;
+  height:72px!important;
+  box-sizing:border-box!important;
+  overflow:hidden!important;
+  border-left:0!important;
+}
+.draggable-programmer-panel-body>.color-deck>.selected-color-readout>div{
+  min-width:0!important;
+  overflow:hidden!important;
+}
+.draggable-programmer-panel-body>.color-deck>.selected-color-readout strong,
+.draggable-programmer-panel-body>.color-deck>.selected-color-readout small{
+  overflow:hidden!important;
+  text-overflow:ellipsis!important;
+  white-space:nowrap!important;
+}
+.draggable-programmer-panel-body>.color-deck>.color-preset-row{
+  grid-column:1/-1!important;
+  grid-row:3!important;
+  grid-template-columns:repeat(auto-fit,minmax(20px,1fr))!important;
+  width:100%!important;
+  min-width:0!important;
+  gap:4px!important;
+}
+.draggable-programmer-panel-body>.color-deck>.color-preset-row button{
+  width:100%!important;
+  min-width:18px!important;
+  max-width:28px!important;
+  justify-self:center!important;
+}
