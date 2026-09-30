@@ -140,14 +140,22 @@ function TouchFader({ label, value, outputValue, color, disabled, onChange }: {
   onChange: (value: number) => void;
 }) {
   const ref = useRef<HTMLDivElement | null>(null);
+  const dragRef = useRef<{ pointerId: number; startY: number; startValue: number; fine: boolean } | null>(null);
   const changeFromPointer = (event: PointerEvent<HTMLDivElement>) => {
     if (disabled || !ref.current) return;
     const bounds = ref.current.getBoundingClientRect();
-    onChange(clampPercent(((bounds.bottom - event.clientY) / bounds.height) * 100));
+    const drag = dragRef.current;
+    if (drag && drag.pointerId === event.pointerId && (drag.fine || event.shiftKey)) {
+      const delta = ((drag.startY - event.clientY) / Math.max(bounds.height, 1)) * 20;
+      onChange(clampPercent(drag.startValue + delta));
+      return;
+    }
+    onChange(clampPercent(((bounds.bottom - event.clientY) / Math.max(bounds.height, 1)) * 100));
   };
   const onKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
     if (disabled) return;
-    const amount = event.shiftKey ? 10 : 1;
+    const isPage = event.key === 'PageUp' || event.key === 'PageDown';
+    const amount = isPage ? (event.shiftKey ? 1 : 10) : (event.shiftKey ? 0.1 : 1);
     if (event.key === 'ArrowUp' || event.key === 'PageUp') { event.preventDefault(); onChange(clampPercent(value + amount)); }
     if (event.key === 'ArrowDown' || event.key === 'PageDown') { event.preventDefault(); onChange(clampPercent(value - amount)); }
     if (event.key === 'Home') { event.preventDefault(); onChange(0); }
@@ -164,15 +172,23 @@ function TouchFader({ label, value, outputValue, color, disabled, onChange }: {
     aria-valuenow={Math.round(value)}
     tabIndex={disabled ? -1 : 0}
     onKeyDown={onKeyDown}
+    onDoubleClick={() => { if (!disabled) onChange(0); }}
     onPointerDown={(event) => {
       if (event.pointerType === 'mouse' && event.button !== 0) return;
       event.preventDefault();
+      dragRef.current = { pointerId: event.pointerId, startY: event.clientY, startValue: value, fine: event.shiftKey };
       event.currentTarget.setPointerCapture(event.pointerId);
-      changeFromPointer(event);
+      if (!event.shiftKey) changeFromPointer(event);
     }}
     onPointerMove={(event) => { if (event.currentTarget.hasPointerCapture(event.pointerId)) changeFromPointer(event); }}
-    onPointerUp={(event) => { if (event.currentTarget.hasPointerCapture(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId); }}
-    onPointerCancel={(event) => { if (event.currentTarget.hasPointerCapture(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId); }}
+    onPointerUp={(event) => {
+      dragRef.current = null;
+      if (event.currentTarget.hasPointerCapture(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId);
+    }}
+    onPointerCancel={(event) => {
+      dragRef.current = null;
+      if (event.currentTarget.hasPointerCapture(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId);
+    }}
   >
     <i className="desk-touch-output" />
     <i className="desk-touch-groove" />

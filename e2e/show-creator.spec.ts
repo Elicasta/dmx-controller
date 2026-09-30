@@ -316,6 +316,8 @@ test('LIVE remains bounded with all recipe assignments and audio drop avoids see
   if(await button.count())await button.click();
   const surface=page.locator('.desk-live-controller');
   expect(await surface.evaluate(el=>el.scrollWidth<=el.clientWidth+1)).toBe(true);
+  const scroll=page.locator('.desk-classic-scroll,.desk-ma-scroll,.desk-busk-scroll');
+  expect(await scroll.evaluate(el=>el.scrollWidth<=el.clientWidth+1)).toBe(true);
  }
  await page.locator('.desk-surface-header nav button').first().click();
  console.log('VISUAL_REVIEW_LIVE:'+ (await page.screenshot({type:'jpeg',quality:55})).toString('base64'));

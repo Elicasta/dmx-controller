@@ -213,7 +213,7 @@ export default function ShowCreator({
                   <article
                     key={s.id}
                     draggable
-                    onDragStart={() => setDragId(s.id)}
+                    onDragStart={e => {setDragId(s.id);e.dataTransfer.setData("application/lumarig-section",s.id);}}
                     onDragEnd={() => setDragId("")}
                     onDragOver={(e) => e.preventDefault()}
                     onDrop={(e) => {
