@@ -451,4 +451,30 @@ test('integrated visualizer keeps venue presets isolated and opens the renderer'
  await expect(page.locator('.visualizer-workspace')).toBeVisible();
  await expect(page.locator('.visualizer-workspace canvas.visualizer-3d-canvas')).toBeVisible();
  await expect(page.getByRole('button',{name:'▶ Flyby',exact:true}).first()).toBeVisible();
+
+ const initialObjectCount=await page.evaluate(()=>{
+   const doc=JSON.parse(localStorage.getItem('dmx-controller.stage-elements.v1')??'{"elements":[]}');
+   return (doc.elements??[]).length;
+ });
+ const audioWarehouse=page.locator('.visualizer-warehouse details').filter({hasText:'Audio'});
+ await audioWarehouse.locator('summary').click();
+ await audioWarehouse.getByRole('button',{name:'＋ PA Speaker',exact:true}).click();
+ await expect(page.locator('.visualizer-object-inspector')).toContainText('PA Speaker 1');
+ await expect.poll(async()=>page.evaluate(()=>{
+   const doc=JSON.parse(localStorage.getItem('dmx-controller.stage-elements.v1')??'{"elements":[]}');
+   return (doc.elements??[]).length;
+ })).toBe(initialObjectCount+1);
+
+ await page.locator('.visualizer-object-inspector').getByRole('button',{name:'Duplicate',exact:true}).click();
+ await expect(page.locator('.visualizer-object-inspector')).toContainText('PA Speaker 1 Copy');
+ await expect.poll(async()=>page.evaluate(()=>{
+   const doc=JSON.parse(localStorage.getItem('dmx-controller.stage-elements.v1')??'{"elements":[]}');
+   return (doc.elements??[]).length;
+ })).toBe(initialObjectCount+2);
+
+ await page.locator('.visualizer-object-inspector').getByRole('button',{name:'Delete',exact:true}).click();
+ await expect.poll(async()=>page.evaluate(()=>{
+   const doc=JSON.parse(localStorage.getItem('dmx-controller.stage-elements.v1')??'{"elements":[]}');
+   return (doc.elements??[]).length;
+ })).toBe(initialObjectCount+1);
 });
