@@ -16,7 +16,12 @@ export type StageAssetKind =
   | 'plant'
   | 'lighting-stand'
   | 'drum-shield'
-  | 'choir-riser';
+  | 'choir-riser'
+  | 'subwoofer'
+  | 'truss'
+  | 'column'
+  | 'camera'
+  | 'piano';
 
 export type StageScreenSource =
   | { kind: 'none' }
@@ -47,6 +52,20 @@ export type StageDocument = {
   elements: StageElement[];
 };
 
+export type StageWarehouseCategory = 'Stage' | 'Screens' | 'Scenic' | 'Audio' | 'Band' | 'People';
+
+export type StageWarehouseItem = {
+  id: string;
+  category: StageWarehouseCategory;
+  name: string;
+  type: StageElementType;
+  assetKind?: StageAssetKind;
+  defaultColor: string;
+  defaultSize: number;
+  dimensions: Vec3;
+  mediaSource?: StageScreenSource;
+};
+
 export const STAGE_ELEMENT_LIBRARY: ReadonlyArray<{
   type: StageElementType;
   name: string;
@@ -59,6 +78,42 @@ export const STAGE_ELEMENT_LIBRARY: ReadonlyArray<{
   { type: 'led-screen', name: 'LED screen', defaultColor: '#8158ff', defaultSize: 54 },
   { type: 'riser', name: 'Riser', defaultColor: '#56606d', defaultSize: 48 }
 ];
+
+export const STAGE_WAREHOUSE: readonly StageWarehouseItem[] = [
+  { id: 'stage-deck-4x8', category: 'Stage', name: '4×8 Deck', type: 'riser', defaultColor: '#4d5660', defaultSize: 42, dimensions: { x: 2.4384, y: .2032, z: 1.2192 } },
+  { id: 'stage-deck-8x8', category: 'Stage', name: '8×8 Deck', type: 'riser', defaultColor: '#4d5660', defaultSize: 52, dimensions: { x: 2.4384, y: .2032, z: 2.4384 } },
+  { id: 'choir-riser', category: 'Stage', name: 'Choir Riser', type: 'riser', assetKind: 'choir-riser', defaultColor: '#33383e', defaultSize: 70, dimensions: { x: 6.096, y: .2032, z: 2.4384 } },
+  { id: 'pulpit', category: 'Stage', name: 'Pulpit / Lectern', type: 'riser', assetKind: 'pulpit', defaultColor: '#171a1e', defaultSize: 28, dimensions: { x: .762, y: 1.1684, z: .6096 } },
+  { id: 'screen-16x9', category: 'Screens', name: '16:9 Screen', type: 'led-screen', defaultColor: '#d8e2e8', defaultSize: 58, dimensions: { x: 4.2672, y: 2.4, z: .08 }, mediaSource: { kind: 'none' } },
+  { id: 'screen-vertical', category: 'Screens', name: 'Vertical LED', type: 'led-screen', defaultColor: '#d8e2e8', defaultSize: 40, dimensions: { x: 1.2, y: 2.4, z: .08 }, mediaSource: { kind: 'none' } },
+  { id: 'drape', category: 'Scenic', name: 'Drape', type: 'back-wall', assetKind: 'drape', defaultColor: '#111317', defaultSize: 76, dimensions: { x: 4.8768, y: 3.048, z: .08 } },
+  { id: 'truss-10ft', category: 'Scenic', name: '10ft Truss', type: 'riser', assetKind: 'truss', defaultColor: '#777f87', defaultSize: 46, dimensions: { x: 3.048, y: .3048, z: .3048 } },
+  { id: 'column', category: 'Scenic', name: 'Column', type: 'back-wall', assetKind: 'column', defaultColor: '#5b646d', defaultSize: 24, dimensions: { x: .6096, y: 3.048, z: .6096 } },
+  { id: 'speaker', category: 'Audio', name: 'PA Speaker', type: 'riser', assetKind: 'speaker', defaultColor: '#20262c', defaultSize: 26, dimensions: { x: .6096, y: 1.0668, z: .5588 } },
+  { id: 'subwoofer', category: 'Audio', name: '18in Sub', type: 'riser', assetKind: 'subwoofer', defaultColor: '#20262c', defaultSize: 30, dimensions: { x: .7112, y: .6096, z: .762 } },
+  { id: 'monitor', category: 'Audio', name: 'Floor Monitor', type: 'riser', assetKind: 'monitor', defaultColor: '#262d34', defaultSize: 22, dimensions: { x: .6096, y: .254, z: .4572 } },
+  { id: 'drums', category: 'Band', name: 'Drum Kit', type: 'drums', assetKind: 'drum-shield', defaultColor: '#a7b0b9', defaultSize: 44, dimensions: { x: 1.8288, y: 1.2192, z: 1.524 } },
+  { id: 'keyboard', category: 'Band', name: 'Keyboard', type: 'riser', assetKind: 'keyboard', defaultColor: '#4f5861', defaultSize: 36, dimensions: { x: 1.524, y: 1.016, z: .6096 } },
+  { id: 'piano', category: 'Band', name: 'Piano', type: 'riser', assetKind: 'piano', defaultColor: '#25292e', defaultSize: 42, dimensions: { x: 1.524, y: 1.0668, z: .762 } },
+  { id: 'performer', category: 'People', name: 'Performer', type: 'person', defaultColor: '#d1d9df', defaultSize: 22, dimensions: { x: .6096, y: 1.7526, z: .4572 } },
+  { id: 'chair', category: 'People', name: 'Chair', type: 'person', assetKind: 'chair', defaultColor: '#555e66', defaultSize: 18, dimensions: { x: .508, y: .9144, z: .508 } },
+  { id: 'camera', category: 'People', name: 'Camera', type: 'riser', assetKind: 'camera', defaultColor: '#353c43', defaultSize: 18, dimensions: { x: .6096, y: 1.524, z: .6096 } }
+];
+
+export function makeStageWarehouseElement(itemId: string, index: number, stageDimensions: StageDimensions = DEFAULT_STAGE_DIMENSIONS): StageElement {
+  const item = STAGE_WAREHOUSE.find((candidate) => candidate.id === itemId) ?? STAGE_WAREHOUSE[0];
+  const base = makeStageElement(item.type, index, stageDimensions);
+  return migrateStageElement({
+    ...base,
+    id: `warehouse-${item.id}-${Date.now().toString(36)}-${index}`,
+    label: `${item.name} ${index + 1}`,
+    color: item.defaultColor,
+    size: item.defaultSize,
+    assetKind: item.assetKind,
+    mediaSource: item.mediaSource ? { ...item.mediaSource } : base.mediaSource,
+    dimensions: { ...item.dimensions }
+  }, stageDimensions);
+}
 
 export function makeStageElement(type: StageElementType, index: number, stageDimensions: StageDimensions = DEFAULT_STAGE_DIMENSIONS): StageElement {
   const definition = STAGE_ELEMENT_LIBRARY.find((item) => item.type === type) ?? STAGE_ELEMENT_LIBRARY[0];
@@ -115,7 +170,7 @@ function isStageAssetKind(value: unknown): value is StageAssetKind {
   return typeof value === 'string' && [
     'generic', 'pulpit', 'keyboard', 'speaker', 'monitor', 'projector',
     'door', 'drape', 'rug', 'chair', 'plant', 'lighting-stand',
-    'drum-shield', 'choir-riser'
+    'drum-shield', 'choir-riser', 'subwoofer', 'truss', 'column', 'camera', 'piano'
   ].includes(value);
 }
 
