@@ -1,6 +1,7 @@
 import ResizableWorkspace from './components/ResizableWorkspace';
 import DraggablePanelDeck from './components/DraggablePanelDeck';
-import StageMonitor, { useStagePublisher } from './components/StageMonitor';
+import StageMonitor, { openStageWindow, useStagePublisher } from './components/StageMonitor';
+import Visualizer3D from './components/Visualizer3D';
 import { StageMediaSurface, requestStageVideoInputs, type StageVideoInputOption } from './components/StageMediaSurface';
 import SongCueLibrary from './components/SongCueLibrary';
 import { moveRundownItemCues } from './lib/show';
@@ -144,7 +145,7 @@ import type { StudioBridgeCommand, StudioSongIdentity } from './core/studio-brid
 const ShowCreator = lazy(() => import('./components/ShowCreator'));
 const ShowTimelineEditor = lazy(() => import('./components/ShowTimelineEditor'));
 
-type Workspace = 'build' | 'create' | 'show' | 'live';
+type Workspace = 'build' | 'create' | 'show' | 'visualizer' | 'live';
 type SetupView = 'fixtures' | 'groups' | 'stage' | 'settings';
 type ProgramMode = 'stage' | 'looks' | 'fx' | 'colors' | 'media' | 'presets';
 type ShowMode = 'creator' | 'cues' | 'timeline' | 'tracks' | 'library' | 'sync' | 'recordings';
@@ -574,7 +575,7 @@ function FixturePatchEditor({ fixture, onSave, onRemove, onToggleSelected, onTog
 }
 
 export default function App() {
-  const [workspace, setWorkspace] = useState<Workspace>(() => initialConsoleValue('workspace', ['build', 'create', 'show', 'live'], 'create'));
+  const [workspace, setWorkspace] = useState<Workspace>(() => initialConsoleValue('workspace', ['build', 'create', 'show', 'visualizer', 'live'], 'create'));
   const [setupView, setSetupView] = useState<SetupView>(() => initialConsoleValue('setup', ['fixtures', 'groups', 'stage', 'settings'], 'stage'));
   const [programMode, setProgramMode] = useState<ProgramMode>(() => initialConsoleValue('program', ['stage', 'looks', 'fx', 'colors', 'media', 'presets'], 'stage'));
   const [showMode, setShowMode] = useState<ShowMode>(() => initialConsoleValue('show', ['creator', 'cues', 'timeline', 'tracks', 'library', 'sync', 'recordings'], 'cues'));
@@ -3788,7 +3789,7 @@ export default function App() {
     <main className={`console-app workspace-${workspace} ${dmxStatus.blackout ? 'blackout-is-active' : ''}`}>
       <header className="console-header">
         <div className="console-brand"><span className="brand-mark">◆</span><div className="brand-product"><b>LUMARIG</b><small>SHOW</small></div><div className="brand-show"><input aria-label="Current show name" value={showFile.name} onChange={(event) => setShowFile((current) => ({ ...current, name: event.target.value }))} /><small>LIVE SHOWFILE · R{sharedShowRevisionRef.current} · v{appVersion}</small></div></div>
-        <nav className="console-workspace-tabs" aria-label="Workspace">{(['build', 'create', 'show', 'live'] as Workspace[]).map((item) => <button key={item} className={workspace === item ? 'active' : ''} onClick={() => setWorkspace(item)}>{item.toUpperCase()}</button>)}</nav>
+        <nav className="console-workspace-tabs" aria-label="Workspace">{(['build', 'create', 'show', 'visualizer', 'live'] as Workspace[]).map((item) => <button key={item} className={workspace === item ? 'active' : ''} onClick={() => setWorkspace(item)}>{item.toUpperCase()}</button>)}</nav>
         <div className="console-header-status">
           <button className="tempo-pill" onClick={tapTempo}><strong>{tempoSource === 'midi' && midiBpm ? midiBpm : effectBpm} BPM</strong><small>{tempoSource === 'midi' ? 'MIDI CLOCK' : 'TAP'}</small></button>
           <button className={`connection-pill ${dmxStatus.connected ? 'online' : ''}`} onClick={() => { setWorkspace('build'); setSetupView('settings'); }}><i /><span><strong>DMX</strong><small>{dmxStatus.connected ? 'CONNECTED' : 'VIRTUAL'}</small></span></button>
@@ -4144,13 +4145,34 @@ export default function App() {
 
           {programMode === 'colors' && <div className="create-focus-view"><header><div><span>COLOR PALETTES</span><h2>Fixture-aware color programming</h2></div></header><ColorDeck title="SELECTED COLOR" subtitle={selectedFixtureTargets.length ? `${selectedFixtureTargets.length} selected fixtures` : 'Select fixtures'} color={globalColor} disabled={selectedCompatibleColors.length === 0} presets={consoleColorPresets} onChange={applyGlobalColor} /><section className="palette-library-v3"><header><span>QUICK PALETTES</span><small>Applies to selected compatible fixtures</small></header><div>{consoleColorPresets.map((preset) => <button key={preset.name} disabled={selectedCompatibleColors.length === 0} onClick={() => applyGlobalColor(preset.color)}><i style={{background:preset.color}}/><strong>{preset.name}</strong><small>{preset.color.toUpperCase()}</small></button>)}</div></section></div>}
 
-          {programMode === 'media' && <div className="create-focus-view media-programmer"><header><div><span>MEDIA</span><h2>LumaViz + LumaStudio</h2></div><b className={directStatus.clients > 0 || studioBridgeStatus.connectedClients > 0 ? 'healthy' : ''}>{directStatus.clients + studioBridgeStatus.connectedClients > 0 ? 'LINKED' : 'WAITING'}</b></header><div className="media-link-grid"><section><span>LUMAVIZ DIRECT</span><strong>{directStatus.clients > 0 ? 'Connected' : 'Ready'}</strong><small>Semantic fixture + stage preview</small><div className="media-stage-preview">{renderStagePreview()}</div></section><section><span>LUMASTUDIO</span><strong>{studioBridgeStatus.connectedClients > 0 ? 'Connected' : 'Ready'}</strong><small>Studio transport authority · Rig lighting authority</small><div className="media-status-stack"><p>Port {studioBridgeStatus.port}</p><p>{externalTransportRunning ? 'Transport following' : externalTrack.armed ? 'External sync armed' : 'Local transport'}</p><p>{externalTrack.songName || showTrackName || 'No active media track'}</p></div><button onClick={() => { setWorkspace('show'); setShowMode('sync'); }}>OPEN SYNC</button></section></div></div>}
+          {programMode === 'media' && <div className="create-focus-view media-programmer"><header><div><span>MEDIA</span><h2>Visualizer + LumaStudio</h2></div><b className={studioBridgeStatus.connectedClients > 0 ? 'healthy' : ''}>{studioBridgeStatus.connectedClients > 0 ? 'STUDIO LINKED' : 'VISUALIZER READY'}</b></header><div className="media-link-grid"><section><span>INTEGRATED VISUALIZER</span><strong>Ready</strong><small>Same fixture + stage state as LumaRig</small><div className="media-stage-preview"><Visualizer3D snapshot={stageSnapshot} compact/></div><button onClick={() => setWorkspace('visualizer')}>OPEN VISUALIZER</button></section><section><span>LUMASTUDIO</span><strong>{studioBridgeStatus.connectedClients > 0 ? 'Connected' : 'Ready'}</strong><small>Studio transport authority · Rig lighting authority</small><div className="media-status-stack"><p>Port {studioBridgeStatus.port}</p><p>{externalTransportRunning ? 'Transport following' : externalTrack.armed ? 'External sync armed' : 'Local transport'}</p><p>{externalTrack.songName || showTrackName || 'No active media track'}</p></div><button onClick={() => { setWorkspace('show'); setShowMode('sync'); }}>OPEN SYNC</button></section></div></div>}
 
           {programMode === 'presets' && <div className="create-focus-view"><header><div><span>PRESETS</span><h2>Position + look library</h2></div><button onClick={savePositionPalette}>＋ Save Position</button></header><section className="preset-bank-v3"><div><h3>POSITION PALETTES</h3>{showFile.positionPalettes?.length ? showFile.positionPalettes.map((palette) => <button key={palette.id} onClick={() => void runPositionPalette(palette)}><span>{palette.kind}</span><strong>{palette.name}</strong></button>) : <p>No position palettes saved.</p>}</div><div><h3>LOOK PRESETS</h3>{allLooks.map((look) => <button key={look.id} onClick={() => runLook(look)}><i style={{background:lookSwatch(look.values)}}/><strong>{look.name}</strong></button>)}</div></section></div>}
         </div>
 
         {programMode !== 'fx' && <EffectsPanel title="FX / SELECTED TARGET" targetName={programEffectName} fixtures={programEffectFixtures} activeEffect={activeEffect} bpm={effectBpm} depth={effectDepth} disabled={false} onBpmChange={(value) => { setEffectBpm(value); effectBpmRef.current = value; setTempoSource('manual'); }} onDepthChange={(value) => { setEffectDepth(value); effectDepthRef.current = value; }} onStart={(effect) => toggleEffect(effect, programEffectFixtures.map((fixture) => fixture.id))} onPress={(effect) => startMomentaryEffect(effect, programEffectFixtures.map((fixture) => fixture.id))} onRelease={releaseMomentaryEffect} onStop={() => stopEffect()} />}
       </ResizableWorkspace>}
+
+
+      {workspace === 'visualizer' && <section className="console-workspace-wide visualizer-workspace">
+        <header className="visualizer-workspace-header">
+          <div><span>INTEGRATED VISUALIZER</span><h2>{STAGE_PRESETS.find((preset) => preset.id === activeStagePresetId)?.name ?? 'Current Show'}</h2><p>Live LumaRig output, stage geometry, screens, crowd, haze and camera flybys in one scene.</p></div>
+          <div className="visualizer-workspace-actions">
+            <button onClick={() => { setWorkspace('build'); setSetupView('stage'); }}>Edit Stage</button>
+            <button onClick={() => void scanStageVideoInputs()}>Scan NDI / Video</button>
+            <button className="console-primary" onClick={() => void openStageWindow()}>Pop Out ↗</button>
+          </div>
+        </header>
+        <div className="visualizer-workspace-layout">
+          <div className="visualizer-workspace-canvas"><Visualizer3D snapshot={stageSnapshot}/></div>
+          <aside className="visualizer-workspace-sidebar">
+            <section><span>SCENE</span><strong>{stageElements.length} objects</strong><small>{patch.length} patched fixtures · {stageElements.filter((element) => element.type === 'led-screen').length} screens</small></section>
+            <section><span>SCREEN INPUTS</span><strong>{stageVideoInputs.length ? `${stageVideoInputs.length} available` : 'Not scanned'}</strong><small>{stageElements.filter((element) => element.type === 'led-screen' && element.mediaSource?.kind === 'ndi' && element.mediaSource.deviceId).length} screens assigned to live inputs</small>{stageVideoInputError && <small className="stage-source-error">{stageVideoInputError}</small>}</section>
+            <section className="visualizer-preset-picker"><span>VENUE PRESETS</span>{STAGE_PRESETS.map((preset) => <button key={preset.id} className={activeStagePresetId === preset.id ? 'active' : ''} onClick={() => loadStagePreset(preset.id)}><strong>{preset.name}</strong><small>{preset.description}</small></button>)}</section>
+            <section><span>WORKFLOW</span><small>Program fixtures normally. The visualizer reads the same resolved show state, so cues, manual overrides, FX, grand master and blackout appear here automatically.</small></section>
+          </aside>
+        </div>
+      </section>}
 
       {workspace === 'show' && <section className="show-console console-workspace-wide show-console-v3">
         <nav className="workspace-subtabs show-subtabs">{([
@@ -4313,11 +4335,11 @@ export default function App() {
 
       {midiMapOpen&&<div className="midi-map-modal" role="dialog" aria-modal="true" aria-label="MIDI mapping"><button className="modal-scrim" aria-label="Close MIDI mapping" onClick={()=>setMidiMapOpen(false)}/><div className="midi-map-dialog"><button onClick={()=>setMidiMapOpen(false)}>Close MIDI Map</button><section className="console-panel midi-mapping-console"><header><div><span>MIDI ASSIGNER</span><h2>Map controls</h2></div><b>{midiMappings.length} mappings</b></header><div className="midi-add-row"><select value={newMidiTarget} onChange={(event) => setNewMidiTarget(event.target.value)}>{midiControlGroups.map(([group, controls]) => <optgroup key={group} label={group}>{controls.map((control) => <option key={control.id} value={control.id}>{control.label}</option>)}</optgroup>)}</select><button className="console-primary" onClick={() => beginMidiAssignment()}>Add + Learn</button></div><div className="midi-map-list">{midiMappings.map((mapping) => { const control = midiControls.find((item) => item.id === mapping.target); const learning = midiLearnMappingId === mapping.id; return <div className={`midi-map-row ${learning ? 'is-learning' : ''}`} key={mapping.id}><strong>{control?.label ?? 'Unavailable'}</strong><span>{learning ? 'Move or press a control…' : midiBindingLabel(mapping)}</span><button onClick={() => setMidiLearnMappingId(learning ? null : mapping.id)}>{learning ? 'Cancel' : 'Learn'}</button><button onClick={() => removeMidiAssignment(mapping.id)}>Remove</button></div>; })}</div></section></div></div>}
       {stageMonitorOpen&&<StageMonitor floating snapshot={stageSnapshot} onClose={()=>setStageMonitorOpen(false)}/>}
-      <div className="workspace-utility-bar"><button onClick={()=>setStageMonitorOpen(v=>!v)}>Stage Monitor</button><button onClick={()=>setMidiMapOpen(true)}>MIDI Map</button></div>
+      <div className="workspace-utility-bar"><button onClick={()=>setStageMonitorOpen(v=>!v)}>Visualizer</button><button onClick={()=>setMidiMapOpen(true)}>MIDI Map</button></div>
       <footer className="console-footer console-status-strip">
         <div className="status-connections">
           <button className={dmxStatus.connected ? 'healthy' : ''} onClick={() => { setWorkspace('build'); setSetupView('settings'); }}><i />DMX <b>{dmxStatus.connected ? 'ONLINE' : 'VIRTUAL'}</b></button>
-          <button className={directStatus.clients > 0 ? 'healthy' : ''} onClick={() => { setWorkspace('build'); setSetupView('settings'); }}><i />LUMAVIZ <b>{directStatus.clients > 0 ? 'LINKED' : 'READY'}</b></button>
+          <button className="healthy" onClick={() => setWorkspace('visualizer')}><i />VISUALIZER <b>READY</b></button>
           <button className={studioBridgeStatus.connectedClients > 0 ? 'healthy' : ''} onClick={() => { setWorkspace('show'); setShowMode('sync'); }}><i />STUDIO <b>{studioBridgeStatus.connectedClients > 0 ? 'LINKED' : 'READY'}</b></button>
           <button className={midiStatus.connected ? 'healthy' : ''} onClick={() => { setWorkspace('build'); setSetupView('settings'); }}><i />MIDI <b>{midiStatus.connected ? 'ONLINE' : 'OFF'}</b></button>
         </div>
