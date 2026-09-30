@@ -48,12 +48,22 @@ export default function ShowCreator({
   );
   const [selectedId, setSelectedId] = useState(sections[0]?.id ?? "");
   const [dragId, setDragId] = useState("");
+  const [previewingId, setPreviewingId] = useState("");
   const [query, setQuery] = useState("");
   const [songFilter,setSongFilter]=useState("");
   const [sectionSearch,setSectionSearch]=useState("");
   const [category, setCategory] = useState("All");
   const [presets, setPresets] = useState<ShowSection[]>(loadPresets);
   const selected = sections.find((s) => s.id === selectedId) ?? sections[0];
+  const preview = (section: ShowSection) => {
+    setSelectedId(section.id);
+    setPreviewingId(section.id);
+    onPreview(section);
+  };
+  const stopPreview = () => {
+    setPreviewingId("");
+    onStop();
+  };
   const update = (changes: Partial<ShowSection>) => {
     if (selected)
       setSections((all) =>
@@ -249,6 +259,14 @@ export default function ShowCreator({
                     </button>
                     <div className="section-buttons">
                       <button
+                        className={previewingId === s.id ? "section-preview active" : "section-preview"}
+                        aria-label={`Preview ${s.name}`}
+                        title={previewingId === s.id ? "Previewing" : "Preview section"}
+                        onClick={() => preview(s)}
+                      >
+                        {previewingId === s.id ? "■" : "▶"}
+                      </button>
+                      <button
                         aria-label={`Move ${s.name} up`}
                         disabled={index === 0}
                         onClick={() => move(s.id, sections[index - 1].id)}
@@ -300,9 +318,13 @@ export default function ShowCreator({
           </section>
           {selected && (
             <section className="creator-card section-editor" onDragOver={e=>{if(e.dataTransfer.types.includes("application/lumarig-fx"))e.preventDefault();}} onDrop={e=>{const id=e.dataTransfer.getData("application/lumarig-fx");if(FX_RECIPES.some(r=>r.id===id)){e.preventDefault();addLayer(id);}}}>
-              <header>
+              <header className="section-editor-header">
                 <span>SECTION DESIGN</span>
                 <strong>{selected.name}</strong>
+                <div className="section-preview-controls">
+                  <button className={previewingId === selected.id ? "console-primary active" : "console-primary"} onClick={() => preview(selected)}>▶ Preview</button>
+                  <button disabled={!previewingId} onClick={stopPreview}>■ Stop</button>
+                </div>
               </header>
               <div className="creator-fields">
                 <label>
@@ -507,14 +529,7 @@ export default function ShowCreator({
                   </div>
                 ))}
               </div>
-              <div className="creator-actions">
-                <button
-                  className="console-primary"
-                  onClick={() => onPreview(selected)}
-                >
-                  Preview Section
-                </button>
-                <button onClick={onStop}>Stop Preview</button>
+              <div className="creator-actions creator-actions-footer">
                 <button
                   onClick={() => {
                     const next = [
