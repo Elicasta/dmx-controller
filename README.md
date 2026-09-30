@@ -166,3 +166,7 @@ After physical output works:
 LumaRig release builds use Tauri's signed updater. The source repository stays private while signed installers and `latest.json` are published to the public `Elicasta/dmx-controller-releases` repository so installed Macs can check for updates without GitHub credentials.
 
 See [docs/RELEASING.md](docs/RELEASING.md) for the one-time GitHub secret setup, the first updater-enabled install, and the no-Terminal release flow.
+
+## Solo show programming
+
+Song sections, stacked FX recipes and an audio-aligned bar timeline are available under SHOW. See [Show Creator guide](docs/SHOW_CREATOR.md) for the workflow, grid FX and playback behavior.

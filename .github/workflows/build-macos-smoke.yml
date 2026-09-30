@@ -46,6 +46,8 @@ jobs:
           npm run build
           grep -R -q "STEP RECIPE" dist || (echo "Missing current FX step editor marker" && exit 1)
           grep -R -q "LIVE CONTROL SURFACE" dist || (echo "Missing restored desktop LIVE controller marker" && exit 1)
+          grep -R -q "SHOW CREATOR" dist || (echo "Missing show creator assets" && exit 1)
+          grep -R -q "BAR TIMELINE" dist || (echo "Missing bar timeline assets" && exit 1)
           grep -R -q "SHOW LIBRARY" dist || (echo "Missing current SHOW workspace marker" && exit 1)
 
       - name: Disable updater artifacts for smoke build
