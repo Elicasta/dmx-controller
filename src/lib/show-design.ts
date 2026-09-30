@@ -123,12 +123,14 @@ const hex=(v:unknown)=>typeof v==='string'&&/^#[0-9a-f]{6}$/i.test(v);
 export function isEffectRecipe(value:unknown):value is CustomEffect {
   if(!value||typeof value!=='object')return false;
   const e=value as CustomEffect;
-  const lane=(l:CustomEffect['lanes'] extends (infer L)[]|undefined?L:never)=>l&&typeof l==='object'&&['red','green','blue','white','amber','uv','dimmer','pan','tilt','strobe','zoom','focus','gobo','colorWheel','panFine','tiltFine'].includes(l.parameter)&&finite(l.depth,0,100)&&finite(l.offset,-100,100)&&['sine','triangle','square','saw','reverse-saw','step'].includes(l.waveform);
+  const lane=(l:CustomEffect['lanes'] extends (infer L)[]|undefined?L:never)=>l&&typeof l==='object'&&['red','green','blue','white','amber','uv','dimmer','pan','tilt','strobe','zoom','focus','gobo','colorWheel','panFine','tiltFine','movementSpeed','prism','iris','goboRotate','prismRotate','macro'].includes(l.parameter)&&finite(l.depth,0,100)&&finite(l.offset,-100,100)&&['sine','triangle','square','saw','reverse-saw','step'].includes(l.waveform);
   return typeof e.id==='string'&&typeof e.name==='string'&&['dimmer','pan','tilt','uv','position','color'].includes(e.parameter)
     &&['sine','triangle','square','saw','reverse-saw','step'].includes(e.waveform)&&finite(e.bpm,20,300)&&finite(e.depth,0,100)&&finite(e.offset,-100,100)&&finite(e.phaseSpread,0,200)
     &&(e.gridPhaseMode===undefined||['selection','rows','columns','across-rows','across-columns'].includes(e.gridPhaseMode))
     &&(e.colorPalette===undefined||(Array.isArray(e.colorPalette)&&e.colorPalette.length<=16&&e.colorPalette.every(hex)))
     &&(e.colorBlend===undefined||['smooth','step'].includes(e.colorBlend))
+    &&(e.motionShape===undefined||['circle','figure-eight','diagonal','pan-sweep','tilt-sweep'].includes(e.motionShape))
+    &&[e.blocks,e.groups,e.wings,e.shift].every(v=>v===undefined||(typeof v==='number'&&Number.isFinite(v)))
     &&(e.cycleBeats===undefined||finite(e.cycleBeats,.125,32))
     &&(e.lanes===undefined||(Array.isArray(e.lanes)&&e.lanes.length<=16&&e.lanes.every(lane)))
     &&(e.steps===undefined||(Array.isArray(e.steps)&&e.steps.length<=64&&e.steps.every(s=>s&&finite(s.value,0,100))))

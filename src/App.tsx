@@ -1655,7 +1655,8 @@ export default function App() {
   function deleteCue(id: string) {
     setShowFile((current) => ({
       ...current,
-      cues: removeCuePreservingTracking(current.cues, id)
+      cues: removeCuePreservingTracking(current.cues, id),
+      timeline: current.timeline ? {...current.timeline,clips:current.timeline.clips.filter(c=>c.cueId!==id)} : undefined
     }));
     if (activeCueId === id) setActiveCueId(null);
   }
@@ -3108,6 +3109,10 @@ export default function App() {
 
   function loadFactoryFx(effect: EffectPreset) {
     const shape = EFFECT_SHAPES[effect.id];
+    if (effect.id === 'rainbow' || effect.id === 'color-chase' || effect.id === 'sweep') {
+      const recipe = FX_RECIPES.find(r=>r.id===(effect.id==='sweep'?'circle':effect.id==='rainbow'?'rainbow':'sunset'))!;
+      setSelectedFxBankId(effect.id);setFxEditor({...structuredClone(recipe.effect),id:`factory-${effect.id}`,name:effect.name,bpm:effect.defaultBpm});return;
+    }
     setSelectedFxBankId(effect.id);
     setFxEditor({
       id: `factory-${effect.id}`,
@@ -3203,6 +3208,7 @@ export default function App() {
       setMessage('Select fixtures or a group before running the custom FX.');
       return;
     }
+    if (effect.gridPhaseMode && effect.gridPhaseMode !== 'selection' && (!selectedGroup || effectFixtures.filter(f=>f.selected).some(f=>!selectedGroup.fixtureOrder.includes(f.id)))) {setMessage('Select a group with a selection grid before running row or column FX.');return;}
     stopFade();
     stopEffect(false, false, false);
     setAudioArmed(false);
