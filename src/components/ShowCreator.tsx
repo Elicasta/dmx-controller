@@ -180,7 +180,7 @@ export default function ShowCreator({
                   disabled={sections.length + t.sections.length > 200}
                   onClick={() => {
                     const next = t.sections.map((n) =>
-                      { ...createSection(n, song, groupId, bpm), runSection },
+                      ({ ...createSection(n, song, groupId, bpm), runSection }),
                     );
                     setSections((all) => [...all, ...next]);
                     setSelectedId(next[0].id);
