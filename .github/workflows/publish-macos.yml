@@ -12,12 +12,15 @@ on:
         required: false
         default: "LumaRig update"
         type: string
+  push:
+    branches:
+      - "release/lumarig-0.5.0"
 
 permissions:
   contents: read
 
 concurrency:
-  group: lumarig-macos-release-${{ inputs.version }}
+  group: lumarig-macos-release-${{ inputs.version || '0.5.0' }}
   cancel-in-progress: false
 
 jobs:
@@ -72,7 +75,7 @@ jobs:
           test -n "$UPDATER_PRIVATE_KEY_PASSWORD" || (echo "Missing TAURI_SIGNING_PRIVATE_KEY_PASSWORD" && exit 1)
 
       - name: Set release version
-        run: npm version "${{ inputs.version }}" --no-git-tag-version --allow-same-version
+        run: npm version "${{ inputs.version || '0.5.0' }}" --no-git-tag-version --allow-same-version
 
       - name: Inject updater public key
         env:
@@ -100,7 +103,7 @@ jobs:
           releaseCommitish: main
           tagName: app-v__VERSION__
           releaseName: "LumaRig v__VERSION__"
-          releaseBody: ${{ inputs.notes }}
+          releaseBody: ${{ inputs.notes || 'Solo Show Creator, stacked FX, row/column phasers, preset library, audio-aligned bar timeline, and interface cleanup.' }}
           releaseDraft: false
           prerelease: false
           generateReleaseNotes: false
