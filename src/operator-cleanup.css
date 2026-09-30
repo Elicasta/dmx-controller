@@ -104,6 +104,7 @@
 
 .draggable-programmer-panel-handle{
   grid-template-columns:30px minmax(0,1fr) 30px!important;
+  cursor:grab!important;
   height:32px!important;
   min-height:32px!important;
   padding:0 4px!important;
@@ -393,3 +394,6 @@
   .section-layer>select:nth-of-type(2),
   .section-layer>label{grid-column:2!important}
 }
+
+.draggable-programmer-panel-handle:active{cursor:grabbing!important}
+.draggable-programmer-panel-handle .panel-collapse-toggle{cursor:pointer!important}
