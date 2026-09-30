@@ -3055,6 +3055,31 @@ export default function App() {
     }));
   }
 
+  function duplicateStageElement(id: string) {
+    const source = stageElements.find((element) => element.id === id);
+    if (!source) return;
+    const migrated = migrateStageElement(source, stageSettings.dimensions);
+    const copy: StageElement = {
+      ...migrated,
+      id: `${source.id}-copy-${Date.now().toString(36)}`,
+      label: `${source.label} Copy`,
+      transform: migrated.transform ? {
+        position: {
+          x: migrated.transform.position.x + .45,
+          y: migrated.transform.position.y,
+          z: migrated.transform.position.z + .45
+        },
+        rotation: { ...migrated.transform.rotation }
+      } : undefined,
+      dimensions: migrated.dimensions ? { ...migrated.dimensions } : undefined,
+      mediaSource: migrated.mediaSource ? { ...migrated.mediaSource } : undefined
+    };
+    setStageElements((current) => [...current, copy]);
+    setSelectedStageElementId(copy.id);
+    setActiveStagePresetId(null);
+    setMessage(`${copy.label} duplicated.`);
+  }
+
   function removeStageElement(id: string) {
     setActiveStagePresetId(null);
     setStageElements((current) => current.filter((element) => element.id !== id));
@@ -4201,12 +4226,44 @@ export default function App() {
           </div>
         </header>
         <div className="visualizer-workspace-layout">
-          <div className="visualizer-workspace-canvas"><Visualizer3D snapshot={stageSnapshot}/></div>
+          <div className="visualizer-workspace-canvas"><Visualizer3D snapshot={stageSnapshot} selectedElementId={selectedStageElementId} onSelectElement={(id) => { setSelectedStageElementId(id); clearFixtureSelection(); }}/></div>
           <aside className="visualizer-workspace-sidebar">
-            <section><span>SCENE</span><strong>{stageElements.length} objects</strong><small>{patch.length} patched fixtures · {stageElements.filter((element) => element.type === 'led-screen').length} screens</small></section>
+            <section className="visualizer-scene-tree">
+              <span>SCENE</span>
+              <strong>{stageElements.length} objects</strong>
+              <small>{patch.length} patched fixtures · {stageElements.filter((element) => element.type === 'led-screen').length} screens</small>
+              <div>{stageElements.map((element) => <button key={element.id} className={selectedStageElementId === element.id ? 'active' : ''} onClick={() => { setSelectedStageElementId(element.id); clearFixtureSelection(); }}><i style={{ background: element.color }}/><span><strong>{element.label}</strong><small>{element.assetKind ?? element.type}</small></span></button>)}</div>
+            </section>
+
+            {selectedStageElement && <section className="visualizer-object-inspector">
+              <span>SELECTED OBJECT</span>
+              <strong>{selectedStageElement.label}</strong>
+              <label><span>Name</span><input value={selectedStageElement.label} onChange={(event) => updateStageElement(selectedStageElement.id, { label: event.target.value })}/></label>
+              <div className="visualizer-transform-grid">
+                {(['x','y','z'] as const).map((axis) => <label key={axis}><span>{axis.toUpperCase()}</span><input type="number" step=".1" value={Number(selectedStagePosition[axis].toFixed(2))} onChange={(event) => updateStageElementPosition(selectedStageElement.id, axis, Number(event.target.value))}/></label>)}
+              </div>
+              <div className="visualizer-transform-grid">
+                {(['yaw','pitch','roll'] as const).map((axis) => <label key={axis}><span>{axis}</span><input type="number" step="1" value={Number((selectedStageElement.transform?.rotation?.[axis] ?? 0).toFixed(1))} onChange={(event) => updateStageElementRotation(selectedStageElement.id, axis, Number(event.target.value))}/></label>)}
+              </div>
+              <div className="visualizer-transform-grid">
+                {(['x','y','z'] as const).map((axis) => <label key={axis}><span>{axis === 'x' ? 'W' : axis === 'y' ? 'H' : 'D'}</span><input type="number" min=".03" step=".1" value={Number((selectedStageElement.dimensions?.[axis] ?? 1).toFixed(2))} onChange={(event) => updateStageElementDimension(selectedStageElement.id, axis, Number(event.target.value))}/></label>)}
+              </div>
+              <label><span>Color</span><input className="inspector-color" type="color" value={selectedStageElement.color} onChange={(event) => updateStageElement(selectedStageElement.id, { color: event.target.value })}/></label>
+              {selectedStageElement.type === 'led-screen' && <div className="visualizer-screen-route">
+                <label><span>Screen Source</span><select value={selectedStageElement.mediaSource?.kind ?? 'none'} onChange={(event) => updateStageElement(selectedStageElement.id, { mediaSource: event.target.value === 'ndi' ? { kind: 'ndi', sourceName: 'ProPresenter', fit: 'contain' } : { kind: 'none' } })}><option value="none">Static</option><option value="ndi">NDI / Video Input</option></select></label>
+                {selectedStageElement.mediaSource?.kind === 'ndi' && <label><span>Input</span><select value={selectedStageElement.mediaSource.deviceId ?? ''} onChange={(event) => { const input=stageVideoInputs.find((item)=>item.deviceId===event.target.value); updateStageElement(selectedStageElement.id,{mediaSource:{kind:'ndi',deviceId:event.target.value||undefined,sourceName:input?.label||'ProPresenter',fit:selectedStageElement.mediaSource?.kind==='ndi'?selectedStageElement.mediaSource.fit??'contain':'contain'}}); }}><option value="">Select input</option>{stageVideoInputs.map((input)=><option key={input.deviceId} value={input.deviceId}>{input.label}</option>)}</select></label>}
+              </div>}
+              <div className="visualizer-object-actions"><button onClick={() => duplicateStageElement(selectedStageElement.id)}>Duplicate</button><button className="danger-button" onClick={() => removeStageElement(selectedStageElement.id)}>Delete</button></div>
+            </section>}
+
+            <section className="visualizer-warehouse">
+              <span>WAREHOUSE</span>
+              <strong>Add to this scene</strong>
+              <div>{(['Stage','Screens','Scenic','Audio','Band','People'] as const).map((category) => <details key={category}><summary>{category}</summary><div>{STAGE_WAREHOUSE.filter((item) => item.category === category).map((item) => <button key={item.id} onClick={() => addWarehouseStageElement(item.id)}>＋ {item.name}</button>)}</div></details>)}</div>
+            </section>
+
             <section className="visualizer-input-panel"><span>SCREEN INPUTS</span><strong>{stageVideoInputs.length ? `${stageVideoInputs.length} available` : 'Not scanned'}</strong><small>{stageElements.filter((element) => element.type === 'led-screen' && element.mediaSource?.kind === 'ndi' && element.mediaSource.deviceId).length} screens assigned to live inputs</small>{stageVideoInputError && <small className="stage-source-error">{stageVideoInputError}</small>}{stageVideoInputs.length > 0 && <div>{stageVideoInputs.map((input) => <button key={input.deviceId} onClick={() => routeVideoInputToAllScreens(input.deviceId)}><strong>{input.label}</strong><small>Route to all screens</small></button>)}</div>}</section>
             <section className="visualizer-preset-picker"><span>VENUE PRESETS</span>{STAGE_PRESETS.map((preset) => <button key={preset.id} className={activeStagePresetId === preset.id ? 'active' : ''} onClick={() => loadStagePreset(preset.id)}><strong>{preset.name}</strong><small>{preset.description}</small></button>)}</section>
-            <section><span>WORKFLOW</span><small>Program fixtures normally. The visualizer reads the same resolved show state, so cues, manual overrides, FX, grand master and blackout appear here automatically.</small></section>
           </aside>
         </div>
       </section>}
