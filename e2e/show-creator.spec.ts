@@ -215,7 +215,7 @@ for (const width of [820, 1024, 1280])
     ).toBe(true);
     expect(
       await page
-        .locator(".programmer-attribute-deck-v4>.color-deck")
+        .locator(".programmer-attribute-deck-v4 .color-deck")
         .evaluate((e) => e.scrollWidth <= e.clientWidth + 1),
     ).toBe(true);
     expect(
@@ -243,6 +243,35 @@ for (const width of [820, 1024, 1280])
     ).toBe(true);
     await page.screenshot({ path: info.outputPath(`fx-${width}.png`) });
   });
+
+test('programmer panels reorder, resize, collapse and stay docked',async({page})=>{
+ await seed(page);await page.setViewportSize({width:1280,height:760});await page.goto('/');
+ await page.getByRole('button',{name:'CREATE',exact:true}).click();
+ await page.getByRole('button',{name:'Programmer',exact:true}).click();
+ const deck=page.locator('.draggable-panel-deck');
+ await expect(deck).toBeVisible();
+ const color=page.locator('[data-panel-id="color"]');
+ const intensity=page.locator('[data-panel-id="intensity"]');
+ const colorHandle=page.getByRole('button',{name:'Move COLOR panel'});
+ await colorHandle.dragTo(intensity);
+ await expect(page.locator('.draggable-programmer-panel').first()).toHaveAttribute('data-panel-id','color');
+ const before=(await color.boundingBox())!;
+ const resize=page.getByRole('button',{name:'Resize COLOR panel'});
+ const handle=(await resize.boundingBox())!;
+ await page.mouse.move(handle.x+handle.width/2,handle.y+handle.height/2);await page.mouse.down();
+ await page.mouse.move(handle.x+260,handle.y+110,{steps:8});await page.mouse.up();
+ const after=(await color.boundingBox())!;
+ expect(after.height).toBeGreaterThan(before.height+60);
+ expect(after.width).toBeGreaterThanOrEqual(before.width);
+ await page.getByRole('button',{name:'Collapse COLOR'}).click();
+ await expect(color).toHaveClass(/collapsed/);
+ await page.reload();
+ await page.getByRole('button',{name:'CREATE',exact:true}).click();
+ await page.getByRole('button',{name:'Programmer',exact:true}).click();
+ await expect(page.locator('.draggable-programmer-panel').first()).toHaveAttribute('data-panel-id','color');
+ await expect(page.locator('[data-panel-id="color"]')).toHaveClass(/collapsed/);
+ await expect(page.locator('.draggable-panel-deck').getByText(/pop out/i)).toHaveCount(0);
+});
 
 test('color input, compact panels and detached stage follow actual output', async ({page},info)=>{
  await seed(page);await page.goto('/');
