@@ -3002,6 +3002,15 @@ export default function App() {
     }
   }
 
+  function routeVideoInputToAllScreens(deviceId: string) {
+    const input = stageVideoInputs.find((item) => item.deviceId === deviceId);
+    if (!input) return;
+    setStageElements((current) => current.map((element) => element.type === 'led-screen'
+      ? { ...element, mediaSource: { kind: 'ndi', deviceId: input.deviceId, sourceName: input.label || 'ProPresenter', fit: element.mediaSource?.kind === 'ndi' ? element.mediaSource.fit ?? 'contain' : 'contain' } }
+      : element));
+    setMessage(`${input.label || 'Video input'} routed to every visualizer screen.`);
+  }
+
   function addWarehouseStageElement(itemId: string) {
     const count = stageElements.filter((element) => element.id.includes(`warehouse-${itemId}-`)).length;
     const element = makeStageWarehouseElement(itemId, count, stageSettings.dimensions);
@@ -3012,7 +3021,7 @@ export default function App() {
   }
 
   function updateStageElement(id: string, updates: Partial<StageElement>) {
-    setActiveStagePresetId(null);
+    if (Object.keys(updates).some((key) => key !== 'mediaSource')) setActiveStagePresetId(null);
     setStageElements((current) => current.map((element) => element.id === id
       ? migrateStageElement(clampStageElement({ ...element, ...updates }), stageSettings.dimensions)
       : element));
@@ -4195,7 +4204,7 @@ export default function App() {
           <div className="visualizer-workspace-canvas"><Visualizer3D snapshot={stageSnapshot}/></div>
           <aside className="visualizer-workspace-sidebar">
             <section><span>SCENE</span><strong>{stageElements.length} objects</strong><small>{patch.length} patched fixtures · {stageElements.filter((element) => element.type === 'led-screen').length} screens</small></section>
-            <section><span>SCREEN INPUTS</span><strong>{stageVideoInputs.length ? `${stageVideoInputs.length} available` : 'Not scanned'}</strong><small>{stageElements.filter((element) => element.type === 'led-screen' && element.mediaSource?.kind === 'ndi' && element.mediaSource.deviceId).length} screens assigned to live inputs</small>{stageVideoInputError && <small className="stage-source-error">{stageVideoInputError}</small>}</section>
+            <section className="visualizer-input-panel"><span>SCREEN INPUTS</span><strong>{stageVideoInputs.length ? `${stageVideoInputs.length} available` : 'Not scanned'}</strong><small>{stageElements.filter((element) => element.type === 'led-screen' && element.mediaSource?.kind === 'ndi' && element.mediaSource.deviceId).length} screens assigned to live inputs</small>{stageVideoInputError && <small className="stage-source-error">{stageVideoInputError}</small>}{stageVideoInputs.length > 0 && <div>{stageVideoInputs.map((input) => <button key={input.deviceId} onClick={() => routeVideoInputToAllScreens(input.deviceId)}><strong>{input.label}</strong><small>Route to all screens</small></button>)}</div>}</section>
             <section className="visualizer-preset-picker"><span>VENUE PRESETS</span>{STAGE_PRESETS.map((preset) => <button key={preset.id} className={activeStagePresetId === preset.id ? 'active' : ''} onClick={() => loadStagePreset(preset.id)}><strong>{preset.name}</strong><small>{preset.description}</small></button>)}</section>
             <section><span>WORKFLOW</span><small>Program fixtures normally. The visualizer reads the same resolved show state, so cues, manual overrides, FX, grand master and blackout appear here automatically.</small></section>
           </aside>
