@@ -256,7 +256,8 @@ test('programmer panels reorder, resize, collapse into a shelf and stay docked',
  const color=page.locator('[data-panel-id="color"]');
  const intensity=page.locator('[data-panel-id="intensity"]');
  const colorHandle=page.getByRole('button',{name:'Move COLOR panel'});
- await colorHandle.dragTo(intensity);
+ const intensityBox=(await intensity.boundingBox())!;
+ await colorHandle.dragTo(intensity,{targetPosition:{x:4,y:Math.max(4,intensityBox.height/2)}});
  await expect(page.locator('.draggable-programmer-panel').first()).toHaveAttribute('data-panel-id','color');
  const before=(await color.boundingBox())!;
  const resize=page.getByRole('button',{name:'Resize COLOR panel'});
