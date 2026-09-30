@@ -586,3 +586,161 @@
     border-top:1px solid var(--pro-line)!important;
   }
 }
+
+
+/* 2026-09-30 show-workflow refinement pass */
+
+/* LIVE assignment is a popup again. Never consume the left or right side of the controller. */
+.desk-assign-overlay{
+  display:grid!important;
+  grid-template-columns:1fr!important;
+  place-items:center!important;
+  padding:24px!important;
+  background:rgb(2 4 5/.74)!important;
+}
+.desk-assign-backdrop{position:absolute!important;inset:0!important;width:100%!important;height:100%!important}
+.desk-assign-panel{
+  position:relative!important;
+  z-index:1!important;
+  width:min(900px,94vw)!important;
+  height:min(720px,88vh)!important;
+  border:1px solid var(--pro-line-strong)!important;
+  border-radius:5px!important;
+  box-shadow:0 24px 80px #000c!important;
+}
+.desk-assign-panel>header{gap:10px!important}
+.desk-assign-header-actions{display:flex!important;gap:4px!important}
+.desk-assign-header-actions button{width:34px!important;height:34px!important;font-size:14px!important}
+.desk-assign-header-actions button.active{border-color:var(--pro-select)!important;background:#1a2934!important;color:#dceeff!important}
+.desk-assign-grid{grid-template-columns:repeat(auto-fill,minmax(150px,1fr))!important}
+.desk-assign-grid.list-view{grid-template-columns:1fr!important}
+.desk-assign-grid.list-view button{grid-template-columns:12px 92px minmax(0,1fr)!important;min-height:42px!important}
+.desk-assign-grid.list-view button i{grid-row:1!important}
+.desk-assign-grid.list-view button small{grid-column:2!important}
+.desk-assign-grid.list-view button strong{grid-column:3!important}
+
+/* Keep the controller inside the available viewport. Fit first, scroll only at truly narrow sizes. */
+.desk-classic-scroll,.desk-ma-scroll,.desk-busk-scroll{overflow-y:auto!important;overflow-x:hidden!important}
+.desk-classic-surface{min-width:0!important;width:100%!important;grid-template-columns:repeat(8,minmax(64px,1fr))!important}
+.desk-ma-surface{min-width:0!important;width:100%!important;grid-template-columns:70px minmax(0,1fr)!important}
+.desk-busk-surface{min-width:0!important;width:100%!important}
+@container (max-width:760px){
+  .desk-classic-scroll,.desk-ma-scroll,.desk-busk-scroll{overflow-x:auto!important}
+  .desk-classic-surface{min-width:650px!important}
+  .desk-ma-surface{min-width:720px!important}
+  .desk-busk-surface{min-width:760px!important}
+}
+
+/* Programmer: short useful faders, no endless rightward deck. */
+.create-console-v3 .programmer-attribute-deck-v4{
+  grid-template-columns:minmax(240px,1fr) minmax(260px,1fr)!important;
+  overflow-x:hidden!important;
+}
+.create-console-v3 .programmer-attribute-deck-v4 .console-fader-strip{
+  min-height:0!important;
+  height:188px!important;
+  grid-template-rows:38px minmax(82px,1fr) 20px 24px 22px auto!important;
+  padding:4px!important;
+}
+.create-console-v3 .programmer-attribute-deck-v4 .vertical-fader{min-height:78px!important}
+.create-console-v3 .programmer-attribute-deck-v4 .attribute-faders{height:188px!important;overflow:auto hidden!important}
+.mover-attribute-group{grid-column:1/-1!important;min-width:0!important;border-top:1px solid var(--pro-line)!important}
+.mover-attribute-toggle{display:flex!important;align-items:center!important;justify-content:space-between!important;width:100%!important;min-height:32px!important;padding:0 9px!important;border:0!important;background:#10171c!important;color:#9ba8b0!important;font-size:8px!important;font-weight:900!important;letter-spacing:.08em!important}
+.mover-attribute-toggle:disabled{opacity:.45!important;cursor:default!important}
+.mover-attribute-content{display:none!important;grid-template-columns:repeat(3,minmax(150px,1fr))!important}
+.mover-attribute-group.open .mover-attribute-content{display:grid!important}
+.mover-attribute-content>.attribute-module{min-height:170px!important}
+
+/* The Hue strip is an actual control, not decorative chrome. */
+.hue-rail{display:block!important;cursor:ew-resize!important}
+.hue-rail input{position:absolute!important;z-index:3!important;inset:0!important;width:100%!important;height:100%!important;margin:0!important;opacity:0!important;cursor:ew-resize!important}
+.hue-rail span{pointer-events:none!important}
+
+/* Run-of-show navigator: ProPresenter-style service sections > items > cues. */
+.cue-run-navigator{display:grid!important;grid-template-rows:42px minmax(0,1fr)!important;overflow:hidden!important}
+.cue-run-navigator>header>div{display:flex!important;gap:4px!important}
+.cue-run-scroll{min-height:0!important;overflow:auto!important}
+.cue-run-section{border-bottom:1px solid var(--pro-line)!important}
+.cue-run-section-head{
+  display:grid!important;
+  grid-template-columns:16px minmax(0,1fr) auto!important;
+  align-items:center!important;
+  width:100%!important;
+  min-height:34px!important;
+  padding:0 8px!important;
+  border:0!important;
+  background:#0d1419!important;
+  color:#c8d1d6!important;
+  text-align:left!important;
+}
+.cue-run-section-head>span{color:var(--pro-select)!important}
+.cue-run-section-head>strong{font-size:9px!important;letter-spacing:.06em!important}
+.cue-run-section-head>small{color:#6e7c85!important;font-size:7px!important}
+.cue-run-items{padding:3px 0 5px!important}
+.cue-run-item{margin:0 5px 4px!important;border:1px solid #202c34!important;background:#0b1014!important}
+.cue-run-item.active{border-color:#3b4c58!important}
+.cue-run-item-head{
+  display:grid!important;
+  grid-template-columns:14px 54px minmax(0,1fr) auto!important;
+  align-items:center!important;
+  width:100%!important;
+  min-height:34px!important;
+  padding:0 7px!important;
+  border:0!important;
+  border-bottom:1px solid #1c262d!important;
+  background:#111920!important;
+  color:#c9d2d7!important;
+  text-align:left!important;
+}
+.cue-run-item-head>b{color:#7897ad!important;font-size:6px!important;letter-spacing:.08em!important}
+.cue-run-item-head>strong{overflow:hidden!important;font-size:9px!important;text-overflow:ellipsis!important;white-space:nowrap!important}
+.cue-run-item-head>small{color:#697780!important;font-size:7px!important}
+.cue-run-cues article{margin:0!important}
+
+/* Stage preview always fits its owner. The old fixed 390px minimum was clipping small windows. */
+.programmer-stage,.show-viz-preview,.media-stage-preview,.floating-stage-body{min-width:0!important;min-height:0!important;overflow:hidden!important}
+.programmer-stage .multi-stage,.show-viz-preview .multi-stage,.media-stage-preview .multi-stage,.floating-stage-body .multi-stage{
+  width:100%!important;
+  height:100%!important;
+  min-width:0!important;
+  min-height:0!important;
+  max-width:100%!important;
+  max-height:100%!important;
+}
+.programmer-stage .physical-stage,.show-viz-preview .physical-stage,.media-stage-preview .physical-stage,.floating-stage-body .physical-stage{height:100%!important;min-height:0!important}
+.stage-geometry-svg{display:block!important;width:100%!important;height:100%!important;max-width:100%!important;max-height:100%!important}
+
+/* Persistent detached-style stage monitor. It remains visible while changing workspaces. */
+.floating-stage-monitor{
+  position:fixed!important;
+  z-index:850!important;
+  right:18px!important;
+  bottom:48px!important;
+  display:grid!important;
+  grid-template-rows:34px minmax(0,1fr)!important;
+  width:min(520px,44vw)!important;
+  height:min(360px,42vh)!important;
+  min-width:300px!important;
+  min-height:220px!important;
+  max-width:90vw!important;
+  max-height:78vh!important;
+  resize:both!important;
+  overflow:hidden!important;
+  border:1px solid var(--pro-line-strong)!important;
+  border-radius:5px!important;
+  background:#070b0e!important;
+  box-shadow:0 20px 60px #000b!important;
+}
+.floating-stage-monitor>header{display:flex!important;align-items:center!important;justify-content:space-between!important;padding:0 7px 0 10px!important;border-bottom:1px solid var(--pro-line)!important;background:#11191e!important}
+.floating-stage-monitor>header>div{display:grid!important;min-width:0!important}
+.floating-stage-monitor>header span{color:var(--pro-select)!important;font-size:6px!important;font-weight:900!important;letter-spacing:.1em!important}
+.floating-stage-monitor>header strong{overflow:hidden!important;font-size:9px!important;text-overflow:ellipsis!important;white-space:nowrap!important}
+.floating-stage-monitor>header button{width:27px!important;height:27px!important}
+
+/* FX drag target makes the intended drop area obvious. */
+.fx-drop-zone{min-height:52px!important;border:1px dashed #35444e!important}
+.fx-drop-zone:empty::after{content:'Drag FX recipes here';display:grid;place-items:center;min-height:50px;color:#64737d;font-size:8px}
+
+/* Position library labels stay inside their cards. */
+.position-preset-card,.position-preset-card>button,.look-preset-grid button{min-width:0!important;overflow:hidden!important}
+.position-preset-card strong,.position-preset-card small,.look-preset-grid strong{overflow:hidden!important;text-overflow:ellipsis!important;white-space:nowrap!important}
