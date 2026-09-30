@@ -15,11 +15,16 @@ export function normalizePanelOrder(saved: readonly string[], available: readonl
   return ordered;
 }
 
-export function reorderPanelIds(order: readonly string[], draggedId: string, targetId: string) {
+export function reorderPanelIds(
+  order: readonly string[],
+  draggedId: string,
+  targetId: string,
+  placement: 'before' | 'after' = 'before',
+) {
   if (draggedId === targetId || !order.includes(draggedId) || !order.includes(targetId)) return [...order];
   const next = order.filter((id) => id !== draggedId);
   const targetIndex = next.indexOf(targetId);
-  next.splice(targetIndex, 0, draggedId);
+  next.splice(targetIndex + (placement === 'after' ? 1 : 0), 0, draggedId);
   return next;
 }
 
@@ -59,8 +64,14 @@ export default function DraggablePanelDeck({
 
   const dropOn = (event: DragEvent<HTMLElement>, targetId: string) => {
     event.preventDefault();
-    if (!dragging) return;
-    save(reorderPanelIds(normalized, dragging, targetId));
+    const draggedId = event.dataTransfer.getData('text/plain') || dragging;
+    if (!draggedId) return;
+    const box = event.currentTarget.getBoundingClientRect();
+    const horizontal = box.width >= box.height;
+    const after = horizontal
+      ? event.clientX >= box.left + box.width / 2
+      : event.clientY >= box.top + box.height / 2;
+    save(reorderPanelIds(normalized, draggedId, targetId, after ? 'after' : 'before'));
     setDragging(null);
   };
 
