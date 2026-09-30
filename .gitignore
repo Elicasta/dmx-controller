@@ -21,3 +21,6 @@ certificate-base64.txt
 *.dmg
 *.app.tar.gz
 *.app.tar.gz.sig
+
+/test-results
+/playwright-report

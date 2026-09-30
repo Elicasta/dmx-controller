@@ -1,3 +1,5 @@
+import { renderColorPhaser } from '../core/color-phaser';
+import type { FixtureSelectionGrid, GridPhaseMode } from '../core/selection-grid';
 import { clampDmx, type DmxUpdate } from './dmx';
 import { phaserWaveValue, renderPhaserProgram, type PhaserDirection, type PhaserLane, type PhaserMode, type PhaserStep } from '../core/phaser-engine';
 import type { FixtureOrderMode } from '../core/fixture-order';
@@ -25,7 +27,7 @@ export type EffectId =
 
 export type EffectWaveform = 'sine' | 'triangle' | 'square' | 'saw' | 'reverse-saw' | 'step';
 export type EffectParameter = 'dimmer' | 'pan' | 'tilt' | 'uv';
-export type CustomEffectParameter = EffectParameter | 'position';
+export type CustomEffectParameter = EffectParameter | 'position' | 'color';
 export type MotionShape = 'circle' | 'figure-eight' | 'diagonal' | 'pan-sweep' | 'tilt-sweep';
 export type CustomEffectLane = {
   parameter: FixtureParameter;
@@ -47,6 +49,9 @@ export type EffectPreset = {
 };
 
 export type CustomEffect = {
+  gridPhaseMode?: GridPhaseMode;
+  colorPalette?: string[];
+  colorBlend?: 'step' | 'smooth';
   id: string;
   name: string;
   parameter: CustomEffectParameter;
@@ -124,9 +129,12 @@ export function renderCustomEffect(
   effect: CustomEffect,
   fixtures: readonly PatchedFixture[],
   elapsedMs: number,
-  baseUniverse?: readonly number[]
+  baseUniverse?: readonly number[],
+  selectionGrid?: FixtureSelectionGrid
 ): DmxUpdate[] {
   const timing = {
+    selectionGrid,
+    gridPhaseMode: effect.gridPhaseMode,
     bpm: effect.bpm,
     phaseSpread: effect.phaseSpread,
     orderMode: effect.orderMode ?? 'forward',
@@ -141,7 +149,7 @@ export function renderCustomEffect(
     cycleBeats: effect.cycleBeats ?? 1
   } as const;
 
-  const primaryLanes: PhaserLane[] = effect.parameter === 'position'
+  const primaryLanes: PhaserLane[] = effect.parameter === 'color' ? [] : effect.parameter === 'position'
     ? motionShapeLanes(effect.motionShape ?? 'circle', {
         waveform: effect.waveform,
         depth: effect.depth,
@@ -158,10 +166,10 @@ export function renderCustomEffect(
         steps: effect.steps
       }];
 
-  return renderPhaserProgram({
+  return [...(effect.parameter === 'color' ? renderColorPhaser(effect, fixtures, elapsedMs, selectionGrid) : []), ...renderPhaserProgram({
     ...timing,
     lanes: [...primaryLanes, ...(effect.lanes ?? [])]
-  }, fixtures, elapsedMs, baseUniverse);
+  }, fixtures, elapsedMs, baseUniverse)];
 }
 
 export const EFFECT_PRESETS: ReadonlyArray<EffectPreset> = [

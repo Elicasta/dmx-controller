@@ -41,3 +41,29 @@ jobs:
 
       - name: Native tests
         run: cargo test --manifest-path src-tauri/Cargo.toml
+
+  browser:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with:
+          node-version: lts/*
+          cache: npm
+      - run: npm ci
+      - name: Prepare browser
+        run: |
+          if command -v google-chrome >/dev/null; then
+            google-chrome --version
+            echo "PLAYWRIGHT_CHANNEL=chrome" >> "$GITHUB_ENV"
+          else
+            npx playwright install --with-deps chromium
+          fi
+      - run: npm run test:ui
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: show-creator-browser-verification
+          path: test-results
+          if-no-files-found: ignore
