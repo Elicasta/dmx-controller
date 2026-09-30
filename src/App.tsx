@@ -4109,7 +4109,6 @@ export default function App() {
           }))}
           looks={allLooks.map((look)=>({id:look.id,name:look.name,color:rgbToHex(look.values.red,look.values.green,look.values.blue)}))}
           effects={[
-            ...FX_RECIPES.map(recipe=>({id:'recipe:'+recipe.id,name:recipe.name,active:activeCustomEffectId==='recipe:'+recipe.id,momentary:false,color:'#77cfef'})),
             ...EFFECT_PRESETS.map((effect)=>({
               id:effect.id,
               name:effect.name,
@@ -4123,7 +4122,8 @@ export default function App() {
               active:activeCustomEffectId===effect.id,
               momentary:false,
               color:'#55e98d'
-            }))
+            })),
+            ...FX_RECIPES.map(recipe=>({id:'recipe:'+recipe.id,name:recipe.name,active:activeCustomEffectId==='recipe:'+recipe.id,momentary:false,color:'#77cfef'})),
           ]}
           onGo={goNextCue}
           onBack={goPreviousCue}

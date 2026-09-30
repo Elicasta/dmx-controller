@@ -7,7 +7,7 @@ Show → Cues groups cues by their Song / cue group field. Song Creator fills th
 
 Each song's Timeline button opens the arranger alongside the cue library. Import timeline show accepts an exported LumaRig show JSON and adds its cues as one collapsible song, with a separately stored timeline and tempo. Imported fixture IDs and DMX patch addresses must match the current rig. Relink the imported show's audio before playback. The Timeline tab selector switches between the current show and imported timelines. Imported shows persist in show exports and local saves.
 
-Creator can filter sections by song and search by name. Drag FX recipes onto a section or its design panel to stack another layer.
+Creator can filter sections by song and search by name. Drag FX recipes onto a section or its design panel to stack another layer. In the timeline, switch the library to FX recipes and drag a recipe directly onto a lane. FX-only clips leave unrelated base channels intact and use the displayed target group.
 
 ## Audio
 Drop audio anywhere in the timeline, or choose Load Audio. File extensions are accepted when the operating system does not provide a MIME type. Native WebView drag interception is disabled to let the HTML drop targets receive files.

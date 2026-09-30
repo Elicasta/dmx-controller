@@ -329,6 +329,7 @@ export default function ShowTimelineEditor(props: Props) {
     e.preventDefault();
     const recipeId=e.dataTransfer.getData("application/lumarig-fx");
     if(FX_RECIPES.some(r=>r.id===recipeId)){
+      checkpoint();
       props.onAddFx?.(recipeId,snapBar((e.clientX-e.currentTarget.getBoundingClientRect().left)/zoom,snap),lane);return;
     }
     const cueId = e.dataTransfer.getData("application/lumarig-cue");
@@ -459,12 +460,12 @@ export default function ShowTimelineEditor(props: Props) {
       </div>
       <div className="timeline-edit-layout">
         <aside className="timeline-cue-library">
-          <div className="timeline-library-tabs"><button aria-pressed={libraryMode==="cues"} onClick={()=>setLibraryMode("cues")}>Cues</button><button aria-pressed={libraryMode==="fx"} onClick={()=>setLibraryMode("fx")}>FX recipes</button></div>
+          <div className="timeline-library-tabs"><button aria-label="Cue library" aria-pressed={libraryMode==="cues"} onClick={()=>setLibraryMode("cues")}>Cues</button><button aria-pressed={libraryMode==="fx"} onClick={()=>setLibraryMode("fx")}>FX recipes</button></div>
           <header>
             SHOW CUES <small>{cues.length}</small>
           </header>
           <p>Drag to a lane or click to append.</p>
-          {libraryMode==="fx" ? <><p>Target: {props.fxTargetName??"current group"}. Drag a recipe to a lane.</p>{FX_RECIPES.map(recipe=><button className="timeline-fx-recipe" key={recipe.id} draggable onDragStart={e=>{e.dataTransfer.setData("application/lumarig-fx",recipe.id);e.dataTransfer.effectAllowed="copy";}} onClick={()=>props.onAddFx?.(recipe.id,clipEnd,0)}><span>{recipe.name}<small>{recipe.category}</small></span></button>)}</> : cues.length ? (
+          {libraryMode==="fx" ? <><p>Target: {props.fxTargetName??"current group"}. Drag a recipe to a lane.</p>{FX_RECIPES.map(recipe=><button className="timeline-fx-recipe" key={recipe.id} draggable onDragStart={e=>{e.dataTransfer.setData("application/lumarig-fx",recipe.id);e.dataTransfer.effectAllowed="copy";}} onClick={()=>{checkpoint();props.onAddFx?.(recipe.id,clipEnd,0);}}><span>{recipe.name}<small>{recipe.category}</small></span></button>)}</> : cues.length ? (
             cues.filter(c=>!props.songFilter||(c.trackName?.trim()||"Unfiled cues")===props.songFilter).map((c) => (
               <button
                 key={c.id}
