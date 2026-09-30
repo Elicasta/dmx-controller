@@ -490,6 +490,29 @@ export function barMs(timeline: Pick<ShowTimeline, "bpm" | "beatsPerBar">) {
 export function snapBar(value: number, step = 1) {
   return Math.max(0, Math.round(value / step) * step);
 }
+export function activeTimelineCueId(
+  timeline: ShowTimeline,
+  cues: readonly ShowCue[],
+  elapsedMs: number,
+) {
+  const validCueIds = new Set(cues.map((cue) => cue.id));
+  const position = Math.max(0, elapsedMs) / barMs(timeline);
+  const active = timeline.clips
+    .filter(
+      (clip) =>
+        clip.enabled &&
+        validCueIds.has(clip.cueId) &&
+        position >= clip.startBar &&
+        position < clip.startBar + clip.lengthBars,
+    )
+    .sort(
+      (a, b) =>
+        a.lane - b.lane ||
+        a.startBar - b.startBar ||
+        a.id.localeCompare(b.id),
+    );
+  return active.at(-1)?.cueId ?? null;
+}
 export function renderShowTimeline(
   timeline: ShowTimeline,
   cues: readonly ShowCue[],

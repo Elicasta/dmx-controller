@@ -18,6 +18,7 @@ import {
   sectionStack,
   renderEffectStack,
   renderShowTimeline,
+  activeTimelineCueId,
   barMs,
   snapBar,
   FX_RECIPES,
@@ -259,6 +260,23 @@ describe("audio bar timeline engine", () => {
     expect(snapBar(2.4, 1)).toBe(2);
     expect(snapBar(2.4, 0.25)).toBe(2.5);
     expect(snapBar(-2)).toBe(0);
+  });
+  it("tracks the cue that owns the final rendered timeline layer", () => {
+    const other = { ...cues[0], id: "top" };
+    const overlapping = {
+      ...timeline,
+      clips: [
+        clip,
+        { ...clip, id: "top-clip", cueId: "top", lane: 1 },
+      ],
+    };
+    expect(activeTimelineCueId(overlapping, [...cues, other], 5000)).toBe("top");
+    expect(activeTimelineCueId(overlapping, [...cues, other], 3999)).toBeNull();
+    expect(activeTimelineCueId(
+      { ...overlapping, clips: [{ ...overlapping.clips[1], enabled: false }] },
+      [...cues, other],
+      5000,
+    )).toBeNull();
   });
   it("has exact clip boundaries and releases its channels outside a clip", () => {
     expect(renderShowTimeline(timeline, cues, fixtures, 3999, frame)).toEqual(
