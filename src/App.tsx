@@ -1,3 +1,7 @@
+import ResizableWorkspace from './components/ResizableWorkspace';
+import StageMonitor, { useStagePublisher } from './components/StageMonitor';
+import SongCueLibrary from './components/SongCueLibrary';
+import { moveSongCues } from './lib/show';
 import { EMPTY_TIMELINE, FX_RECIPES, SHOW_COLORS, buildSectionCues, renderEffectStack, renderShowTimeline, isEffectRecipe, type EffectStackLayer, type ShowSection } from './lib/show-design';
 import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState, type ChangeEvent, type PointerEvent as ReactPointerEvent } from 'react';
 import { lumaVizDirectStatus, pollLumaVizDirectMessages, semanticFrameFromResolvedOutput, sendLumaVizDirectFrame, sendLumaVizDirectMessage, startLumaVizDirect, type LumaVizDirectStatus, type SharedShowPatchMutation } from './core/lumaviz-direct';
@@ -812,6 +816,11 @@ export default function App() {
   const [stageElements, setStageElements] = useState<StageElement[]>(loadStageElements);
   const [selectedStageElementId, setSelectedStageElementId] = useState<string | null>(null);
   const [stageSettings, setStageSettings] = useState<StageSettings>(loadStageSettings);
+  const [stageMonitorOpen,setStageMonitorOpen]=useState(false);
+  const [midiMapOpen,setMidiMapOpen]=useState(false);
+  const [timelineShowId,setTimelineShowId]=useState('');
+  const [cueTimelineSong,setCueTimelineSong]=useState<string|null>(null);
+  const [timelineStartBar,setTimelineStartBar]=useState(0);
   const [stageView, setStageView] = useState<StageView>('perspective');
   const [stageMode, setStageMode] = useState<StageDesignerMode>('select');
   const stageDragRef = useRef<{ pointerId: number; kind: 'fixture' | 'element'; id: string; preserved: Vec3; moved: boolean } | null>(null);
@@ -896,6 +905,8 @@ export default function App() {
   const selectedStagePosition = selectedStageElement
     ? stageElementPosition(selectedStageElement, stageSettings.dimensions)
     : { x: 0, y: 0, z: 0 };
+  const stageSnapshot=useMemo(()=>({patch,output:outputUniverse,dimensions:stageSettings.dimensions,elements:stageElements,blackout:dmxStatus.blackout}),[patch,outputUniverse,stageSettings.dimensions,stageElements,dmxStatus.blackout]);
+  useStagePublisher(stageSnapshot);
   const midiControls = useMemo(() => buildControlRegistry(patch), [patch]);
   const midiControlGroups = useMemo(() => {
     const groups = new Map<string, MidiAssignableControl[]>();
@@ -1731,7 +1742,7 @@ export default function App() {
     const url = URL.createObjectURL(file);
     showTrackUrlRef.current = url;
     setShowTrackUrl(url); setShowTrackName(file.name); setShowTrackDurationMs(0); setShowTrackPositionMs(0);
-    setShowFile(current=>({...current,timeline:{...(current.timeline ?? EMPTY_TIMELINE),audioName:file.name}}));
+    updateEditingTimeline({...editingTimeline,audioName:file.name});
     setRecordingTakeName(`${file.name.replace(/\.[^.]+$/, '')} · Take ${(showFile.recordings?.length ?? 0) + 1}`);
     setMessage(`${file.name} loaded. Align its waveform on the bar timeline.`);
   }
@@ -3271,9 +3282,35 @@ export default function App() {
       setMessage(`${built.length} sections built. Open Timeline to arrange and align audio.`);
     } catch(error) {setMessage(String(error));}
   }
+  const editingTimeline = (timelineShowId ? showFile.timelineShows?.find(item=>item.id===timelineShowId)?.timeline : showFile.timeline) ?? EMPTY_TIMELINE;
+  function updateEditingTimeline(timeline: typeof EMPTY_TIMELINE) {
+    setShowFile(current=>timelineShowId ? {...current,timelineShows:(current.timelineShows??[]).map(item=>item.id===timelineShowId?{...item,timeline}:item)} : {...current,timeline});
+  }
+  function openSongTimeline(song:string) {
+    stopTimeline();
+    const saved=showFile.timelineShows?.find(item=>item.name===song);
+    setTimelineShowId(saved?.id??'');
+    const ids=new Set(showFile.cues.filter(c=>(c.trackName?.trim()||'Unfiled cues')===song).map(c=>c.id));
+    const starts=(saved?.timeline??showFile.timeline)?.clips.filter(c=>ids.has(c.cueId)).map(c=>c.startBar)??[];
+    setTimelineStartBar(starts.length?Math.min(...starts):0);
+    setCueTimelineSong(song);
+    if(saved?.timeline.audioName!==showTrackName){showTrackAudioRef.current?.pause();}
+  }
+  function importTimelineShow(imported:ShowFile) {
+    if(showFile.cues.length+imported.cues.length>200){setMessage('Import exceeds the 200 cue limit.');return;}
+    if((showFile.timelineShows?.length??0)>=100){setMessage('Timeline show limit reached.');return;}
+    const ids=new Map(imported.cues.map(c=>[c.id,crypto.randomUUID()]));
+    const existing=new Set(showFile.cues.map(c=>c.trackName));
+    let name=imported.name, suffix=2;while(existing.has(name))name=imported.name+' '+suffix++;
+    const cues=imported.cues.map(c=>({...structuredClone(c),id:ids.get(c.id)!,sourceSectionId:undefined,trackName:name}));
+    const timeline=structuredClone(imported.timeline??EMPTY_TIMELINE);
+    timeline.clips=timeline.clips.filter(c=>ids.has(c.cueId)).map(c=>({...c,id:crypto.randomUUID(),cueId:ids.get(c.cueId)!}));
+    setShowFile(current=>({...current,cues:renumberCues([...current.cues,...cues]),timelineShows:[...(current.timelineShows??[]),{id:crypto.randomUUID(),name,timeline}]}));
+    setMessage(name+' imported as a collapsible timeline show. Relink its audio before playback.');
+  }
   function renderTimelineFrame(elapsedMs:number) {
     if(!timelineBaseRef.current){stopRecordedShowPlayback(false);if(cueFollowTimerRef.current!==null)window.clearTimeout(cueFollowTimerRef.current);stopFade();stopEffect(false);setAudioArmed(false);timelineBaseRef.current=[...universeRef.current];}
-    const timeline=showFile.timeline ?? EMPTY_TIMELINE;
+    const timeline=editingTimeline;
     void dispatchControl({type:'playback.layer.set',universe:1,layerId:'timeline',priority:35,mode:'ltp',updates:renderShowTimeline(timeline,showFile.cues,patchRef.current,elapsedMs,timelineBaseRef.current)},'cue');
   }
   function stopTimeline() {timelineBaseRef.current=null;void dispatchControl({type:'playback.layer.clear',universe:1,layerId:'timeline'},'cue');}
@@ -3334,7 +3371,7 @@ export default function App() {
         <div className="stage-view-toolbar" role="group" aria-label="Stage view">
           {(['perspective', 'top', 'front', 'side'] as StageView[]).map((view) => <button key={view} className={stageView === view ? 'active' : ''} onClick={() => setStageView(view)}>{view}</button>)}
         </div>
-        <svg className="stage-geometry-svg" viewBox="0 0 1000 560" aria-label={`${stageView} physical stage view`}>
+        <svg className="stage-geometry-svg" preserveAspectRatio="none" viewBox="0 0 1000 560" aria-label={`${stageView} physical stage view`}>
           <defs>
             <filter id="beam-glow"><feGaussianBlur stdDeviation="7" /></filter>
             <pattern id="stage-grid" width="50" height="50" patternUnits="userSpaceOnUse"><path d="M 50 0 L 0 0 0 50" fill="none" stroke="rgba(125,145,166,.12)" strokeWidth="1" /></pattern>
@@ -3784,7 +3821,7 @@ export default function App() {
         </aside>
       </section>}
 
-      {workspace === 'create' && <section className={`console-workspace program-console create-console-v3 ${programMode === 'fx' ? 'create-fx-view' : ''}`}>
+      {workspace === 'create' && <ResizableWorkspace className={`console-workspace program-console create-console-v3 ${programMode === 'fx' ? 'create-fx-view' : ''}`}>
         <FixtureBrowser patch={patch} groups={fixtureGroups} search={fixtureSearch} onSearchChange={setFixtureSearch} onSelectAll={selectAllFixtures} onClearSelection={clearFixtureSelection} onSelectFixture={selectFixtureFromConsole} onSelectGroup={selectFixtureGroup} selectedGroupId={selectedGroupId} />
         <div className="program-center console-center">
           <nav className="workspace-subtabs program-subtabs">{([
@@ -3802,11 +3839,11 @@ export default function App() {
 
               <ColorDeck title="COLOR" subtitle={selectedFixtureTargets.length ? `${selectedFixtureTargets.length} selected` : 'Select fixtures'} color={globalColor} disabled={selectedCompatibleColors.length === 0} presets={consoleColorPresets} onChange={applyGlobalColor} />
 
-              <section className="attribute-module position-module">
+              {selectedMovingFixtures.length>0&&<section className="attribute-module position-module">
                 <header><span>POSITION</span><strong>{selectedMovingFixtures.length} MOVERS</strong></header>
                 <div className="position-actions">{showFile.positionPalettes?.slice(0,4).map((palette) => <button key={palette.id} onClick={() => void runPositionPalette(palette)}>{palette.name}</button>)}<button onClick={savePositionPalette}>＋ SAVE</button></div>
                 <div className="position-shortcuts"><button onClick={() => { setWorkspace('build'); setSetupView('stage'); setStageMode('aim'); }}>AIM</button><button onClick={() => { setWorkspace('build'); setSetupView('stage'); setStageMode('move'); }}>MOVE</button><button onClick={() => { setWorkspace('build'); setSetupView('stage'); setStageMode('rotate'); }}>ROTATE</button></div>
-              </section>
+              </section>}
 
               <section className="attribute-module beam-module">
                 <header><span>BEAM</span><strong>OPTICS</strong></header>
@@ -3955,25 +3992,25 @@ export default function App() {
         </div>
 
         {programMode !== 'fx' && <EffectsPanel title="FX / SELECTED TARGET" targetName={programEffectName} fixtures={programEffectFixtures} activeEffect={activeEffect} bpm={effectBpm} depth={effectDepth} disabled={false} onBpmChange={(value) => { setEffectBpm(value); effectBpmRef.current = value; setTempoSource('manual'); }} onDepthChange={(value) => { setEffectDepth(value); effectDepthRef.current = value; }} onStart={(effect) => toggleEffect(effect, programEffectFixtures.map((fixture) => fixture.id))} onPress={(effect) => startMomentaryEffect(effect, programEffectFixtures.map((fixture) => fixture.id))} onRelease={releaseMomentaryEffect} onStop={() => stopEffect()} />}
-      </section>}
+      </ResizableWorkspace>}
 
       {workspace === 'show' && <section className="show-console console-workspace-wide show-console-v3">
         <nav className="workspace-subtabs show-subtabs">{([
           ['creator','Show Creator'],['cues','Cues'],['timeline','Timeline'],['tracks','Tracks'],['library','Show Library'],['sync','MIDI & Sync'],['recordings','Recordings']
         ] as Array<[ShowMode,string]>).map(([id,label]) => <button key={id} className={showMode === id ? 'active' : ''} onClick={() => setShowMode(id)}>{label}</button>)}</nav>
 
-        {showMode === 'cues' && <div className="show-cue-layout">
-          <aside className="cue-list-console"><header><span>CUE LIST</span><button onClick={captureCue}>＋ Capture</button></header>{showFile.cues.length ? showFile.cues.map((cue,index) => <article className={activeCueId === cue.id ? 'active' : ''} key={cue.id}><button className="cue-line" onClick={() => runCue(cue)}><b>{String(cue.number).padStart(2,'0')}</b><i style={{background:lookSwatch(cue.values)}}/><span><strong>{cue.name}</strong><small>{cue.fadeMs ? `${cue.fadeMs/1000}s fade` : 'Snap'}{cue.followMs ? ` · follow ${cue.followMs/1000}s` : ''}</small></span></button><div><button disabled={index===0} onClick={() => setShowFile((current)=>({...current,cues:moveCue(current.cues,cue.id,-1)}))}>↑</button><button disabled={index===showFile.cues.length-1} onClick={() => setShowFile((current)=>({...current,cues:moveCue(current.cues,cue.id,1)}))}>↓</button><button onClick={() => deleteCue(cue.id)}>×</button></div></article>) : <div className="empty-cues"><strong>No cues yet</strong><span>Build a look in CREATE, then capture it here.</span><button onClick={() => setWorkspace('create')}>Open CREATE</button></div>}</aside>
+        {showMode === 'cues' && <div className={`show-cue-layout ${cueTimelineSong!==null ? 'cue-with-timeline' : ''}`}>
+          <SongCueLibrary cues={showFile.cues} activeId={activeCueId} timelineNames={(showFile.timelineShows??[]).map(item=>item.name)} onRun={runCue} onDelete={deleteCue} onCapture={captureCue} onMove={(id,direction)=>setShowFile(current=>({...current,cues:moveCue(current.cues,id,direction)}))} onMoveSong={(name,direction)=>setShowFile(current=>({...current,cues:moveSongCues(current.cues,name,direction)}))} onTimeline={openSongTimeline} onImport={importTimelineShow}/>
 
-          <main className="cue-preview-console"><header><span>{directStatus.clients > 0 ? 'LUMAVIZ LIVE PREVIEW' : 'STAGE / CUE PREVIEW'}</span><b>{activeCue?.name ?? 'Live output'}</b></header><div className={`show-viz-preview ${liveLumaVizPreview ? 'linked external-feed' : directStatus.clients > 0 ? 'linked' : ''}`}>{liveLumaVizPreview ? <img src={liveLumaVizPreview.dataUrl} alt={`LumaViz ${liveLumaVizPreview.view ?? 'live'} preview`} /> : renderStagePreview()}</div><div className="cue-preview-meta"><span>CURRENT<strong>{activeCue ? `${activeCue.number}. ${activeCue.name}` : 'Ready'}</strong></span><span>NEXT<strong>{nextCue ? `${nextCue.number}. ${nextCue.name}` : 'End of show'}</strong></span></div></main>
+          {cueTimelineSong!==null ? <main className="cue-integrated-timeline"><header><strong>{cueTimelineSong}</strong><button onClick={()=>{stopTimeline();setCueTimelineSong(null);}}>Close timeline</button></header><Suspense fallback={<p>Loading timeline…</p>}><ShowTimelineEditor key={timelineShowId+cueTimelineSong} timeline={editingTimeline} cues={showFile.cues} initialBar={timelineStartBar} songFilter={cueTimelineSong} audioRef={showTrackAudioRef} audioUrl={editingTimeline.audioName===showTrackName?showTrackUrl:''} audioName={editingTimeline.audioName??''} audioDurationMs={editingTimeline.audioName===showTrackName?showTrackDurationMs:0} onLoadAudio={loadShowAudioFile} onChange={updateEditingTimeline} onFrame={renderTimelineFrame} onStop={stopTimeline} onCreator={()=>setShowMode('creator')}/></Suspense></main> : <>          <main className="cue-preview-console"><header><span>{directStatus.clients > 0 ? 'LUMAVIZ LIVE PREVIEW' : 'STAGE / CUE PREVIEW'}</span><b>{activeCue?.name ?? 'Live output'}</b></header><div className={`show-viz-preview ${liveLumaVizPreview ? 'linked external-feed' : directStatus.clients > 0 ? 'linked' : ''}`}>{liveLumaVizPreview ? <img src={liveLumaVizPreview.dataUrl} alt={`LumaViz ${liveLumaVizPreview.view ?? 'live'} preview`} /> : renderStagePreview()}</div><div className="cue-preview-meta"><span>CURRENT<strong>{activeCue ? `${activeCue.number}. ${activeCue.name}` : 'Ready'}</strong></span><span>NEXT<strong>{nextCue ? `${nextCue.number}. ${nextCue.name}` : 'End of show'}</strong></span></div></main></>}
 
-          <aside className="cue-inspector-console"><header><span>CUE INSPECTOR</span><strong>{activeCue?.name ?? 'New cue'}</strong></header>{activeCue ? <><label><span>Cue Name</span><input value={activeCue.name} onChange={(event)=>updateCueProperties(activeCue.id,{name:event.target.value})}/></label><label><span>Cue Color</span><input type="color" value={activeCue.color ?? '#55e98d'} onChange={(event)=>updateCueProperties(activeCue.id,{color:event.target.value})}/></label><label><span>Description</span><textarea value={activeCue.description ?? ''} onChange={(event)=>updateCueProperties(activeCue.id,{description:event.target.value})}/></label><div className="inspector-pair"><label><span>Fade In ms</span><input type="number" min="0" value={activeCue.fadeMs} onChange={(event)=>updateCueProperties(activeCue.id,{fadeMs:Number(event.target.value)})}/></label><label><span>Fade Out ms</span><input type="number" min="0" value={activeCue.fadeOutMs ?? activeCue.fadeMs} onChange={(event)=>updateCueProperties(activeCue.id,{fadeOutMs:Number(event.target.value)})}/></label></div><div className="inspector-pair"><label><span>Delay ms</span><input type="number" min="0" value={activeCue.delayMs ?? 0} onChange={(event)=>updateCueProperties(activeCue.id,{delayMs:Number(event.target.value)})}/></label><label><span>Follow ms</span><input type="number" min="0" value={activeCue.followMs ?? 0} onChange={(event)=>updateCueProperties(activeCue.id,{followMs:Number(event.target.value)})}/></label></div><section className="cue-timing-overrides"><header><span>ATTRIBUTE TIMING</span><small>Override only what needs different timing</small></header>{(['intensity','color','position','beam'] as CueTimingFamily[]).map((family)=>{const rule=cueTimingRule(activeCue,family);return <div className="cue-timing-row" key={family}><strong>{family.toUpperCase()}</strong><label><span>Fade ms</span><input type="number" min="0" max="60000" value={rule.fadeMs} onChange={(event)=>updateCueTiming(activeCue.id,family,{fadeMs:Number(event.target.value)})}/></label><label><span>Delay ms</span><input type="number" min="0" max="60000" value={rule.delayMs} onChange={(event)=>updateCueTiming(activeCue.id,family,{delayMs:Number(event.target.value)})}/></label><label><span>Curve</span><select value={rule.curve} onChange={(event)=>updateCueTiming(activeCue.id,family,{curve:event.target.value as CueTimingRule['curve']})}><option value="ease">Ease</option><option value="linear">Linear</option><option value="snap">Snap</option></select></label></div>})}</section><label><span>Linked Effect</span><select value={activeCue.linkedEffectId ?? ''} onChange={(event)=>updateCueProperties(activeCue.id,{linkedEffectId:event.target.value})}><option value="">None</option>{EFFECT_PRESETS.map((effect)=><option key={effect.id} value={effect.id}>{effect.name}</option>)}</select></label><label><span>Track / Audio Note</span><input value={activeCue.trackName ?? ''} onChange={(event)=>updateCueProperties(activeCue.id,{trackName:event.target.value})}/></label><button className="console-primary" onClick={()=>updateCue(activeCue.id)}>Update Look From Output</button></> : <><label><span>New Cue Name</span><input value={cueName} placeholder={`Cue ${showFile.cues.length+1}`} onChange={(event)=>setCueName(event.target.value)}/></label><label><span>Fade In</span><select value={cueFadeMs} onChange={(event)=>setCueFadeMs(Number(event.target.value))}>{FADE_TIMES.map((time)=><option key={time} value={time}>{time===0?'Snap':`${time/1000}s`}</option>)}</select></label><button className="console-primary" onClick={captureCue}>Capture Current Look</button></>}<label><span>Show Notes</span><textarea value={showFile.notes ?? ''} placeholder="Set list, transitions, safety notes…" onChange={(event)=>setShowFile((current)=>({...current,notes:event.target.value}))}/></label></aside>
+          <aside className="cue-inspector-console"><header><span>CUE INSPECTOR</span><strong>{activeCue?.name ?? 'New cue'}</strong></header>{activeCue ? <><label><span>Cue Name</span><input value={activeCue.name} onChange={(event)=>updateCueProperties(activeCue.id,{name:event.target.value})}/></label><label><span>Cue Color</span><input type="color" value={activeCue.color ?? '#55e98d'} onChange={(event)=>updateCueProperties(activeCue.id,{color:event.target.value})}/></label><label><span>Description</span><textarea value={activeCue.description ?? ''} onChange={(event)=>updateCueProperties(activeCue.id,{description:event.target.value})}/></label><div className="inspector-pair"><label><span>Fade In ms</span><input type="number" min="0" value={activeCue.fadeMs} onChange={(event)=>updateCueProperties(activeCue.id,{fadeMs:Number(event.target.value)})}/></label><label><span>Fade Out ms</span><input type="number" min="0" value={activeCue.fadeOutMs ?? activeCue.fadeMs} onChange={(event)=>updateCueProperties(activeCue.id,{fadeOutMs:Number(event.target.value)})}/></label></div><div className="inspector-pair"><label><span>Delay ms</span><input type="number" min="0" value={activeCue.delayMs ?? 0} onChange={(event)=>updateCueProperties(activeCue.id,{delayMs:Number(event.target.value)})}/></label><label><span>Follow ms</span><input type="number" min="0" value={activeCue.followMs ?? 0} onChange={(event)=>updateCueProperties(activeCue.id,{followMs:Number(event.target.value)})}/></label></div><section className="cue-timing-overrides"><header><span>ATTRIBUTE TIMING</span><small>Override only what needs different timing</small></header>{(['intensity','color','position','beam'] as CueTimingFamily[]).map((family)=>{const rule=cueTimingRule(activeCue,family);return <div className="cue-timing-row" key={family}><strong>{family.toUpperCase()}</strong><label><span>Fade ms</span><input type="number" min="0" max="60000" value={rule.fadeMs} onChange={(event)=>updateCueTiming(activeCue.id,family,{fadeMs:Number(event.target.value)})}/></label><label><span>Delay ms</span><input type="number" min="0" max="60000" value={rule.delayMs} onChange={(event)=>updateCueTiming(activeCue.id,family,{delayMs:Number(event.target.value)})}/></label><label><span>Curve</span><select value={rule.curve} onChange={(event)=>updateCueTiming(activeCue.id,family,{curve:event.target.value as CueTimingRule['curve']})}><option value="ease">Ease</option><option value="linear">Linear</option><option value="snap">Snap</option></select></label></div>})}</section><label><span>Linked Effect</span><select value={activeCue.linkedEffectId ?? ''} onChange={(event)=>updateCueProperties(activeCue.id,{linkedEffectId:event.target.value})}><option value="">None</option>{EFFECT_PRESETS.map((effect)=><option key={effect.id} value={effect.id}>{effect.name}</option>)}</select></label><label><span>Song / cue group</span><input value={activeCue.trackName ?? ''} onChange={(event)=>updateCueProperties(activeCue.id,{trackName:event.target.value})}/></label><button className="console-primary" onClick={()=>updateCue(activeCue.id)}>Update Look From Output</button></> : <><label><span>New Cue Name</span><input value={cueName} placeholder={`Cue ${showFile.cues.length+1}`} onChange={(event)=>setCueName(event.target.value)}/></label><label><span>Fade In</span><select value={cueFadeMs} onChange={(event)=>setCueFadeMs(Number(event.target.value))}>{FADE_TIMES.map((time)=><option key={time} value={time}>{time===0?'Snap':`${time/1000}s`}</option>)}</select></label><button className="console-primary" onClick={captureCue}>Capture Current Look</button></>}<label><span>Show Notes</span><textarea value={showFile.notes ?? ''} placeholder="Set list, transitions, safety notes…" onChange={(event)=>setShowFile((current)=>({...current,notes:event.target.value}))}/></label></aside>
 
           <div className="cue-transport-console"><button onClick={goPreviousCue} disabled={!showFile.cues.length}>BACK</button><span><small>CURRENT</small><strong>{activeCue?.name ?? 'Ready'}</strong></span><button className="giant-go" onClick={goNextCue} disabled={!nextCue}>GO<small>{nextCue?.name ?? 'End'}</small></button><span><small>NEXT</small><strong>{nextCue?.name ?? 'End of show'}</strong></span><button onClick={goNextCue} disabled={!nextCue}>NEXT</button></div>
         </div>}
 
         {showMode === 'creator' && <Suspense fallback={<p>Loading Show Creator…</p>}><ShowCreator sections={showFile.creatorSections ?? []} setSections={(action) => setShowFile(current => ({...current,creatorSections:typeof action === 'function' ? action(current.creatorSections ?? []) : action}))} groups={showFile.groups ?? []} fixtures={patch} onBuild={buildCreatorSections} onPreview={previewCreatorSection} onStop={() => { stopFade(); stopEffect(); }} onTimeline={() => setShowMode('timeline')} onEditFx={(effect) => { setFxEditor(effect); setWorkspace('create'); setProgramMode('fx'); }}/></Suspense>}
-        {showMode === 'timeline' && <Suspense fallback={<p>Loading Timeline…</p>}><ShowTimelineEditor timeline={showFile.timeline ?? EMPTY_TIMELINE} cues={showFile.cues} audioRef={showTrackAudioRef} audioUrl={showTrackUrl} audioName={showTrackName} audioDurationMs={showTrackDurationMs} onLoadAudio={loadShowAudioFile} onChange={(timeline) => setShowFile(current=>({...current,timeline}))} onFrame={renderTimelineFrame} onStop={stopTimeline} onCreator={() => setShowMode('creator')}/></Suspense>}
+        {showMode === 'timeline' && <Suspense fallback={<p>Loading Timeline…</p>}><ShowTimelineEditor timeline={editingTimeline} cues={showFile.cues} audioRef={showTrackAudioRef} audioUrl={showTrackUrl} audioName={showTrackName} audioDurationMs={showTrackDurationMs} onLoadAudio={loadShowAudioFile} onChange={updateEditingTimeline} onFrame={renderTimelineFrame} onStop={stopTimeline} onCreator={() => setShowMode('creator')}/></Suspense>}
 
         {showMode === 'tracks' && <div className="tracks-console tracks-console-v3">
           <section className="console-panel track-source"><header><div><span>LOCAL AUDIO TRACK</span><h2>{showTrackName || 'No track loaded'}</h2></div><label className="file-button"><input type="file" accept="audio/*" onChange={loadShowTrack}/>{showTrackName?'Change Track':'Load Track'}</label></header><div className="track-timeline"><span>{formatShowTime(showTrackPositionMs)}</span><input type="range" min="0" max={Math.max(1,showTrackDurationMs)} value={Math.min(showTrackPositionMs,Math.max(1,showTrackDurationMs))} onChange={(event)=>{const next=Number(event.target.value);if(showTrackAudioRef.current)showTrackAudioRef.current.currentTime=next/1000;setShowTrackPositionMs(next);}}/><span>{formatShowTime(showTrackDurationMs)}</span></div><div className="track-actions"><button onClick={toggleShowTrackPreview}>Play / Pause</button><button onClick={()=>setShowMode('timeline')}>Open Timeline</button></div></section>
@@ -4116,6 +4153,9 @@ export default function App() {
         <footer className="live-system-strip"><span className={dmxStatus.connected?'healthy':''}>● DMX {dmxStatus.connected?'ONLINE':'VIRTUAL'}</span><span className={directStatus.clients>0?'healthy':''}>● VIZ {directStatus.clients>0?'LINKED':'WAITING'}</span><span className={studioBridgeStatus.connectedClients>0?'healthy':''}>● STUDIO {studioBridgeStatus.connectedClients>0?'LINKED':'WAITING'}</span><span className={midiStatus.connected?'healthy':''}>● MIDI {midiStatus.connected?'ONLINE':'OFF'}</span><span>{liveEffectLabel?`FX ${liveEffectLabel.toUpperCase()}`:'FX IDLE'}</span><b>{formatShowTime(externalSongPositionMs || showTrackPositionMs)}</b></footer>
       </section>}
 
+      {midiMapOpen&&<div className="midi-map-modal" role="dialog" aria-modal="true" aria-label="MIDI mapping"><button className="modal-scrim" aria-label="Close MIDI mapping" onClick={()=>setMidiMapOpen(false)}/><div className="midi-map-dialog"><button onClick={()=>setMidiMapOpen(false)}>Close MIDI Map</button><section className="console-panel midi-mapping-console"><header><div><span>MIDI ASSIGNER</span><h2>Map controls</h2></div><b>{midiMappings.length} mappings</b></header><div className="midi-add-row"><select value={newMidiTarget} onChange={(event) => setNewMidiTarget(event.target.value)}>{midiControlGroups.map(([group, controls]) => <optgroup key={group} label={group}>{controls.map((control) => <option key={control.id} value={control.id}>{control.label}</option>)}</optgroup>)}</select><button className="console-primary" onClick={() => beginMidiAssignment()}>Add + Learn</button></div><div className="midi-map-list">{midiMappings.map((mapping) => { const control = midiControls.find((item) => item.id === mapping.target); const learning = midiLearnMappingId === mapping.id; return <div className={`midi-map-row ${learning ? 'is-learning' : ''}`} key={mapping.id}><strong>{control?.label ?? 'Unavailable'}</strong><span>{learning ? 'Move or press a control…' : midiBindingLabel(mapping)}</span><button onClick={() => setMidiLearnMappingId(learning ? null : mapping.id)}>{learning ? 'Cancel' : 'Learn'}</button><button onClick={() => removeMidiAssignment(mapping.id)}>Remove</button></div>; })}</div></section></div></div>}
+      {stageMonitorOpen&&<StageMonitor floating snapshot={stageSnapshot} onClose={()=>setStageMonitorOpen(false)}/>}
+      <div className="workspace-utility-bar"><button onClick={()=>setStageMonitorOpen(v=>!v)}>Stage Monitor</button><button onClick={()=>setMidiMapOpen(true)}>MIDI Map</button></div>
       <footer className="console-footer console-status-strip">
         <div className="status-connections">
           <button className={dmxStatus.connected ? 'healthy' : ''} onClick={() => { setWorkspace('build'); setSetupView('settings'); }}><i />DMX <b>{dmxStatus.connected ? 'ONLINE' : 'VIRTUAL'}</b></button>

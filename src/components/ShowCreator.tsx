@@ -49,6 +49,8 @@ export default function ShowCreator({
   const [selectedId, setSelectedId] = useState(sections[0]?.id ?? "");
   const [dragId, setDragId] = useState("");
   const [query, setQuery] = useState("");
+  const [songFilter,setSongFilter]=useState("");
+  const [sectionSearch,setSectionSearch]=useState("");
   const [category, setCategory] = useState("All");
   const [presets, setPresets] = useState<ShowSection[]>(loadPresets);
   const selected = sections.find((s) => s.id === selectedId) ?? sections[0];
@@ -204,9 +206,10 @@ export default function ShowCreator({
               Drag to reorder. Each section becomes a reusable cue and a
               timeline clip.
             </p>
+            <div className="creator-song-filter"><select aria-label="Filter sections by song" value={songFilter} onChange={e=>setSongFilter(e.target.value)}><option value="">All songs</option>{[...new Set(sections.map(s=>s.song))].map(name=><option key={name}>{name}</option>)}</select><input aria-label="Find section" placeholder="Find a section…" value={sectionSearch} onChange={e=>setSectionSearch(e.target.value)}/></div>
             <div className="section-list">
               {sections.length ? (
-                sections.map((s, index) => (
+                sections.map((s, index) => (!songFilter||s.song===songFilter) && (s.name+" "+s.song).toLowerCase().includes(sectionSearch.toLowerCase()) && (
                   <article
                     key={s.id}
                     draggable
@@ -215,7 +218,10 @@ export default function ShowCreator({
                     onDragOver={(e) => e.preventDefault()}
                     onDrop={(e) => {
                       e.preventDefault();
-                      move(dragId, s.id);
+                      const recipeId=e.dataTransfer.getData("application/lumarig-fx");
+                      if(FX_RECIPES.some(r=>r.id===recipeId)) {
+                        setSections(all=>all.map(item=>item.id!==s.id||item.layers.length>=8?item:{...item,layers:[...item.layers,{id:crypto.randomUUID(),recipeId,groupId:item.groupId,energy:70,enabled:true}]}));
+                      } else move(dragId, s.id);
                       setDragId("");
                     }}
                     className={selected?.id === s.id ? "active" : ""}
@@ -293,7 +299,7 @@ export default function ShowCreator({
             </div>
           </section>
           {selected && (
-            <section className="creator-card section-editor">
+            <section className="creator-card section-editor" onDragOver={e=>{if(e.dataTransfer.types.includes("application/lumarig-fx"))e.preventDefault();}} onDrop={e=>{const id=e.dataTransfer.getData("application/lumarig-fx");if(FX_RECIPES.some(r=>r.id===id)){e.preventDefault();addLayer(id);}}}>
               <header>
                 <span>SECTION DESIGN</span>
                 <strong>{selected.name}</strong>
@@ -560,7 +566,7 @@ export default function ShowCreator({
                     .toLowerCase()
                     .includes(query.toLowerCase()),
               ).map((r) => (
-                <article key={r.id}>
+                <article key={r.id} draggable onDragStart={e=>{e.dataTransfer.setData("application/lumarig-fx",r.id);e.dataTransfer.effectAllowed="copy";}}>
                   <div>
                     <small>{r.category.toUpperCase()}</small>
                     <strong>{r.name}</strong>

@@ -13,6 +13,8 @@ import {
   type TimelineClip,
 } from "../lib/show-design";
 type Props = {
+  initialBar?: number;
+  songFilter?: string;
   timeline: ShowTimeline;
   cues: ShowCue[];
   audioRef: RefObject<HTMLAudioElement | null>;
@@ -51,7 +53,7 @@ export default function ShowTimelineEditor(props: Props) {
   } = props;
   const audioStarting = useRef(false);
   const [selectedId, setSelectedId] = useState("");
-  const [cursor, setCursor] = useState(0);
+  const [cursor, setCursor] = useState(props.initialBar ?? 0);
   const [playing, setPlaying] = useState(false);
   const [zoom, setZoom] = useState(36);
   const [snap, setSnap] = useState(1);
@@ -63,7 +65,7 @@ export default function ShowTimelineEditor(props: Props) {
   const [historyVersion, setHistoryVersion] = useState(0);
   const latest = useRef(props);
   latest.current = props;
-  const cursorRef = useRef(0),
+  const cursorRef = useRef(props.initialBar ?? 0),
     playingRef = useRef(false),
     raf = useRef<number | null>(null),
     drag = useRef<Drag | null>(null);
@@ -449,7 +451,7 @@ export default function ShowTimelineEditor(props: Props) {
           </header>
           <p>Drag to a lane or click to append.</p>
           {cues.length ? (
-            cues.map((c) => (
+            cues.filter(c=>!props.songFilter||(c.trackName?.trim()||"Unfiled cues")===props.songFilter).map((c) => (
               <button
                 key={c.id}
                 draggable

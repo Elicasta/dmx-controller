@@ -8,7 +8,20 @@ use dmx::{DmxEngine, DmxStatus};
 use midi::{MidiEngine, MidiEvent, MidiInputInfo, MidiStatus};
 use output::{artnet::ArtNetEngine, lumaviz_direct::LumaVizDirectEngine, udmx::UdmxDeviceInfo};
 use studio_bridge::{StudioBridge, StudioBridgeEnvelope, StudioBridgeResponse, StudioBridgeStatus};
-use tauri::State;
+use tauri::{State, Manager};
+
+#[tauri::command]
+fn open_stage_monitor(app: tauri::AppHandle) -> Result<(), String> {
+    if let Some(window) = app.get_webview_window("stage-monitor") {
+        return window.set_focus().map_err(|e| e.to_string());
+    }
+    tauri::WebviewWindowBuilder::new(&app, "stage-monitor", tauri::WebviewUrl::App("index.html?stage-monitor=1".into()))
+        .title("LumaRig · Stage Monitor")
+        .inner_size(960.0, 620.0)
+        .min_inner_size(400.0, 280.0)
+        .build().map(|_| ()).map_err(|e| e.to_string())
+}
+
 
 #[tauri::command]
 fn list_udmx_devices(engine: State<'_, DmxEngine>) -> Result<Vec<UdmxDeviceInfo>, String> {
@@ -103,6 +116,7 @@ pub fn run() {
         .manage(MidiEngine::new())
         .manage(updates::UpdateState::default())
         .invoke_handler(tauri::generate_handler![
+            open_stage_monitor,
             list_udmx_devices,
             connect_dmx,
             disconnect_dmx,

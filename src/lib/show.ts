@@ -102,6 +102,7 @@ export type ExternalTrackSync = {
 export type ShowFile = {
   creatorSections?: ShowSection[];
   timeline?: ShowTimeline;
+  timelineShows?: Array<{id:string;name:string;timeline:ShowTimeline}>;
   version: 1 | 2 | 3 | 4;
   name: string;
   notes?: string;
@@ -186,6 +187,7 @@ export function isShowFile(value: unknown): value is ShowFile {
   if (![1, 2, 3, 4].includes(candidate.version ?? 0) || typeof candidate.name !== 'string' || !Array.isArray(candidate.cues)) {
     return false;
   }
+  if (candidate.timelineShows !== undefined && (!Array.isArray(candidate.timelineShows) || candidate.timelineShows.length > 100 || !candidate.timelineShows.every(item=>item && typeof item.id==='string' && typeof item.name==='string' && isShowTimeline(item.timeline)))) return false;
   const cuesValid = candidate.cues.every((cue) => {
     if (!cue || typeof cue !== 'object') return false;
     const item = cue as Partial<ShowCue>;
@@ -390,6 +392,7 @@ export function sanitizeShow(show: ShowFile): ShowFile {
     version: 4,
     creatorSections: structuredClone(show.creatorSections ?? []),
     timeline: show.timeline ? structuredClone(show.timeline) : undefined,
+    timelineShows: structuredClone(show.timelineShows ?? []),
     name: show.name.trim().slice(0, 64) || EMPTY_SHOW.name,
     notes: typeof show.notes === 'string' ? show.notes.slice(0, 4000) : '',
     groups: (show.groups ?? []).slice(0, 64).map((group) => ({
@@ -484,4 +487,12 @@ export function sanitizeShow(show: ShowFile): ShowFile {
       }))
     }))
   };
+}
+
+export function moveSongCues(cues: readonly ShowCue[], name: string, direction: -1|1): ShowCue[] {
+ const names=[...new Set(cues.map(c=>c.trackName?.trim()||'Unfiled cues'))];
+ const i=names.indexOf(name),j=i+direction;
+ if(i<0||j<0||j>=names.length)return [...cues];
+ [names[i],names[j]]=[names[j],names[i]];
+ return preserveResolvedCueStates(cues,names.flatMap(n=>cues.filter(c=>(c.trackName?.trim()||'Unfiled cues')===n)));
 }
