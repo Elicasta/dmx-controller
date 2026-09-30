@@ -2229,10 +2229,12 @@ body,#root { min-width:0; width:100%; overflow:hidden; }
 }
 .draggable-panel-grid{
   display:grid;
-  grid-template-columns:repeat(auto-fit,minmax(min(220px,100%),1fr));
+  grid-template-columns:repeat(auto-fit,minmax(min(170px,100%),1fr));
   grid-auto-flow:row dense;
   gap:1px;
   min-width:0;
+  max-height:min(48vh,520px);
+  overflow:auto;
   background:#283039;
 }
 .draggable-programmer-panel{
@@ -2385,7 +2387,7 @@ body,#root { min-width:0; width:100%; overflow:hidden; }
   max-height:72px!important;
 }
 @media(max-width:900px){
-  .draggable-panel-grid{grid-template-columns:repeat(auto-fit,minmax(min(180px,100%),1fr))}
+  .draggable-panel-grid{grid-template-columns:repeat(auto-fit,minmax(min(150px,100%),1fr))}
   .draggable-panel-deck-toolbar>small{display:none}
   .draggable-panel-deck-toolbar{grid-template-columns:auto 1fr}
   .draggable-panel-deck-toolbar>button{justify-self:end}
