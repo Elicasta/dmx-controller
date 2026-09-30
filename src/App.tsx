@@ -1,6 +1,7 @@
 import ResizableWorkspace from './components/ResizableWorkspace';
 import DraggablePanelDeck from './components/DraggablePanelDeck';
 import StageMonitor, { useStagePublisher } from './components/StageMonitor';
+import { StageMediaSurface, requestStageVideoInputs, type StageVideoInputOption } from './components/StageMediaSurface';
 import SongCueLibrary from './components/SongCueLibrary';
 import { moveRundownItemCues } from './lib/show';
 import { activeTimelineCueId, createSection, EMPTY_TIMELINE, FX_RECIPES, SHOW_COLORS, buildSectionCues, renderEffectStack, renderShowTimeline, isEffectRecipe, type EffectStackLayer, type ShowSection } from './lib/show-design';
@@ -100,6 +101,7 @@ import {
   type StageElement,
   type StageElementType
 } from './lib/stage';
+import { STAGE_PRESETS, instantiateStagePreset, type StagePresetId } from './lib/stage-presets';
 import {
   DEFAULT_MIDI_MAPPINGS,
   midiBindingLabel,
@@ -258,6 +260,7 @@ const SETTINGS_STORAGE_KEY = 'dmx-controller.settings.v1';
 const STAGE_STORAGE_KEY = 'dmx-controller.stage-elements.v1';
 const STAGE_BACKUP_STORAGE_KEY = 'dmx-controller.stage-elements.backup.v1';
 const STAGE_SETTINGS_STORAGE_KEY = 'dmx-controller.stage-settings.v2';
+const STAGE_PRESET_STORAGE_KEY = 'dmx-controller.stage-preset.v1';
 const REMOTE_RELAY_STORAGE_KEY = 'dmx-controller.remote-relay.v1';
 const FADE_TIMES = [0, 500, 1000, 2000, 5000] as const;
 
@@ -817,6 +820,13 @@ export default function App() {
   const [stageElements, setStageElements] = useState<StageElement[]>(loadStageElements);
   const [selectedStageElementId, setSelectedStageElementId] = useState<string | null>(null);
   const [stageSettings, setStageSettings] = useState<StageSettings>(loadStageSettings);
+  const [activeStagePresetId, setActiveStagePresetId] = useState<StagePresetId | null>(() => {
+    if (typeof window === 'undefined') return null;
+    const stored = window.localStorage.getItem(STAGE_PRESET_STORAGE_KEY);
+    return STAGE_PRESETS.some((preset) => preset.id === stored) ? stored as StagePresetId : null;
+  });
+  const [stageVideoInputs, setStageVideoInputs] = useState<StageVideoInputOption[]>([]);
+  const [stageVideoInputError, setStageVideoInputError] = useState('');
   const [stageMonitorOpen,setStageMonitorOpen]=useState(false);
   const [midiMapOpen,setMidiMapOpen]=useState(false);
   const [timelineShowId,setTimelineShowId]=useState('');
@@ -1020,6 +1030,10 @@ export default function App() {
   }, []);
   useEffect(() => window.localStorage.setItem(STAGE_STORAGE_KEY, JSON.stringify(makeStageDocument(stageElements, stageSettings.dimensions))), [stageElements, stageSettings.dimensions]);
   useEffect(() => window.localStorage.setItem(STAGE_SETTINGS_STORAGE_KEY, JSON.stringify(stageSettings)), [stageSettings]);
+  useEffect(() => {
+    if (activeStagePresetId) window.localStorage.setItem(STAGE_PRESET_STORAGE_KEY, activeStagePresetId);
+    else window.localStorage.removeItem(STAGE_PRESET_STORAGE_KEY);
+  }, [activeStagePresetId]);
 
   const refreshDmxStatus = useCallback(async () => {
     try { setDmxStatus(await invoke<DmxStatus>('dmx_status')); } catch { /* browser preview */ }
@@ -2964,6 +2978,30 @@ export default function App() {
     setPatch((current) => assignFixturesToGroup(current, [fixtureId], ''));
   }
 
+  function loadStagePreset(presetId: StagePresetId) {
+    const preset = instantiateStagePreset(presetId);
+    if (stageElements.length > 0 && !window.confirm(`Load ${preset.name}? This replaces the current stage scene instead of stacking the presets together.`)) return;
+    setStageElements(preset.elements);
+    setStageSettings({ schemaVersion: 2, unit: 'feet', dimensions: preset.dimensions });
+    setSelectedStageElementId(preset.elements.find((element) => element.type === 'led-screen')?.id ?? preset.elements[0]?.id ?? null);
+    setActiveStagePresetId(presetId);
+    setStageMode('select');
+    setMessage(`${preset.name} loaded as a separate stage scene.`);
+  }
+
+  async function scanStageVideoInputs() {
+    setStageVideoInputError('');
+    try {
+      const inputs = await requestStageVideoInputs();
+      setStageVideoInputs(inputs);
+      setMessage(inputs.length ? `${inputs.length} video input${inputs.length === 1 ? '' : 's'} available for visualizer screens.` : 'No video inputs were found.');
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      setStageVideoInputError(message);
+      setMessage(`Video input scan failed: ${message}`);
+    }
+  }
+
   function addStageElement(type: StageElementType) {
     const element = makeStageElement(type, stageElements.filter((item) => item.type === type).length, stageSettings.dimensions);
     setStageElements((current) => [...current, element]);
@@ -3481,7 +3519,7 @@ export default function App() {
               return;
             }
             setSelectedStageElementId(element.id);
-          }}><span className="stage-object-shape" style={{ borderColor: element.color, backgroundColor: element.type === 'led-screen' ? element.color : undefined }} /><b>{element.label}</b></button>;
+          }}><span className="stage-object-shape" style={{ borderColor: element.color, backgroundColor: element.type === 'led-screen' ? element.color : undefined }}>{element.type === 'led-screen' && <StageMediaSurface source={element.mediaSource}/>}</span><b>{element.label}</b></button>;
         })}
         {patch.map((fixture, index) => {
           const geometry = fixtureGeometryState(outputUniverse, fixture, index, patch.length, stageSettings.dimensions);
@@ -3791,6 +3829,7 @@ export default function App() {
             <div className="stage-bottom-tools">
               <section><header><strong>TARGETS &amp; AIM</strong><span>{selectedMovingFixtures.length} mover{selectedMovingFixtures.length === 1 ? '' : 's'} selected</span></header><div className="inline-control-grid"><select value={selectedTargetId} onChange={(event) => setSelectedTargetId(event.target.value)}>{stageTargets.map((target) => <option key={target.id} value={target.id}>{target.name}</option>)}</select><select value={aimArrangement} onChange={(event) => setAimArrangement(event.target.value as TargetArrangement)}><option value="converge">Converge</option><option value="fan-horizontal">Horizontal fan</option><option value="fan-vertical">Vertical fan</option><option value="mirror">Mirror</option><option value="cross">Cross</option></select><select value={aimOrderMode} onChange={(event) => setAimOrderMode(event.target.value as FixtureOrderMode)}><option value="forward">Forward</option><option value="reverse">Reverse</option><option value="center-out">Center Out</option><option value="outside-in">Outside In</option><option value="mirror-pairs">Mirror Pairs</option><option value="odd-even">Odd → Even</option><option value="even-odd">Even → Odd</option></select><label className="inline-range"><span>Spread {aimSpreadMeters.toFixed(1)}m</span><input type="range" min=".1" max="20" step=".1" value={aimSpreadMeters} onChange={(event) => setAimSpreadMeters(Number(event.target.value))}/></label><button className="console-primary" disabled={!selectedTarget || !selectedMovingFixtures.length} onClick={() => selectedTarget && void aimAtTarget(selectedTarget)}>Aim selected</button></div></section>
               <section><header><strong>POSITION PALETTES</strong><span>{showFile.positionPalettes?.length ?? 0} saved</span></header><div className="palette-chip-row">{showFile.positionPalettes?.map((palette) => <button key={palette.id} onClick={() => void runPositionPalette(palette)}><span>{palette.kind}</span>{palette.name}</button>)}<button className="add-palette-chip" onClick={savePositionPalette}>＋ Save current</button></div></section>
+              <section className="stage-preset-section"><header><strong>STAGE PRESETS</strong><span>{activeStagePresetId ? 'ACTIVE' : 'CUSTOM'}</span></header><div className="stage-preset-grid">{STAGE_PRESETS.map((preset) => <button key={preset.id} className={activeStagePresetId === preset.id ? 'active' : ''} onClick={() => loadStagePreset(preset.id)}><strong>{preset.name}</strong><small>{preset.description}</small></button>)}</div><small className="stage-preset-note">Loading a preset replaces the current stage scene. Church and Apostolic Day never stack into one layout.</small></section>
               <section><header><strong>STAGE ELEMENTS</strong><span>{stageElements.length}</span></header><div className="palette-chip-row">{STAGE_ELEMENT_LIBRARY.map((element) => <button key={element.type} onClick={() => addStageElement(element.type)}>＋ {element.name}</button>)}</div></section>
             </div>
           </>}
@@ -3850,6 +3889,20 @@ export default function App() {
             <div className="transform-grid">{(['x', 'y', 'z'] as const).map((axis) => <label key={axis}><span>{axis.toUpperCase()}</span><input type="number" step="0.1" value={Number(selectedStagePosition[axis].toFixed(2))} onChange={(event) => updateStageElementPosition(selectedStageElement.id, axis, Number(event.target.value))} /></label>)}</div>
             <label><span>Size</span><input type="range" min="10" max="100" value={selectedStageElement.size} onChange={(event) => updateStageElement(selectedStageElement.id, { size: Number(event.target.value) })} /></label>
             <label><span>Color</span><input className="inspector-color" type="color" value={selectedStageElement.color} onChange={(event) => updateStageElement(selectedStageElement.id, { color: event.target.value })} /></label>
+            {selectedStageElement.type === 'led-screen' && <section className="screen-source-inspector">
+              <header><span>SCREEN SOURCE</span><strong>ProPresenter / NDI</strong></header>
+              <label><span>Source</span><select value={selectedStageElement.mediaSource?.kind ?? 'none'} onChange={(event) => updateStageElement(selectedStageElement.id, { mediaSource: event.target.value === 'ndi' ? { kind: 'ndi', sourceName: 'ProPresenter', fit: 'contain' } : { kind: 'none' } })}><option value="none">Static color</option><option value="ndi">NDI / video input</option></select></label>
+              {selectedStageElement.mediaSource?.kind === 'ndi' && <>
+                <label><span>Input</span><select value={selectedStageElement.mediaSource.deviceId ?? ''} onChange={(event) => {
+                  const input = stageVideoInputs.find((item) => item.deviceId === event.target.value);
+                  updateStageElement(selectedStageElement.id, { mediaSource: { ...selectedStageElement.mediaSource!, kind: 'ndi', deviceId: event.target.value || undefined, sourceName: input?.label || 'ProPresenter' } });
+                }}><option value="">Select NDI / video input</option>{stageVideoInputs.map((input) => <option key={input.deviceId} value={input.deviceId}>{input.label}</option>)}</select></label>
+                <label><span>Fit</span><select value={selectedStageElement.mediaSource.fit ?? 'contain'} onChange={(event) => updateStageElement(selectedStageElement.id, { mediaSource: { ...selectedStageElement.mediaSource!, kind: 'ndi', fit: event.target.value as 'contain' | 'cover' } })}><option value="contain">Contain</option><option value="cover">Fill / crop</option></select></label>
+                <button onClick={() => void scanStageVideoInputs()}>Scan NDI / Video Inputs</button>
+                {stageVideoInputError && <small className="stage-source-error">{stageVideoInputError}</small>}
+                <small>Use ProPresenter NDI output through an NDI virtual video input. The selected feed is rendered on this screen in the stage view and pop-out monitor.</small>
+              </>}
+            </section>}
             <button className="danger-button stage-delete-button" onClick={() => removeStageElement(selectedStageElement.id)}>Delete Stage Object</button>
           </> : inspectedFixture ? <>
             <header><span>FIXTURE INSPECTOR</span><strong>{inspectedFixture.name}</strong><small>{findProfile(inspectedFixture.profileId)?.manufacturer} {findProfile(inspectedFixture.profileId)?.model}</small></header>
