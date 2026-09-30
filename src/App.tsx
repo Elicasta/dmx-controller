@@ -1,4 +1,4 @@
-import { EMPTY_TIMELINE, FX_RECIPES, SHOW_COLORS, buildSectionCues, renderEffectStack, renderShowTimeline, isEffectRecipe, type EffectStackLayer, type ShowSection } from './lib/show-design';
+import { EMPTY_TIMELINE, FX_RECIPES, SHOW_COLORS, barMs, buildSectionCues, renderEffectStack, renderShowTimeline, isEffectRecipe, type EffectStackLayer, type ShowSection } from './lib/show-design';
 import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState, type ChangeEvent, type PointerEvent as ReactPointerEvent } from 'react';
 import { lumaVizDirectStatus, pollLumaVizDirectMessages, semanticFrameFromResolvedOutput, sendLumaVizDirectFrame, sendLumaVizDirectMessage, startLumaVizDirect, type LumaVizDirectStatus, type SharedShowPatchMutation } from './core/lumaviz-direct';
 import type { SharedLocationPreset } from './core/shared-locations';
@@ -82,7 +82,11 @@ import {
   fixtureBrowserSubtitle
 } from './components/ConsoleComponents';
 import { DesktopLiveController } from './components/DesktopLiveController';
+import { MidiMappingPanel } from './components/MidiMappingPanel';
+import { CueRunNavigator } from './components/CueRunNavigator';
 import './desktop-live-controller.css';
+import './workspace-polish.css';
+import './pro-desktop-pass.css';
 import {
   STAGE_ELEMENT_LIBRARY,
   clampStageElement,
@@ -822,6 +826,8 @@ export default function App() {
   const [calibrationOpen, setCalibrationOpen] = useState(false);
   const [positionPaletteName, setPositionPaletteName] = useState('');
   const [positionPaletteKind, setPositionPaletteKind] = useState<'spatial' | 'absolute'>('spatial');
+  const [moverControlsOpen, setMoverControlsOpen] = useState(false);
+  const [stageMonitorOpen, setStageMonitorOpen] = useState(false);
   const [groupMasters, setGroupMasters] = useState<Record<string, number>>({});
   const [groupGridFixtureId, setGroupGridFixtureId] = useState<string | null>(null);
 
@@ -831,6 +837,7 @@ export default function App() {
   const [midiMappings, setMidiMappings] = useState<MidiMapping[]>(loadMidiMappings);
   const midiMappingsRef = useRef(midiMappings);
   const [midiLearnMappingId, setMidiLearnMappingId] = useState<string | null>(null);
+  const [midiManagerOpen, setMidiManagerOpen] = useState(false);
   const midiLearnMappingIdRef = useRef<string | null>(null);
   const midiButtonGateRef = useRef<Record<string, boolean>>({});
   const [newMidiTarget, setNewMidiTarget] = useState('go');
@@ -3271,6 +3278,11 @@ export default function App() {
   function renderTimelineFrame(elapsedMs:number) {
     if(!timelineBaseRef.current){stopRecordedShowPlayback(false);if(cueFollowTimerRef.current!==null)window.clearTimeout(cueFollowTimerRef.current);stopFade();stopEffect(false);setAudioArmed(false);timelineBaseRef.current=[...universeRef.current];}
     const timeline=showFile.timeline ?? EMPTY_TIMELINE;
+    const positionBars = elapsedMs / barMs(timeline);
+    const activeClip = timeline.clips
+      .filter((clip)=>clip.enabled && positionBars >= clip.startBar && positionBars < clip.startBar + clip.lengthBars)
+      .sort((a,b)=>b.lane-a.lane || b.startBar-a.startBar)[0];
+    if(activeClip) setActiveCueId((current)=>current===activeClip.cueId?current:activeClip.cueId);
     void dispatchControl({type:'playback.layer.set',universe:1,layerId:'timeline',priority:35,mode:'ltp',updates:renderShowTimeline(timeline,showFile.cues,patchRef.current,elapsedMs,timelineBaseRef.current)},'cue');
   }
   function stopTimeline() {timelineBaseRef.current=null;void dispatchControl({type:'playback.layer.clear',universe:1,layerId:'timeline'},'cue');}
@@ -3799,6 +3811,9 @@ export default function App() {
 
               <ColorDeck title="COLOR" subtitle={selectedFixtureTargets.length ? `${selectedFixtureTargets.length} selected` : 'Select fixtures'} color={globalColor} disabled={selectedCompatibleColors.length === 0} presets={consoleColorPresets} onChange={applyGlobalColor} />
 
+              <div className={`mover-attribute-group ${moverControlsOpen && selectedMovingFixtures.length ? 'open' : ''}`}>
+                <button className="mover-attribute-toggle" disabled={!selectedMovingFixtures.length} onClick={() => setMoverControlsOpen((current) => !current)} aria-expanded={moverControlsOpen && selectedMovingFixtures.length > 0}>{moverControlsOpen && selectedMovingFixtures.length ? '▾' : '▸'} MOVING LIGHT CONTROLS <small>{selectedMovingFixtures.length} MOVERS · {selectedMovingFixtures.length ? (moverControlsOpen ? 'COLLAPSE' : 'EXPAND') : 'HIDDEN'}</small></button>
+                <div className="mover-attribute-content">
               <section className="attribute-module position-module">
                 <header><span>POSITION</span><strong>{selectedMovingFixtures.length} MOVERS</strong></header>
                 <div className="position-actions">{showFile.positionPalettes?.slice(0,4).map((palette) => <button key={palette.id} onClick={() => void runPositionPalette(palette)}>{palette.name}</button>)}<button onClick={savePositionPalette}>＋ SAVE</button></div>
@@ -3822,6 +3837,9 @@ export default function App() {
                   <button className="wide" disabled={!selectedFixtureTargets.some((fixture) => parameterChannel(fixture,'goboRotate'))} onClick={() => selectedFixtureTargets.forEach((fixture) => parameterChannel(fixture,'goboRotate') && void setFixtureAttribute(fixture,'goboRotate',190))}>ROTATE</button>
                 </div>
               </section>
+
+                </div>
+              </div>
 
               <section className="attribute-module fx-module">
                 <header><span>FX</span><strong>{liveEffectLabel || 'READY'}</strong></header>
@@ -3960,11 +3978,21 @@ export default function App() {
         ] as Array<[ShowMode,string]>).map(([id,label]) => <button key={id} className={showMode === id ? 'active' : ''} onClick={() => setShowMode(id)}>{label}</button>)}</nav>
 
         {showMode === 'cues' && <div className="show-cue-layout">
-          <aside className="cue-list-console"><header><span>CUE LIST</span><button onClick={captureCue}>＋ Capture</button></header>{showFile.cues.length ? showFile.cues.map((cue,index) => <article className={activeCueId === cue.id ? 'active' : ''} key={cue.id}><button className="cue-line" onClick={() => runCue(cue)}><b>{String(cue.number).padStart(2,'0')}</b><i style={{background:lookSwatch(cue.values)}}/><span><strong>{cue.name}</strong><small>{cue.fadeMs ? `${cue.fadeMs/1000}s fade` : 'Snap'}{cue.followMs ? ` · follow ${cue.followMs/1000}s` : ''}</small></span></button><div><button disabled={index===0} onClick={() => setShowFile((current)=>({...current,cues:moveCue(current.cues,cue.id,-1)}))}>↑</button><button disabled={index===showFile.cues.length-1} onClick={() => setShowFile((current)=>({...current,cues:moveCue(current.cues,cue.id,1)}))}>↓</button><button onClick={() => deleteCue(cue.id)}>×</button></div></article>) : <div className="empty-cues"><strong>No cues yet</strong><span>Build a look in CREATE, then capture it here.</span><button onClick={() => setWorkspace('create')}>Open CREATE</button></div>}</aside>
+          <CueRunNavigator
+            cues={showFile.cues}
+            timeline={showFile.timeline}
+            activeCueId={activeCueId}
+            onRunCue={runCue}
+            onMoveCue={(cueId,direction)=>setShowFile((current)=>({...current,cues:moveCue(current.cues,cueId,direction)}))}
+            onDeleteCue={deleteCue}
+            onCapture={captureCue}
+            onOpenCreate={()=>setWorkspace('create')}
+            onOpenTimeline={()=>setShowMode('timeline')}
+          />
 
           <main className="cue-preview-console"><header><span>{directStatus.clients > 0 ? 'LUMAVIZ LIVE PREVIEW' : 'STAGE / CUE PREVIEW'}</span><b>{activeCue?.name ?? 'Live output'}</b></header><div className={`show-viz-preview ${liveLumaVizPreview ? 'linked external-feed' : directStatus.clients > 0 ? 'linked' : ''}`}>{liveLumaVizPreview ? <img src={liveLumaVizPreview.dataUrl} alt={`LumaViz ${liveLumaVizPreview.view ?? 'live'} preview`} /> : renderStagePreview()}</div><div className="cue-preview-meta"><span>CURRENT<strong>{activeCue ? `${activeCue.number}. ${activeCue.name}` : 'Ready'}</strong></span><span>NEXT<strong>{nextCue ? `${nextCue.number}. ${nextCue.name}` : 'End of show'}</strong></span></div></main>
 
-          <aside className="cue-inspector-console"><header><span>CUE INSPECTOR</span><strong>{activeCue?.name ?? 'New cue'}</strong></header>{activeCue ? <><label><span>Cue Name</span><input value={activeCue.name} onChange={(event)=>updateCueProperties(activeCue.id,{name:event.target.value})}/></label><label><span>Cue Color</span><input type="color" value={activeCue.color ?? '#55e98d'} onChange={(event)=>updateCueProperties(activeCue.id,{color:event.target.value})}/></label><label><span>Description</span><textarea value={activeCue.description ?? ''} onChange={(event)=>updateCueProperties(activeCue.id,{description:event.target.value})}/></label><div className="inspector-pair"><label><span>Fade In ms</span><input type="number" min="0" value={activeCue.fadeMs} onChange={(event)=>updateCueProperties(activeCue.id,{fadeMs:Number(event.target.value)})}/></label><label><span>Fade Out ms</span><input type="number" min="0" value={activeCue.fadeOutMs ?? activeCue.fadeMs} onChange={(event)=>updateCueProperties(activeCue.id,{fadeOutMs:Number(event.target.value)})}/></label></div><div className="inspector-pair"><label><span>Delay ms</span><input type="number" min="0" value={activeCue.delayMs ?? 0} onChange={(event)=>updateCueProperties(activeCue.id,{delayMs:Number(event.target.value)})}/></label><label><span>Follow ms</span><input type="number" min="0" value={activeCue.followMs ?? 0} onChange={(event)=>updateCueProperties(activeCue.id,{followMs:Number(event.target.value)})}/></label></div><section className="cue-timing-overrides"><header><span>ATTRIBUTE TIMING</span><small>Override only what needs different timing</small></header>{(['intensity','color','position','beam'] as CueTimingFamily[]).map((family)=>{const rule=cueTimingRule(activeCue,family);return <div className="cue-timing-row" key={family}><strong>{family.toUpperCase()}</strong><label><span>Fade ms</span><input type="number" min="0" max="60000" value={rule.fadeMs} onChange={(event)=>updateCueTiming(activeCue.id,family,{fadeMs:Number(event.target.value)})}/></label><label><span>Delay ms</span><input type="number" min="0" max="60000" value={rule.delayMs} onChange={(event)=>updateCueTiming(activeCue.id,family,{delayMs:Number(event.target.value)})}/></label><label><span>Curve</span><select value={rule.curve} onChange={(event)=>updateCueTiming(activeCue.id,family,{curve:event.target.value as CueTimingRule['curve']})}><option value="ease">Ease</option><option value="linear">Linear</option><option value="snap">Snap</option></select></label></div>})}</section><label><span>Linked Effect</span><select value={activeCue.linkedEffectId ?? ''} onChange={(event)=>updateCueProperties(activeCue.id,{linkedEffectId:event.target.value})}><option value="">None</option>{EFFECT_PRESETS.map((effect)=><option key={effect.id} value={effect.id}>{effect.name}</option>)}</select></label><label><span>Track / Audio Note</span><input value={activeCue.trackName ?? ''} onChange={(event)=>updateCueProperties(activeCue.id,{trackName:event.target.value})}/></label><button className="console-primary" onClick={()=>updateCue(activeCue.id)}>Update Look From Output</button></> : <><label><span>New Cue Name</span><input value={cueName} placeholder={`Cue ${showFile.cues.length+1}`} onChange={(event)=>setCueName(event.target.value)}/></label><label><span>Fade In</span><select value={cueFadeMs} onChange={(event)=>setCueFadeMs(Number(event.target.value))}>{FADE_TIMES.map((time)=><option key={time} value={time}>{time===0?'Snap':`${time/1000}s`}</option>)}</select></label><button className="console-primary" onClick={captureCue}>Capture Current Look</button></>}<label><span>Show Notes</span><textarea value={showFile.notes ?? ''} placeholder="Set list, transitions, safety notes…" onChange={(event)=>setShowFile((current)=>({...current,notes:event.target.value}))}/></label></aside>
+          <aside className="cue-inspector-console"><header><span>CUE INSPECTOR</span><strong>{activeCue?.name ?? 'New cue'}</strong></header>{activeCue ? <><label><span>Cue Name</span><input value={activeCue.name} onChange={(event)=>updateCueProperties(activeCue.id,{name:event.target.value})}/></label><label><span>Cue Color</span><input type="color" value={activeCue.color ?? '#55e98d'} onChange={(event)=>updateCueProperties(activeCue.id,{color:event.target.value})}/></label><label><span>Description</span><textarea value={activeCue.description ?? ''} onChange={(event)=>updateCueProperties(activeCue.id,{description:event.target.value})}/></label><div className="inspector-pair"><label><span>Fade In ms</span><input type="number" min="0" value={activeCue.fadeMs} onChange={(event)=>updateCueProperties(activeCue.id,{fadeMs:Number(event.target.value)})}/></label><label><span>Fade Out ms</span><input type="number" min="0" value={activeCue.fadeOutMs ?? activeCue.fadeMs} onChange={(event)=>updateCueProperties(activeCue.id,{fadeOutMs:Number(event.target.value)})}/></label></div><div className="inspector-pair"><label><span>Delay ms</span><input type="number" min="0" value={activeCue.delayMs ?? 0} onChange={(event)=>updateCueProperties(activeCue.id,{delayMs:Number(event.target.value)})}/></label><label><span>Follow ms</span><input type="number" min="0" value={activeCue.followMs ?? 0} onChange={(event)=>updateCueProperties(activeCue.id,{followMs:Number(event.target.value)})}/></label></div><section className="cue-timing-overrides"><header><span>ATTRIBUTE TIMING</span><small>Override only what needs different timing</small></header>{(['intensity','color','position','beam'] as CueTimingFamily[]).map((family)=>{const rule=cueTimingRule(activeCue,family);return <div className="cue-timing-row" key={family}><strong>{family.toUpperCase()}</strong><label><span>Fade ms</span><input type="number" min="0" max="60000" value={rule.fadeMs} onChange={(event)=>updateCueTiming(activeCue.id,family,{fadeMs:Number(event.target.value)})}/></label><label><span>Delay ms</span><input type="number" min="0" max="60000" value={rule.delayMs} onChange={(event)=>updateCueTiming(activeCue.id,family,{delayMs:Number(event.target.value)})}/></label><label><span>Curve</span><select value={rule.curve} onChange={(event)=>updateCueTiming(activeCue.id,family,{curve:event.target.value as CueTimingRule['curve']})}><option value="ease">Ease</option><option value="linear">Linear</option><option value="snap">Snap</option></select></label></div>})}</section><label><span>Linked Effect</span><select value={activeCue.linkedEffectId ?? ''} onChange={(event)=>updateCueProperties(activeCue.id,{linkedEffectId:event.target.value})}><option value="">None</option>{EFFECT_PRESETS.map((effect)=><option key={effect.id} value={effect.id}>{effect.name}</option>)}</select></label><div className="inspector-pair"><label><span>Service Section</span><input value={activeCue.runSection ?? ''} placeholder="Worship, Offering, Message…" onChange={(event)=>updateCueProperties(activeCue.id,{runSection:event.target.value})}/></label><label><span>Item Type</span><select value={activeCue.itemType ?? (activeCue.trackName ? 'song' : 'cue')} onChange={(event)=>updateCueProperties(activeCue.id,{itemType:event.target.value as NonNullable<ShowCue['itemType']>})}><option value="cue">Cue group</option><option value="song">Song</option><option value="media">Media</option><option value="timeline">Timeline show</option></select></label></div><label><span>Song / Item Name</span><input value={activeCue.trackName ?? ''} onChange={(event)=>updateCueProperties(activeCue.id,{trackName:event.target.value})}/></label><button className="console-primary" onClick={()=>updateCue(activeCue.id)}>Update Look From Output</button></> : <><label><span>New Cue Name</span><input value={cueName} placeholder={`Cue ${showFile.cues.length+1}`} onChange={(event)=>setCueName(event.target.value)}/></label><label><span>Fade In</span><select value={cueFadeMs} onChange={(event)=>setCueFadeMs(Number(event.target.value))}>{FADE_TIMES.map((time)=><option key={time} value={time}>{time===0?'Snap':`${time/1000}s`}</option>)}</select></label><button className="console-primary" onClick={captureCue}>Capture Current Look</button></>}<label><span>Show Notes</span><textarea value={showFile.notes ?? ''} placeholder="Set list, transitions, safety notes…" onChange={(event)=>setShowFile((current)=>({...current,notes:event.target.value}))}/></label></aside>
 
           <div className="cue-transport-console"><button onClick={goPreviousCue} disabled={!showFile.cues.length}>BACK</button><span><small>CURRENT</small><strong>{activeCue?.name ?? 'Ready'}</strong></span><button className="giant-go" onClick={goNextCue} disabled={!nextCue}>GO<small>{nextCue?.name ?? 'End'}</small></button><span><small>NEXT</small><strong>{nextCue?.name ?? 'End of show'}</strong></span><button onClick={goNextCue} disabled={!nextCue}>NEXT</button></div>
         </div>}
@@ -4008,7 +4036,7 @@ export default function App() {
         </header>}
 
         <nav className="live-view-tabs">{([
-          ['performance','Controller'],['overrides','Fixtures'],['groups','Groups'],['settings','System']
+          ['performance','Controller'],['overrides','Fixtures'],['groups','Groups'],['masters','Masters'],['shortcuts','Shortcuts'],['settings','System']
         ] as Array<[LiveView,string]>).map(([id,label])=><button key={id} className={liveView===id?'active':''} onClick={()=>setLiveView(id)}>{label}</button>)}</nav>
 
         {liveView === 'performance' && <DesktopLiveController
@@ -4050,6 +4078,13 @@ export default function App() {
               momentary:effect.momentary,
               color:effect.id==='blinder'?'#ffffff':effect.id==='lightning'?'#c9dcff':effect.id==='rainbow'||effect.id==='color-chase'?'#bc36ff':'#e0a24f'
             })),
+            ...FX_RECIPES.map((recipe)=>({
+              id:`recipe:${recipe.id}`,
+              name:recipe.name,
+              active:activeCustomEffectId===`live-recipe:${recipe.id}`,
+              momentary:false,
+              color:recipe.category==='Rows'?'#55e98d':recipe.category==='Movement'?'#6aa9d7':recipe.category==='Color'?'#bc76ff':'#e0a24f'
+            })),
             ...customEffects.map((effect)=>({
               id:effect.id,
               name:effect.name,
@@ -4073,6 +4108,10 @@ export default function App() {
             const targets=selectedFixtureTargets.map((fixture)=>fixture.id);
             const effect=EFFECT_PRESETS.find((item)=>item.id===effectId);
             if(effect){if(momentary)startMomentaryEffect(effect.id,targets);else toggleEffect(effect.id,targets);return;}
+            if(effectId.startsWith('recipe:')){
+              const recipe=FX_RECIPES.find((item)=>item.id===effectId.slice('recipe:'.length));
+              if(recipe){runCustomFx({...structuredClone(recipe.effect),id:`live-recipe:${recipe.id}`,name:recipe.name,bpm:effectBpm},targets);return;}
+            }
             const custom=customEffects.find((item)=>item.id===effectId);
             if(custom)runCustomFx(custom,targets);
           }}
@@ -4099,7 +4138,7 @@ export default function App() {
 
         {liveView === 'shortcuts' && <div className="live-detail-view">
           <header><div><span>SHORTCUTS + CONTROL MAPPING</span><h2>Keyboard and MIDI</h2></div><b>{midiMappings.length} MIDI MAPPINGS</b></header>
-          <div className="shortcut-grid"><section><h3>KEYBOARD</h3><div className="shortcut-row"><kbd>SPACE</kbd><span>GO / next cue</span></div><div className="shortcut-row"><kbd>→</kbd><span>GO / next cue</span></div><div className="shortcut-row"><kbd>←</kbd><span>BACK / previous cue</span></div><div className="shortcut-row"><kbd>ESC</kbd><span>Close active calibration panel</span></div></section><section><h3>MIDI ASSIGNER</h3><div className="midi-add-row"><select value={newMidiTarget} onChange={(event)=>setNewMidiTarget(event.target.value)}>{midiControlGroups.map(([group,controls])=><optgroup key={group} label={group}>{controls.map((control)=><option key={control.id} value={control.id}>{control.label}</option>)}</optgroup>)}</select><button className="console-primary" onClick={()=>beginMidiAssignment()}>ADD + LEARN</button></div><div className="midi-map-list">{midiMappings.map((mapping)=>{const control=midiControls.find((item)=>item.id===mapping.target);const learning=midiLearnMappingId===mapping.id;return <div className={`midi-map-row ${learning?'is-learning':''}`} key={mapping.id}><strong>{control?.label ?? 'Unavailable'}</strong><span>{learning?'Move or press a control…':midiBindingLabel(mapping)}</span><button onClick={()=>setMidiLearnMappingId(learning?null:mapping.id)}>{learning?'Cancel':'Learn'}</button><button onClick={()=>removeMidiAssignment(mapping.id)}>Remove</button></div>;})}</div></section></div>
+          <div className="shortcut-grid"><section><h3>KEYBOARD</h3><div className="shortcut-row"><kbd>SPACE</kbd><span>GO / next cue</span></div><div className="shortcut-row"><kbd>→</kbd><span>GO / next cue</span></div><div className="shortcut-row"><kbd>←</kbd><span>BACK / previous cue</span></div><div className="shortcut-row"><kbd>ESC</kbd><span>Close active calibration panel</span></div></section><section><h3>MIDI ASSIGNER</h3><button className="console-primary midi-popup-launch" onClick={()=>setMidiManagerOpen(true)}>OPEN MIDI MAPPER</button><div className="midi-add-row"><select value={newMidiTarget} onChange={(event)=>setNewMidiTarget(event.target.value)}>{midiControlGroups.map(([group,controls])=><optgroup key={group} label={group}>{controls.map((control)=><option key={control.id} value={control.id}>{control.label}</option>)}</optgroup>)}</select><button className="console-primary" onClick={()=>beginMidiAssignment()}>ADD + LEARN</button></div><div className="midi-map-list">{midiMappings.map((mapping)=>{const control=midiControls.find((item)=>item.id===mapping.target);const learning=midiLearnMappingId===mapping.id;return <div className={`midi-map-row ${learning?'is-learning':''}`} key={mapping.id}><strong>{control?.label ?? 'Unavailable'}</strong><span>{learning?'Move or press a control…':midiBindingLabel(mapping)}</span><button onClick={()=>setMidiLearnMappingId(learning?null:mapping.id)}>{learning?'Cancel':'Learn'}</button><button onClick={()=>removeMidiAssignment(mapping.id)}>Remove</button></div>;})}</div></section></div>
         </div>}
 
         {liveView === 'settings' && <div className="live-detail-view">
@@ -4110,12 +4149,25 @@ export default function App() {
         <footer className="live-system-strip"><span className={dmxStatus.connected?'healthy':''}>● DMX {dmxStatus.connected?'ONLINE':'VIRTUAL'}</span><span className={directStatus.clients>0?'healthy':''}>● VIZ {directStatus.clients>0?'LINKED':'WAITING'}</span><span className={studioBridgeStatus.connectedClients>0?'healthy':''}>● STUDIO {studioBridgeStatus.connectedClients>0?'LINKED':'WAITING'}</span><span className={midiStatus.connected?'healthy':''}>● MIDI {midiStatus.connected?'ONLINE':'OFF'}</span><span>{liveEffectLabel?`FX ${liveEffectLabel.toUpperCase()}`:'FX IDLE'}</span><b>{formatShowTime(externalSongPositionMs || showTrackPositionMs)}</b></footer>
       </section>}
 
+      {stageMonitorOpen && <section className="floating-stage-monitor" aria-label="Detached Stage Monitor">
+        <header><div><span>STAGE MONITOR</span><strong>{activeCue?.name ?? 'Live output'}</strong></div><button onClick={()=>setStageMonitorOpen(false)}>×</button></header>
+        <div className="floating-stage-body">{liveLumaVizPreview ? <img src={liveLumaVizPreview.dataUrl} alt="LumaViz live stage monitor"/> : renderStagePreview()}</div>
+      </section>}
+
+      {midiManagerOpen && <div className="midi-manager-overlay" role="dialog" aria-modal="true" aria-label="MIDI assignment manager" onMouseDown={(event)=>{if(event.target===event.currentTarget)setMidiManagerOpen(false);}}>
+        <section className="midi-manager-panel">
+          <header><div><span>CONTROL ASSIGNMENT</span><h2>MIDI Mapper</h2><small>Assignments stay visible and scroll independently.</small></div><button aria-label="Close MIDI mapper" onClick={()=>setMidiManagerOpen(false)}>×</button></header>
+          <MidiMappingPanel mappings={midiMappings} controls={midiControls} groups={midiControlGroups} newTarget={newMidiTarget} learningId={midiLearnMappingId} onNewTarget={setNewMidiTarget} onAdd={()=>beginMidiAssignment()} onLearn={setMidiLearnMappingId} onRemove={removeMidiAssignment} onTarget={changeMidiAssignmentTarget}/>
+        </section>
+      </div>}
+
       <footer className="console-footer console-status-strip">
         <div className="status-connections">
           <button className={dmxStatus.connected ? 'healthy' : ''} onClick={() => { setWorkspace('build'); setSetupView('settings'); }}><i />DMX <b>{dmxStatus.connected ? 'ONLINE' : 'VIRTUAL'}</b></button>
           <button className={directStatus.clients > 0 ? 'healthy' : ''} onClick={() => { setWorkspace('build'); setSetupView('settings'); }}><i />LUMAVIZ <b>{directStatus.clients > 0 ? 'LINKED' : 'READY'}</b></button>
           <button className={studioBridgeStatus.connectedClients > 0 ? 'healthy' : ''} onClick={() => { setWorkspace('show'); setShowMode('sync'); }}><i />STUDIO <b>{studioBridgeStatus.connectedClients > 0 ? 'LINKED' : 'READY'}</b></button>
-          <button className={midiStatus.connected ? 'healthy' : ''} onClick={() => { setWorkspace('build'); setSetupView('settings'); }}><i />MIDI <b>{midiStatus.connected ? 'ONLINE' : 'OFF'}</b></button>
+          <button className={midiStatus.connected ? 'healthy' : ''} onClick={() => setMidiManagerOpen(true)}><i />MIDI <b>{midiStatus.connected ? 'ONLINE' : 'MAP'}</b></button>
+          <button className={stageMonitorOpen ? 'healthy' : ''} onClick={()=>setStageMonitorOpen((current)=>!current)}><i />STAGE <b>{stageMonitorOpen ? 'OPEN' : 'MONITOR'}</b></button>
         </div>
         <span className="status-message">{dmxStatus.last_error || midiStatus.last_error || message}</span>
         <div className="status-show-readout"><span>U1</span><span>40 HZ</span><span>{patch.length} FXT</span><span>{showFile.cues.length} CUES</span>{isFading && <span className="attention">FADING</span>}<b>{formatShowTime(externalSongPositionMs || showTrackPositionMs)}</b></div>
