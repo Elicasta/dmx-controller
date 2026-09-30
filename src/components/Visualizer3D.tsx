@@ -504,9 +504,13 @@ export default function Visualizer3D({
   ]);
 
   useEffect(() => {
-    const desired = new Map(snapshot.elements
-      .filter((element) => element.type === 'led-screen' && element.mediaSource?.kind === 'ndi' && element.mediaSource.deviceId)
-      .map((element) => [element.id, element.mediaSource!.kind === 'ndi' ? element.mediaSource.deviceId! : '']));
+    const desired = new Map<string, string>();
+    for (const element of snapshot.elements) {
+      const source = element.mediaSource;
+      if (element.type === 'led-screen' && source?.kind === 'ndi' && source.deviceId) {
+        desired.set(element.id, source.deviceId);
+      }
+    }
 
     for (const [id, entry] of mediaRef.current) {
       if (desired.get(id) === entry.deviceId) continue;
