@@ -30,6 +30,7 @@ export type SectionLayer = {
 };
 export type ShowSection = {
   id: string;
+  runSection?: string;
   song: string;
   name: string;
   groupId: string;
@@ -307,6 +308,7 @@ export function createSection(
   const lift = /chorus|bridge|worship/i.test(name);
   return {
     id: crypto.randomUUID(),
+    runSection: "Worship",
     song,
     name,
     groupId,
@@ -466,6 +468,8 @@ export function buildSectionCues(
         existing.find((c) => c.sourceSectionId === section.id)?.id ??
         crypto.randomUUID(),
       sourceSectionId: section.id,
+      runSection: section.runSection?.trim() || "Worship",
+      itemType: "song",
       number: index + 1,
       name: `${section.song} · ${section.name}`,
       trackName: section.song,
@@ -670,6 +674,7 @@ export function isShowSection(value: unknown): value is ShowSection {
     ["id", "song", "name", "groupId", "recipeId"].every(
       (k) => typeof s[k as keyof ShowSection] === "string",
     ) &&
+    (s.runSection === undefined || typeof s.runSection === "string") &&
     hex(s.color) &&
     finite(s.intensity, 0, 100) &&
     finite(s.bpm, 20, 300) &&
