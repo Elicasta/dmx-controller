@@ -2551,6 +2551,109 @@ body,#root { min-width:0; width:100%; overflow:hidden; }
   font-size: 10px;
   line-height: 1.4;
 }
+.visualizer-scene-tree > div {
+  display: grid;
+  gap: 4px;
+  max-height: 230px;
+  overflow: auto;
+}
+.visualizer-scene-tree > div > button {
+  min-width: 0;
+  display: grid;
+  grid-template-columns: 8px minmax(0,1fr);
+  align-items: center;
+  gap: 7px;
+  padding: 6px 7px;
+  text-align: left;
+}
+.visualizer-scene-tree > div > button > i {
+  width: 8px;
+  height: 26px;
+  border-radius: 2px;
+}
+.visualizer-scene-tree > div > button > span {
+  min-width: 0;
+  display: grid;
+  gap: 1px;
+}
+.visualizer-scene-tree > div > button strong,
+.visualizer-scene-tree > div > button small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.visualizer-scene-tree > div > button.active {
+  border-color: #64e18e;
+  background: #15261f;
+}
+.visualizer-object-inspector label,
+.visualizer-screen-route label {
+  display: grid;
+  gap: 4px;
+  color: #7f949f;
+  font-size: 8px;
+  font-weight: 700;
+  letter-spacing: .05em;
+  text-transform: uppercase;
+}
+.visualizer-object-inspector input,
+.visualizer-object-inspector select,
+.visualizer-screen-route select {
+  min-width: 0;
+  width: 100%;
+  box-sizing: border-box;
+  padding: 6px;
+  border: 1px solid #324651;
+  border-radius: 4px;
+  background: #091117;
+  color: #d6e4ea;
+  font-size: 10px;
+}
+.visualizer-transform-grid {
+  display: grid;
+  grid-template-columns: repeat(3,minmax(0,1fr));
+  gap: 5px;
+}
+.visualizer-object-actions {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 6px;
+}
+.visualizer-screen-route {
+  display: grid;
+  gap: 6px;
+  padding: 7px;
+  border: 1px solid #283c47;
+  border-radius: 4px;
+  background: #0a1218;
+}
+.visualizer-warehouse > div {
+  display: grid;
+  gap: 5px;
+}
+.visualizer-warehouse details {
+  border: 1px solid #263944;
+  border-radius: 4px;
+  background: #0a1218;
+}
+.visualizer-warehouse summary {
+  cursor: pointer;
+  padding: 6px 7px;
+  color: #9db0ba;
+  font-size: 9px;
+  font-weight: 800;
+}
+.visualizer-warehouse details > div {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+  padding: 0 6px 7px;
+}
+.visualizer-warehouse details button {
+  min-height: 28px;
+  padding: 4px 7px;
+  font-size: 8px;
+}
 .visualizer-preset-picker button {
   display: grid;
   gap: 3px;
