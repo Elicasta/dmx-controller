@@ -1,4 +1,5 @@
 import { useState, type Dispatch, type SetStateAction } from "react";
+import BpmField from "./BpmField";
 import type { PatchedFixture } from "../lib/fixtures";
 import type { FixtureGroup } from "../lib/show";
 import type { CustomEffect } from "../lib/effects";
@@ -160,15 +161,7 @@ export default function ShowCreator({
               </label>
               <label>
                 Tempo
-                <input
-                  type="number"
-                  min={20}
-                  max={300}
-                  value={bpm}
-                  onChange={(e) =>
-                    setBpm(Math.max(20, Math.min(300, Number(e.target.value))))
-                  }
-                />
+                <BpmField value={bpm} onCommit={setBpm} ariaLabel="Song BPM" />
               </label>
               <label>
                 Starting target
@@ -230,7 +223,7 @@ export default function ShowCreator({
                       e.preventDefault();
                       const recipeId=e.dataTransfer.getData("application/lumarig-fx");
                       if(FX_RECIPES.some(r=>r.id===recipeId)) {
-                        setSections(all=>all.map(item=>item.id!==s.id||item.layers.length>=8?item:{...item,layers:[...item.layers,{id:crypto.randomUUID(),recipeId,groupId:item.groupId,energy:70,enabled:true}]}));
+                        setSections(all=>all.map(item=>item.id!==s.id||item.layers.length>=8?item:{...item,layers:[...item.layers,{id:crypto.randomUUID(),recipeId,groupId:item.groupId,energy:70,enabled:true,rateMultiplier:1}]}));
                       } else move(dragId, s.id);
                       setDragId("");
                     }}
@@ -370,20 +363,7 @@ export default function ShowCreator({
                 </label>
                 <label>
                   Tempo
-                  <input
-                    type="number"
-                    min={20}
-                    max={300}
-                    value={selected.bpm}
-                    onChange={(e) =>
-                      update({
-                        bpm: Math.max(
-                          20,
-                          Math.min(300, Number(e.target.value)),
-                        ),
-                      })
-                    }
-                  />
+                  <BpmField value={selected.bpm} onCommit={(value) => update({ bpm: value })} ariaLabel="Section BPM" />
                 </label>
                 <label>
                   Fade ms
@@ -449,7 +429,7 @@ export default function ShowCreator({
                   Primary FX
                   <select
                     aria-label="Primary FX"
-                value={selected.recipeId}
+                    value={selected.recipeId}
                     onChange={(e) => update({ recipeId: e.target.value })}
                   >
                     <option value="">Static look</option>
@@ -458,6 +438,18 @@ export default function ShowCreator({
                         {r.name}
                       </option>
                     ))}
+                  </select>
+                </label>
+                <label>
+                  Primary rate
+                  <select aria-label="Primary FX rate" value={selected.rateMultiplier ?? 1} onChange={(e) => update({ rateMultiplier: Number(e.target.value) })}>
+                    <option value={0.25}>¼×</option>
+                    <option value={0.5}>½×</option>
+                    <option value={1}>1×</option>
+                    <option value={2}>2×</option>
+                    <option value={3}>3×</option>
+                    <option value={4}>4×</option>
+                    <option value={8}>8×</option>
                   </select>
                 </label>
               </div>
@@ -513,6 +505,18 @@ export default function ShowCreator({
                           layerChange(l.id, { energy: Number(e.target.value) })
                         }
                       />
+                    </label>
+                    <label>
+                      Rate
+                      <select aria-label={`Layer ${index + 1} rate`} value={l.rateMultiplier ?? 1} onChange={(e) => layerChange(l.id, { rateMultiplier: Number(e.target.value) })}>
+                        <option value={0.25}>¼×</option>
+                        <option value={0.5}>½×</option>
+                        <option value={1}>1×</option>
+                        <option value={2}>2×</option>
+                        <option value={3}>3×</option>
+                        <option value={4}>4×</option>
+                        <option value={8}>8×</option>
+                      </select>
                     </label>
                     <button
                       aria-label={`Remove layer ${index + 1}`}
