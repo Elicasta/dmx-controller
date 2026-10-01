@@ -11,6 +11,23 @@ use studio_bridge::{StudioBridge, StudioBridgeEnvelope, StudioBridgeResponse, St
 use tauri::{State, Manager};
 
 #[tauri::command]
+fn open_media_output(app: tauri::AppHandle) -> Result<(), String> {
+    if let Some(window) = app.get_webview_window("media-output") {
+        return window.set_focus().map_err(|e| e.to_string());
+    }
+    tauri::WebviewWindowBuilder::new(&app, "media-output", tauri::WebviewUrl::App("index.html?media-output=1".into()))
+        .title("LumaRig · Video Output")
+        .inner_size(1280.0, 720.0)
+        .min_inner_size(320.0, 180.0)
+        .build().map(|_| ()).map_err(|e| e.to_string())
+}
+#[tauri::command]
+fn toggle_media_output_fullscreen(app: tauri::AppHandle) -> Result<(), String> {
+    let window = app.get_webview_window("media-output").ok_or("Video output is not open.")?;
+    let fullscreen = window.is_fullscreen().map_err(|e| e.to_string())?;
+    window.set_fullscreen(!fullscreen).map_err(|e| e.to_string())
+}
+#[tauri::command]
 fn open_stage_monitor(app: tauri::AppHandle) -> Result<(), String> {
     if let Some(window) = app.get_webview_window("stage-monitor") {
         return window.set_focus().map_err(|e| e.to_string());
@@ -117,6 +134,8 @@ pub fn run() {
         .manage(updates::UpdateState::default())
         .invoke_handler(tauri::generate_handler![
             open_stage_monitor,
+            open_media_output,
+            toggle_media_output_fullscreen,
             list_udmx_devices,
             connect_dmx,
             disconnect_dmx,

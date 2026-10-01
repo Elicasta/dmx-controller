@@ -4,9 +4,11 @@ export type VisualizerCamera = {
   position: Vec3;
   target: Vec3;
   fovDegrees: number;
+  projection?: "perspective" | "orthographic";
+  orthographicSize?: number;
 };
 
-export type VisualizerCameraPreset = 'foh' | 'stage-left' | 'stage-right' | 'top' | 'close';
+export type VisualizerCameraPreset = 'foh' | 'stage-left' | 'stage-right' | 'top' | 'front' | 'side' | 'close';
 
 export type CameraBasis = {
   forward: Vec3;
@@ -82,8 +84,10 @@ export function projectVisualizerPoint(
   const vertical = dot(relative, basis.up);
   const fov = Math.max(20, Math.min(100, camera.fovDegrees)) * Math.PI / 180;
   const focal = safeHeight / (2 * Math.tan(fov / 2));
-  const x = safeWidth / 2 + horizontal * focal / depth;
-  const y = safeHeight / 2 - vertical * focal / depth;
+  const orthographicScale = Math.min(safeWidth, safeHeight) / Math.max(.1, camera.orthographicSize ?? 10);
+  const scale = camera.projection === 'orthographic' ? orthographicScale : focal / depth;
+  const x = safeWidth / 2 + horizontal * scale;
+  const y = safeHeight / 2 - vertical * scale;
   const margin = Math.max(safeWidth, safeHeight) * .25;
 
   return {
@@ -114,11 +118,16 @@ export function visualizerCameraPreset(preset: VisualizerCameraPreset, dimension
     };
   }
 
-  if (preset === 'top') {
+  if (preset === 'top' || preset === 'front' || preset === 'side') {
+    const target = { x: 0, y: preset === 'top' ? 0 : dimensions.height * .5, z: dimensions.depth * .5 };
+    const distance = Math.max(dimensions.roomDepth, dimensions.roomWidth, dimensions.roomHeight) * 2;
     return {
-      position: { x: 0, y: Math.max(dimensions.roomHeight * 1.75, dimensions.height * 2.5), z: dimensions.depth * .6 },
-      target: { x: 0, y: 0, z: dimensions.depth * .55 },
-      fovDegrees: 48
+      projection: 'orthographic',
+      orthographicSize: Math.max(dimensions.width, dimensions.depth, dimensions.height) * 1.25,
+      position: preset === 'top' ? { ...target, y: distance }
+        : preset === 'front' ? { ...target, z: target.z + distance }
+        : { ...target, x: distance },
+      target, fovDegrees: 50,
     };
   }
 

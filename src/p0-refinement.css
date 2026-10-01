@@ -99,3 +99,47 @@
   .show-console-v3 > .workspace-subtabs button { font-size:0!important; letter-spacing:0!important; overflow-wrap:normal; }
   .show-console-v3 > .workspace-subtabs button::before { content:attr(data-compact-label); font-size:8px; letter-spacing:.02em; white-space:nowrap; }
 }
+
+/* Timeline owns horizontal scrolling; transport remains within the workspace. */
+.timeline-lane {
+  background-image:
+    repeating-linear-gradient(to right, transparent 0, transparent calc(var(--bar-width) - 1px), #466070 calc(var(--bar-width) - 1px), #466070 var(--bar-width)),
+    repeating-linear-gradient(to right, transparent 0, transparent calc(var(--beat-width) - 1px), #253944 calc(var(--beat-width) - 1px), #253944 var(--beat-width));
+}
+.timeline-audio-block { cursor:crosshair; min-width:1px; }
+.timeline-audio-block strong { overflow:hidden; white-space:nowrap; text-overflow:ellipsis; pointer-events:none; }
+.timeline-audio-block svg { pointer-events:none; }
+.audio-trim-handle { position:absolute; top:0; bottom:0; width:10px; z-index:2; cursor:ew-resize; touch-action:none; background:#9ddaff55; }
+.audio-trim-handle.trim-in { left:0; border-right:1px solid #9ddaff; }
+.audio-trim-handle.trim-out { right:0; border-left:1px solid #9ddaff; }
+.timeline-playhead { pointer-events:auto; cursor:ew-resize; touch-action:none; width:10px; background:linear-gradient(to right,transparent 4px,#fcf7d4 4px,#fcf7d4 6px,transparent 6px); transform:translateX(-4px); box-shadow:none; }
+.timeline-playhead::before { content:''; position:absolute; top:0; width:10px; height:12px; background:#fcf7d4; }
+.timeline-playhead:focus-visible,.audio-trim-handle:focus-visible { outline:2px solid var(--accent); outline-offset:2px; }
+.timeline-toolbar label:has(select[aria-label="Jump to cue"]) { width:150px; }
+.timeline-scroll:focus-visible { outline:2px solid var(--accent); outline-offset:2px; }
+
+.section-layer .layer-controls { grid-column:1/-1; display:grid; grid-template-columns:repeat(auto-fit,minmax(110px,1fr)); gap:10px; border-top:1px solid var(--border-default); padding-top:10px; min-width:0; }
+.layer-controls label { display:flex; flex-direction:column; gap:5px; font-size:10px; color:var(--text-secondary); min-width:0; }
+.layer-controls input,.layer-controls select { width:100%; min-width:0; }
+.layer-controls .layer-order { display:flex; flex-wrap:wrap; gap:4px; align-items:end; }
+.section-notes { display:flex; flex-direction:column; gap:6px; margin:12px 0; font-size:11px; color:var(--text-secondary); }
+.section-notes textarea { min-height:65px; width:100%; resize:vertical; color:var(--text-primary); background:var(--surface-secondary); border:1px solid var(--border-default); padding:8px; }
+.creator-library .recipe-list { max-height:480px; overflow:auto; overscroll-behavior:contain; }
+.creator-library .recipe-filters { display:flex; flex-wrap:wrap; gap:4px; }
+.section-layer { align-items:start; }
+
+.media-output { position:fixed; inset:0; background:#000; display:grid; place-items:center; }
+.media-output video { width:100%; height:100%; object-fit:contain; }
+.media-output>p { position:absolute; color:#eee; padding:12px; background:#000b; }
+.media-output-fullscreen { position:absolute; right:16px; bottom:16px; opacity:0; transition:opacity .15s; }
+.media-output:hover .media-output-fullscreen,.media-output-fullscreen:focus-visible { opacity:1; }
+
+.beat-step-editor { grid-column:1/-1; min-width:0; background:var(--surface-primary); border:1px solid var(--border-default); padding:10px; }
+.beat-step-editor header { display:flex; flex-wrap:wrap; gap:8px; align-items:center; font-size:11px; }
+.step-editor-settings,.step-value-editor { display:flex; flex-wrap:wrap; align-items:end; gap:8px; margin:10px 0; }
+.step-editor-settings label,.step-value-editor label { display:flex; flex-direction:column; gap:4px; width:100px; font-size:10px; }
+.beat-step-grid { display:grid; grid-template-columns:repeat(8,minmax(0,1fr)); gap:4px; }
+.beat-step-grid button { min-width:0; display:flex; flex-direction:column; align-items:center; gap:4px; padding:7px 2px; }
+.beat-step-grid button[aria-pressed=true] { color:var(--step-color); border-top:3px solid var(--step-color); }
+.beat-step-grid button.selected { outline:1px solid var(--accent); }
+.step-value-editor input[type=checkbox] { width:16px; height:16px; }

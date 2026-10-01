@@ -1,3 +1,4 @@
+import { useMediaOutputPublisher } from "./components/MediaOutput";
 import { readProgramState, saveProgramState, type Recovery } from './lib/program-storage';
 import { insertSongProgram, programId, type SongProgram } from './lib/song-library';
 import SongBank from './components/SongBank';
@@ -848,6 +849,7 @@ export default function App() {
   const [showTrackDurationMs, setShowTrackDurationMs] = useState(0);
   const [showTrackPositionMs, setShowTrackPositionMs] = useState(0);
   const showTrackAudioRef = useRef<HTMLAudioElement | null>(null);
+  useMediaOutputPublisher(showTrackAudioRef, showTrackUrl, showTrackName);
   const cueLaunchGenerationRef = useRef(0);
   const timelineBaseRef = useRef<number[] | null>(null);
   const [recordingTakeName, setRecordingTakeName] = useState('');
@@ -3599,6 +3601,20 @@ export default function App() {
       } catch (error) { if (token === mediaLoadToken.current) setMessage(String(error)); }
     }
   }
+  async function saveCreatorSongProgram() {
+    if (!libraryReady) return;
+    const targets = creatorSong ? [creatorSong] : songsForShow(showFileRef.current);
+    if (!targets.length) { setMessage('Add a Song or sections before saving.'); return; }
+    setSaveStatus('Saving…');
+    try {
+      let next = showFileRef.current;
+      for (const song of targets) next = buildSong(next, song, patchRef.current);
+      setShowFile(next);
+      const saved = await saveAppProgramState(next, { ...(creatorSong ? { forceId: programId(next, creatorSong) } : { capture: 'all' as const }), workspace: currentWorkspaceCheckpoint() });
+      setSongLibrary(saved.programs); setSaveStatus('Saved');
+      setMessage(`${targets.length} Song Program(s) rebuilt and saved with their sections, layers, timeline and media.`);
+    } catch (error) { setSaveStatus('Save failed'); setMessage(String(error)); }
+  }
   function buildCreatorSections() {
     try {
       const targets = creatorSong ? [creatorSong] : songBank;
@@ -4506,7 +4522,7 @@ export default function App() {
           <div className="cue-transport-console"><button onClick={goPreviousCue} disabled={!showFile.cues.length}>BACK</button><span><small>CURRENT</small><strong>{activeCue?.name ?? 'Ready'}</strong></span><button className="giant-go" onClick={goNextCue} disabled={!nextCue}>GO<small>{nextCue?.name ?? 'End'}</small></button><span><small>NEXT</small><strong>{nextCue?.name ?? 'End of show'}</strong></span><button onClick={goNextCue} disabled={!nextCue}>NEXT</button></div>
         </ResizableWorkspace>}
 
-        {showMode === 'creator' && <Suspense fallback={<p>Loading Show Creator…</p>}><ShowCreator presets={sectionPresets} onPresetsChange={setSectionPresets} key={creatorSong?.id ?? 'all'} songName={creatorSong?.name} onRenameSong={name => { if (creatorSong) renameBankSong(creatorSong.id, name); }} onSongBank={() => setShowMode('songs')} sections={(showFile.creatorSections ?? []).filter(section => !creatorSong || section.song === creatorSong.name)} setSections={(action) => setShowFile(current => {
+        {showMode === 'creator' && <Suspense fallback={<p>Loading Show Creator…</p>}><ShowCreator customEffects={customEffects} onSaveSong={saveCreatorSongProgram} presets={sectionPresets} onPresetsChange={setSectionPresets} key={creatorSong?.id ?? 'all'} songName={creatorSong?.name} onRenameSong={name => { if (creatorSong) renameBankSong(creatorSong.id, name); }} onSongBank={() => setShowMode('songs')} sections={(showFile.creatorSections ?? []).filter(section => !creatorSong || section.song === creatorSong.name)} setSections={(action) => setShowFile(current => {
           const all = current.creatorSections ?? [];
           const editing = all.filter(section => !creatorSong || section.song === creatorSong.name);
           const next = typeof action === 'function' ? action(editing) : action;

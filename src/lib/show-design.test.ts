@@ -375,3 +375,45 @@ describe("editable color phasers", () => {
     expect(value(mid, fixtures[0], "red")).toBe(5);
   });
 });
+
+describe('independent section layers', () => {
+  it('preserves per-group colors and intensity and builds independent musical FX', () => {
+    const left = { ...group, id:'left', fixtureOrder:['f0','f1'] };
+    const right = { ...group, id:'right', fixtureOrder:['f2','f3'] };
+    const s = { ...section(), recipeId:'', layers:[
+      {id:'a',recipeId:'wave',groupId:'left',energy:100,enabled:true,intensity:25,color:'#ff0000',cycleBeats:4,rateMultiplier:2,phaseOffsetBeats:1},
+      {id:'b',recipeId:'pairs',groupId:'right',energy:50,enabled:true,intensity:80,color:'#0000ff',cycleBeats:1/3,direction:'reverse' as const},
+    ] };
+    const cue=buildSectionCues([s],fixtures,[group,left,right])[0];
+    const result=applyUniverseUpdates(makeUniverse(),cue.changes!);
+    expect(result[parameterChannel(fixtures[0],'dimmer')!-1]).toBeCloseTo(64,0);
+    expect(result[parameterChannel(fixtures[2],'dimmer')!-1]).toBeCloseTo(204,0);
+    expect(result[parameterChannel(fixtures[0],'red')!-1]).toBe(255);
+    expect(result[parameterChannel(fixtures[2],'red')!-1]).toBe(0);
+    expect(cue.effectStack![0].effect.cycleBeats).toBe(2);
+    expect(cue.effectStack![1].effect.direction).toBe('reverse');
+    expect(cue.effectStack![0].targetIds).toEqual(['f0','f1']);
+    expect(cue.effectStack![1].targetIds).toEqual(['f2','f3']);
+    expect(isShowFile({...structuredClone(EMPTY_SHOW),creatorSections:[s],cues:[cue]})).toBe(true);
+  });
+  it('captures custom recipes so deleting the global preset cannot break a Song', () => {
+    const custom=structuredClone(FX_RECIPES[0].effect);
+    const s={...section(),recipeId:'',layers:[{id:'custom-layer',recipeId:'custom:old',customEffect:custom,groupId:'wash',energy:70,enabled:true,cycleBeats:0.0625}]};
+    const stack=sectionStack(s,fixtures,[group]);
+    expect(stack[0].effect.cycleBeats).toBe(0.0625);
+    expect(isShowFile({...structuredClone(EMPTY_SHOW),creatorSections:[s]})).toBe(true);
+    custom.depth=20;
+    expect(stack[0].effect.depth).not.toBe(20);
+  });
+  it('honors layer priority and disabled layers during base color output', () => {
+    const s={...section(),recipeId:'',layers:[
+      {id:'first',recipeId:'wave',groupId:'wash',energy:100,enabled:true,color:'#ff0000'},
+      {id:'last',recipeId:'wave',groupId:'wash',energy:100,enabled:true,color:'#0000ff'},
+      {id:'disabled',recipeId:'wave',groupId:'wash',energy:100,enabled:false,color:'#00ff00'},
+    ]};
+    const cue=buildSectionCues([s],fixtures,[group])[0];
+    const result=applyUniverseUpdates(makeUniverse(),cue.changes!);
+    expect(result[parameterChannel(fixtures[0],'red')!-1]).toBe(0);
+    expect(cue.effectStack).toHaveLength(2);
+  });
+});

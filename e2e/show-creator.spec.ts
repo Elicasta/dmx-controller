@@ -161,7 +161,7 @@ test("solo creator builds an editable audio-aligned show and preserves the draft
   await page
     .getByRole("button", { name: "Stop / Rewind", exact: true })
     .click();
-  await expect(page.locator(".timeline-toolbar output")).toHaveText("BAR 1.00");
+  await expect(page.locator(".timeline-toolbar output")).toHaveText("BAR 1 · BEAT 1");
   await page.screenshot({ path: info.outputPath("timeline.png") });
   await page.reload();
   await page.getByRole("button", { name: "SHOW", exact: true }).click();
@@ -539,7 +539,7 @@ test('Stage stays full-size in Build and Programmer',async({page})=>{
 test('song bank stores separate media and restores songs after restart', async ({page}, info) => {
  await seed(page); await page.goto('/');
  await page.getByRole('button',{name:'SHOW',exact:true}).click();
- await page.getByRole('button',{name:'Song Bank',exact:true}).click();
+ await page.locator('.show-subtabs').getByRole('button',{name:'Song Bank',exact:true}).click();
  for(const name of ['First Song','Second Song']) {
   await page.getByLabel('New song name').fill(name);
   await page.getByRole('button',{name:'Add song',exact:true}).click();
@@ -555,7 +555,7 @@ test('song bank stores separate media and restores songs after restart', async (
  await expect(page.locator('.timeline-clip')).toHaveCount(8);
  await expect(page.locator('.timeline-audio-block')).toContainText('First Song.wav');
  await page.getByLabel('Audio starts at bar',{exact:true}).fill('3');
- await page.getByRole('button',{name:'Song Bank',exact:true}).click();
+ await page.locator('.show-subtabs').getByRole('button',{name:'Song Bank',exact:true}).click();
  await page.locator('.song-bank-list article').filter({has:page.getByLabel('Song name Second Song')}).getByRole('button',{name:'Timeline',exact:true}).click();
  await expect(page.locator('.timeline-clip')).toHaveCount(0);
  await expect(page.getByLabel('Master BPM')).toHaveValue('120');
@@ -570,7 +570,7 @@ test('song bank stores separate media and restores songs after restart', async (
  await expect(page.locator('.timeline-clip')).toHaveCount(8);
  await expect(page.locator('.timeline-audio-block')).toContainText('First Song.wav');
  await expect.poll(()=>page.locator('audio').evaluate((audio:HTMLAudioElement)=>audio.readyState)).toBeGreaterThan(0);
- await page.getByRole('button',{name:'Song Bank',exact:true}).click();
+ await page.locator('.show-subtabs').getByRole('button',{name:'Song Bank',exact:true}).click();
  await page.getByLabel('Song name First Song').fill('Renamed Song');
  await page.getByLabel('Search song bank').click();
  await expect(page.getByLabel('Song name Renamed Song')).toBeVisible();
@@ -586,7 +586,7 @@ test('Song Library survives New Show, reuse, restart, and Recovery', async ({pag
   const errors: string[]=[]; page.on('pageerror',e=>errors.push(e.message));
   await seed(page); await page.goto('/');
   await page.getByRole('button',{name:'SHOW',exact:true}).click();
-  await page.getByRole('button',{name:'Song Bank',exact:true}).click();
+  await page.locator('.show-subtabs').getByRole('button',{name:'Song Bank',exact:true}).click();
   await expect(page.getByRole('status')).toHaveText('Saved');
   await page.getByLabel('New song name').fill('Hineh Ma Tov');
   await page.getByRole('button',{name:'Add song',exact:true}).click();
@@ -609,7 +609,7 @@ test('Song Library survives New Show, reuse, restart, and Recovery', async ({pag
   await page.getByRole('button',{name:'Show Library',exact:true}).click();
   await page.getByRole('button',{name:'＋ New Show',exact:true}).click();
   await expect.poll(async()=>((await readShow(page)).cues??[]).length).toBe(0);
-  await page.getByRole('button',{name:'Song Bank',exact:true}).click();
+  await page.locator('.show-subtabs').getByRole('button',{name:'Song Bank',exact:true}).click();
   const saved=page.getByRole('region',{name:'Song Library'}).locator('article').filter({hasText:'Hineh Ma Tov'});
   await expect(saved).toContainText('8 cues'); await expect(saved).toContainText('hineh.wav');
   await saved.getByRole('button',{name:'Add to Show',exact:true}).click();
@@ -618,11 +618,11 @@ test('Song Library survives New Show, reuse, restart, and Recovery', async ({pag
   await row.getByRole('button',{name:'Timeline',exact:true}).click();
   await expect(page.locator('.timeline-audio-block')).toContainText('hineh.wav');
   await expect(page.getByLabel('Master BPM')).toHaveValue('130.5');
-  await page.getByRole('button',{name:'Song Bank',exact:true}).click();
+  await page.locator('.show-subtabs').getByRole('button',{name:'Song Bank',exact:true}).click();
   await expect(page.getByRole('status')).toHaveText('Saved');
   await page.reload();
   await page.getByRole('button',{name:'SHOW',exact:true}).click();
-  await page.getByRole('button',{name:'Song Bank',exact:true}).click();
+  await page.locator('.show-subtabs').getByRole('button',{name:'Song Bank',exact:true}).click();
   await expect(page.getByRole('status')).toHaveText('Saved');
   expect((await readShow(page)).cues).toHaveLength(8);
   await page.screenshot({path:info.outputPath('reusable-song-library.png')});
@@ -636,7 +636,7 @@ test('Song Library survives New Show, reuse, restart, and Recovery', async ({pag
 test('New Show cancels if its atomic checkpoint fails', async ({page}) => {
   await seed(page); await page.goto('/');
   await page.getByRole('button',{name:'SHOW',exact:true}).click();
-  await page.getByRole('button',{name:'Song Bank',exact:true}).click();
+  await page.locator('.show-subtabs').getByRole('button',{name:'Song Bank',exact:true}).click();
   await expect(page.getByRole('status')).toHaveText('Saved');
   await page.getByLabel('New song name').fill('Protected Song');
   await page.getByRole('button',{name:'Add song',exact:true}).click();
@@ -655,7 +655,7 @@ test('New Show cancels if its atomic checkpoint fails', async ({page}) => {
   expect(await readShow(page)).toEqual(before);
   await page.reload();
   await page.getByRole('button',{name:'SHOW',exact:true}).click();
-  await page.getByRole('button',{name:'Song Bank',exact:true}).click();
+  await page.locator('.show-subtabs').getByRole('button',{name:'Song Bank',exact:true}).click();
   await expect(page.getByRole('status')).toHaveText('Saved');
   await expect(page.getByLabel('Song name Protected Song')).toBeVisible();
 });
@@ -784,7 +784,7 @@ test('zero trim height saves, and a corrupt workspace checkpoint is preserved',a
     open.onerror=()=>reject(open.error);
   }));
   await page.goto('/'); await page.getByRole('button',{name:'SHOW',exact:true}).click();
-  await page.getByRole('button',{name:'Song Bank',exact:true}).click();
+  await page.locator('.show-subtabs').getByRole('button',{name:'Song Bank',exact:true}).click();
   await expect(page.getByRole('status')).toHaveText('Saved');
   expect((await readCheckpoint()).workspace.stageSettings.dimensions.trimHeight).toBe(0);
   await page.reload(); await expect(page.getByRole('status')).toHaveText('Saved');
@@ -799,4 +799,176 @@ test('zero trim height saves, and a corrupt workspace checkpoint is preserved',a
   await expect(page.locator('.show-recovery [role="status"]')).toHaveText('Save unavailable');
   await expect(page.getByRole('button',{name:'＋ New Show',exact:true})).toBeDisabled();
   expect(await readCheckpoint()).toEqual(damaged);
+});
+
+test('trimmed media, cached waveform and lane seeking survive Song reuse and restart', async ({ page }, info) => {
+  const errors: string[] = [];
+  page.on('pageerror', e => errors.push(e.message));
+  await seed(page); await page.goto('/');
+  await page.getByRole('button', { name:'SHOW', exact:true }).click();
+  await page.getByRole('button', { name:'Show Creator', exact:true }).click();
+  await page.getByRole('button', { name:/Worship Song/ }).click();
+  await page.getByRole('button', { name:'Build / Update 8 Sections', exact:true }).click();
+  await page.getByRole('button', { name:'Open Timeline ↗', exact:true }).click();
+  await page.getByLabel('Load timeline audio').setInputFiles({ name:'trim-test.wav', mimeType:'audio/wav', buffer:wav() });
+  await expect(page.getByLabel('Trim out seconds')).toHaveValue('3');
+  await expect.poll(() => page.locator('.timeline-audio-block path').getAttribute('d')).toMatch(/M /);
+  await page.getByLabel('Trim in seconds').fill('0.5');
+  await page.getByLabel('Trim out seconds').fill('2');
+  await expect.poll(async () => (await readShow(page)).timelineShows[0].timeline.audioTrimOutMs).toBe(2000);
+  await page.getByRole('button', { name:'Rewind timeline' }).click();
+  await page.getByRole('button', { name:'Play Show', exact:true }).click();
+  await expect.poll(() => page.locator('audio').evaluate((a:HTMLAudioElement) => a.currentTime)).toBeGreaterThan(0.5);
+  await page.getByRole('button', { name:'Pause', exact:true }).click();
+  const empty = page.locator('[data-lane="2"]');
+  await empty.evaluate(el => el.parentElement!.scrollIntoView({ block:'center', inline:'nearest' }));
+  await page.getByLabel('Timeline editing area').evaluate(el => { el.scrollLeft=0; });
+  const laneBox=(await empty.boundingBox())!;
+  await page.mouse.click(laneBox.x+54,laneBox.y+35);
+  await expect(page.getByLabel('Timeline position')).toHaveText('BAR 2 · BEAT 3');
+  await page.getByLabel('Timeline editing area').focus();
+  await page.keyboard.press('ArrowRight');
+  await expect(page.getByLabel('Timeline position')).toHaveText('BAR 2 · BEAT 4');
+  await page.keyboard.press('Shift+ArrowRight');
+  await expect(page.getByLabel('Timeline position')).toHaveText('BAR 3 · BEAT 4');
+  await page.getByRole('button', { name:'Rewind timeline' }).click();
+  await page.getByLabel('Jump to cue').selectOption({ index:2 });
+  await expect(page.getByLabel('Timeline position')).toHaveText('BAR 9 · BEAT 1');
+  const cacheCount = await page.evaluate(async () => new Promise<number>((resolve,reject) => {
+    const request=indexedDB.open('lumarig-waveforms',1);
+    request.onsuccess=()=>{const db=request.result;const tx=db.transaction('peaks');const count=tx.objectStore('peaks').count();count.onsuccess=()=>{resolve(count.result);db.close();};count.onerror=()=>reject(count.error);};
+    request.onerror=()=>reject(request.error);
+  }));
+  expect(cacheCount).toBe(1);
+  await page.reload();
+  await page.getByRole('button', { name:'SHOW', exact:true }).click();
+  await page.getByRole('button', { name:'Timeline', exact:true }).click();
+  await expect(page.getByLabel('Trim in seconds')).toHaveValue('0.5');
+  await expect(page.getByLabel('Trim out seconds')).toHaveValue('2');
+  await expect.poll(() => page.locator('.timeline-audio-block path').getAttribute('d')).toMatch(/M /);
+  await page.screenshot({ path:info.outputPath('trimmed-timeline.png') });
+  await page.getByRole('button', { name:'Reset Trim', exact:true }).click();
+  await expect(page.getByLabel('Trim in seconds')).toHaveValue('0');
+  await expect(page.getByLabel('Trim out seconds')).toHaveValue('3');
+  expect(errors).toEqual([]);
+});
+
+test('section layers keep independent settings, priority and Song library saves', async ({page},info)=>{
+  await seed(page); await page.goto('/');
+  await page.getByRole('button',{name:'SHOW',exact:true}).click();
+  await page.getByRole('button',{name:'Show Creator',exact:true}).click();
+  await page.getByRole('button',{name:/Worship Song/}).click();
+  await page.getByLabel('Search FX recipes').fill('Traveling');
+  const recipe=page.locator('.recipe-list article').filter({hasText:'Traveling Wave'});
+  await recipe.getByRole('button',{name:'＋ Layer',exact:true}).click();
+  await recipe.getByRole('button',{name:'＋ Layer',exact:true}).click();
+  await page.getByLabel('Layer 1 intensity',{exact:true}).fill('25');
+  await page.getByLabel('Layer 1 color',{exact:true}).fill('#ff0000');
+  await page.getByLabel('Layer 1 musical cycle').selectOption('0.25');
+  await page.getByLabel('Layer 1 rate',{exact:true}).selectOption('2');
+  await page.getByLabel('Layer 2 intensity',{exact:true}).fill('80');
+  await page.getByLabel('Layer 2 color',{exact:true}).fill('#0000ff');
+  await page.getByLabel('Layer 2 direction',{exact:true}).selectOption('reverse');
+  await page.getByLabel('Section notes').fill('Audience hit on beat four');
+  await page.getByRole('button',{name:'Move layer 2 up',exact:true}).click();
+  await expect(page.getByLabel('Layer 1 intensity',{exact:true})).toHaveValue('80');
+  await expect(page.getByLabel('Layer 2 intensity',{exact:true})).toHaveValue('25');
+  await page.getByRole('button',{name:'Favorite Traveling Wave',exact:true}).click();
+  await page.locator('.recipe-filters').getByRole('button',{name:'Favorites',exact:true}).click();
+  await expect(page.locator('.recipe-list article')).toHaveCount(1);
+  await page.getByRole('button',{name:'Save to Song Library',exact:true}).click();
+  await expect.poll(async()=> (await readShow(page)).cues?.length).toBe(8);
+  await page.locator('.show-subtabs').getByRole('button',{name:'Song Bank',exact:true}).click();
+  await expect(page.locator('.reusable-song-library article')).toHaveCount(1);
+  await page.reload();
+  await page.getByRole('button',{name:'SHOW',exact:true}).click();
+  await page.getByRole('button',{name:'Show Creator',exact:true}).click();
+  await expect(page.getByLabel('Section notes')).toHaveValue('Audience hit on beat four');
+  await expect(page.getByLabel('Layer 1 intensity',{exact:true})).toHaveValue('80');
+  await page.screenshot({path:info.outputPath('section-layer-controls.png')});
+});
+
+test('Programmer exposes Visualizer-backed orthographic views and keeps them while zooming', async({page},info)=>{
+  await seed(page); await page.goto('/');
+  await page.getByRole('button',{name:'CREATE',exact:true}).click();
+  await page.getByRole('button',{name:'Programmer',exact:true}).click();
+  const viz=page.locator('.programmer-stage .visualizer-3d');
+  for(const name of ['Top','Front','Side']){
+    await viz.getByRole('button',{name,exact:true}).click();
+    await expect(viz).toHaveAttribute('data-projection','orthographic');
+    await viz.locator('canvas').hover();
+    await page.mouse.wheel(0,80);
+    await expect(viz).toHaveAttribute('data-camera',name.toLowerCase());
+  }
+  await viz.getByRole('button',{name:'Perspective',exact:true}).click();
+  await expect(viz).toHaveAttribute('data-projection','perspective');
+  await page.screenshot({path:info.outputPath('programmer-orthographic-views.png')});
+});
+
+test('video output follows source seeks and pauses without editor chrome',async({page,context})=>{
+  await page.goto('/?media-output=1');
+  const output=await context.newPage();
+  await output.goto('/?media-output=1');
+  const sourceUrl=await page.evaluate(async()=>{
+    const canvas=document.createElement('canvas');canvas.width=320;canvas.height=180;
+    const ctx=canvas.getContext('2d')!;ctx.fillStyle='#224488';ctx.fillRect(0,0,320,180);
+    const stream=canvas.captureStream(10),chunks:BlobPart[]=[];
+    const recorder=new MediaRecorder(stream,{mimeType:'video/webm;codecs=vp8'});
+    const finished=new Promise<Blob>(resolve=>{recorder.ondataavailable=e=>chunks.push(e.data);recorder.onstop=()=>resolve(new Blob(chunks,{type:'video/webm'}));});
+    let frame=0;
+    const animation=setInterval(()=>{ctx.fillStyle=frame++%2?'#224488':'#448822';ctx.fillRect(0,0,320,180);},50);
+    recorder.start();await new Promise(resolve=>setTimeout(resolve,1200));clearInterval(animation);recorder.stop();
+    const blob=await finished;stream.getTracks().forEach(track=>track.stop());return URL.createObjectURL(blob);
+  });
+  await page.evaluate(url=>{
+    const channel=new BroadcastChannel('lumarig-media-output-v1');
+    channel.postMessage({type:'frame',state:{url,name:'video-test',position:.5,playing:false,sentAt:Date.now()}});
+    setTimeout(()=>channel.close(),100);
+  },sourceUrl);
+  await expect.poll(()=>output.getByLabel('Synchronized video output').evaluate((el:HTMLVideoElement)=>el.currentTime)).toBeCloseTo(.5,1);
+  expect(await output.getByLabel('Synchronized video output').evaluate((el:HTMLVideoElement)=>el.paused)).toBe(true);
+  await expect(output.locator('.show-workspace')).toHaveCount(0);
+  await expect(output.getByRole('button',{name:'Fullscreen',exact:true})).toBeAttached();
+  await page.evaluate(url=>{
+    const channel=new BroadcastChannel('lumarig-media-output-v1');
+    channel.postMessage({type:'frame',state:{url,name:'video-test',position:.2,playing:true,sentAt:Date.now()}});
+    setTimeout(()=>channel.close(),100);
+  },sourceUrl);
+  await expect.poll(()=>output.getByLabel('Synchronized video output').evaluate((el:HTMLVideoElement)=>el.currentTime)).toBeGreaterThan(.25);
+  await page.evaluate(url=>{
+    const channel=new BroadcastChannel('lumarig-media-output-v1');
+    channel.postMessage({type:'frame',state:{url,name:'video-test',position:.7,playing:false,sentAt:Date.now()}});
+    setTimeout(()=>channel.close(),100);
+  },sourceUrl);
+  await expect.poll(()=>output.getByLabel('Synchronized video output').evaluate((el:HTMLVideoElement)=>el.paused)).toBe(true);
+  await expect.poll(()=>output.getByLabel('Synchronized video output').evaluate((el:HTMLVideoElement)=>el.currentTime)).toBeCloseTo(.7,1);
+  await output.close();
+});
+
+test('beat Step Editor renders hits and keeps the musical pattern in Song programming',async({page})=>{
+  await seed(page);await page.goto('/');
+  await page.getByRole('button',{name:'SHOW',exact:true}).click();
+  await page.getByRole('button',{name:'Show Creator',exact:true}).click();
+  await page.getByRole('button',{name:/Worship Song/}).click();
+  await page.getByRole('button',{name:'＋ Step Editor',exact:true}).click();
+  const editor=page.getByLabel('Beat Step Editor');
+  await expect(editor.locator('.beat-step-grid button')).toHaveCount(8);
+  await editor.getByRole('button',{name:'Step 1, beat 1.00',exact:true}).click();
+  await expect(editor.getByLabel('Step Intensity / Blinder',{exact:true})).toHaveValue('100');
+  await editor.getByLabel('Step color',{exact:true}).fill('#ff0000');
+  await editor.getByLabel('Step subdivision',{exact:true}).selectOption('4');
+  await expect(editor.locator('.beat-step-grid button')).toHaveCount(16);
+  await editor.getByRole('button',{name:'Copy Step',exact:true}).click();
+  await editor.getByRole('button',{name:'Step 5, beat 2.00',exact:true}).click();
+  await editor.getByRole('button',{name:'Paste Step',exact:true}).click();
+  await expect(editor.getByLabel('Step color',{exact:true})).toHaveValue('#ff0000');
+  await page.getByRole('button',{name:'Save to Song Library',exact:true}).click();
+  await expect.poll(async()=> (await readShow(page)).cues?.length).toBe(8);
+  const effect=(await readShow(page)).creatorSections[0].layers[0].customEffect;
+  expect(effect.colorPalette).toHaveLength(16);
+  expect(effect.lanes[0].steps[4].value).toBe(100);
+  await page.reload();
+  await page.getByRole('button',{name:'SHOW',exact:true}).click();
+  await page.getByRole('button',{name:'Show Creator',exact:true}).click();
+  await expect(page.getByLabel('Beat Step Editor').locator('.beat-step-grid button')).toHaveCount(16);
 });

@@ -1,3 +1,5 @@
+import StepEditor from "./StepEditor";
+import { createStepProgram } from "../lib/step-program";
 import ResizableWorkspace from './ResizableWorkspace';
 import TempoInput from './TempoInput';
 import { useEffect, useMemo, useState, type Dispatch, type SetStateAction } from "react";
@@ -10,8 +12,12 @@ import {
   SHOW_COLORS,
   SONG_TEMPLATES,
   type ShowSection,
+  isShowSection,
+  type FxRecipe,
 } from "../lib/show-design";
 type Props = {
+  customEffects?: CustomEffect[];
+  onSaveSong?: () => void;
   songName?: string;
   onRenameSong?: (name: string) => void;
   presets: ShowSection[];
@@ -32,6 +38,7 @@ type Props = {
   onMasterBpmChange: (bpm: number) => void;
 };
 export default function ShowCreator({
+  customEffects = [], onSaveSong,
   songName,
   onRenameSong,
   presets, onPresetsChange,
@@ -49,7 +56,21 @@ export default function ShowCreator({
   onMasterBpmChange,
   tempoLocked, onTempoLockChange,
 }: Props) {
+  const recipes: FxRecipe[] = useMemo(() => [...FX_RECIPES, ...customEffects.map(effect => ({
+    id:'custom:' + effect.id, name:effect.name, category:'Custom' as const, description:'Saved FX from your Programmer library', effect,
+  }))], [customEffects]);
+  const [copiedSection, setCopiedSection] = useState<ShowSection | null>(null);
+  const [favorites, setFavorites] = useState<string[]>(() => {
+    try { const parsed=JSON.parse(localStorage.getItem('lumarig.fx-favorites.v1') ?? '[]'); return Array.isArray(parsed) ? parsed.filter(x=>typeof x==='string') : []; } catch { return []; }
+  });
+  const favorite = (id:string) => setFavorites(all => {
+    const next=all.includes(id)?all.filter(x=>x!==id):[...all,id];
+    try { localStorage.setItem('lumarig.fx-favorites.v1',JSON.stringify(next)); } catch {}
+    return next;
+  });
   const [song, setSong] = useState(songName ?? sections[0]?.song ?? "New Song");
+  const cloneSection = (source:ShowSection):ShowSection => ({...structuredClone(source),id:crypto.randomUUID(),song,
+    layers:source.layers.map(layer=>({...structuredClone(layer),id:crypto.randomUUID()}))});
   const [bpm, setBpm] = useState(sections[0]?.bpm ?? masterBpm);
   const [groupId, setGroupId] = useState(
     sections[0]?.groupId ?? groups[0]?.id ?? "",
@@ -119,12 +140,14 @@ export default function ShowCreator({
       return;
     }
     if (selected.layers.length >= 8) return;
+    const recipe = recipes.find(r=>r.id===id);
     update({
       layers: [
         ...selected.layers,
         {
           id: crypto.randomUUID(),
           recipeId: id,
+          customEffect: id.startsWith("custom:") ? structuredClone(recipe?.effect) : undefined,
           groupId: selected.groupId,
           energy: 70,
           enabled: true,
@@ -141,6 +164,10 @@ export default function ShowCreator({
         l.id === id ? { ...l, ...changes } : l,
       ),
     });
+  const reorderLayer = (index:number, delta:number) => {
+    if(!selected || index+delta<0 || index+delta>=selected.layers.length)return;
+    const layers=[...selected.layers]; [layers[index],layers[index+delta]]=[layers[index+delta],layers[index]]; update({layers});
+  };
   return (
     <div className="show-creator">
       <header className="creator-command">
@@ -153,7 +180,7 @@ export default function ShowCreator({
           </p>
         </div>
         <div className="creator-actions">
-          <button onClick={onSongBank}>Song Bank</button><button onClick={onTimeline}>Open Timeline ↗</button>
+          <button onClick={onSongBank}>Song Bank</button><button disabled={!sections.length || !onSaveSong} onClick={onSaveSong}>Save to Song Library</button><button onClick={onTimeline}>Open Timeline ↗</button>
           <button
             className="console-primary"
             disabled={!sections.length || !fixtures.length}
@@ -241,8 +268,8 @@ export default function ShowCreator({
                     onDrop={(e) => {
                       e.preventDefault();
                       const recipeId=e.dataTransfer.getData("application/lumarig-fx");
-                      if(FX_RECIPES.some(r=>r.id===recipeId)) {
-                        setSections(all=>all.map(item=>item.id!==s.id||item.layers.length>=8?item:{...item,layers:[...item.layers,{id:crypto.randomUUID(),recipeId,groupId:item.groupId,energy:70,enabled:true}]}));
+                      if(recipes.some(r=>r.id===recipeId)) {
+                        setSections(all=>all.map(item=>item.id!==s.id||item.layers.length>=8?item:{...item,layers:[...item.layers,{id:crypto.randomUUID(),recipeId,customEffect:recipeId.startsWith("custom:")?structuredClone(recipes.find(r=>r.id===recipeId)?.effect):undefined,groupId:item.groupId,energy:70,enabled:true}]}));
                       } else move(dragId, s.id);
                       setDragId("");
                     }}
@@ -329,7 +356,7 @@ export default function ShowCreator({
             </div>
           </section>
           {selected && (
-            <section className="creator-card section-editor" onDragOver={e=>{if(e.dataTransfer.types.includes("application/lumarig-fx"))e.preventDefault();}} onDrop={e=>{const id=e.dataTransfer.getData("application/lumarig-fx");if(FX_RECIPES.some(r=>r.id===id)){e.preventDefault();addLayer(id);}}}>
+            <section className="creator-card section-editor" onDragOver={e=>{if(e.dataTransfer.types.includes("application/lumarig-fx"))e.preventDefault();}} onDrop={e=>{const id=e.dataTransfer.getData("application/lumarig-fx");if(recipes.some(r=>r.id===id)){e.preventDefault();addLayer(id);}}}>
               <header className="section-editor-header">
                 <span>SECTION DESIGN</span>
                 <strong>{selected.name}</strong>
@@ -383,20 +410,7 @@ export default function ShowCreator({
                 </label>
                 <label>
                   Section tempo
-                  <input
-                    type="number"
-                    min={20}
-                    max={300}
-                    value={selected.bpm}
-                    onChange={(e) =>
-                      update({
-                        bpm: Math.max(
-                          20,
-                          Math.min(300, Number(e.target.value)),
-                        ),
-                      })
-                    }
-                  />
+                  <TempoInput label="Section tempo" value={selected.bpm} onChange={value=>update({bpm:value})} />
                 </label>
                 <label>
                   Fade ms
@@ -417,6 +431,7 @@ export default function ShowCreator({
                   />
                 </label>
               </div>
+              <label className="section-notes">Notes<textarea aria-label="Section notes" maxLength={4000} value={selected.notes ?? ''} onChange={e=>update({notes:e.target.value})} placeholder="Programming or performance notes" /></label>
               <div className="section-colors">
                 {SHOW_COLORS.map((c) => (
                   <button
@@ -477,6 +492,7 @@ export default function ShowCreator({
               </div>
               <header>
                 <span>STACKED FX</span>
+                <button disabled={selected.layers.length>=8} onClick={()=>update({layers:[...selected.layers,{id:crypto.randomUUID(),recipeId:'custom:steps',customEffect:createStepProgram(selected.bpm,selected.color),stepEditor:true,groupId:selected.groupId,energy:100,enabled:true}]})}>＋ Step Editor</button>
                 <small>
                   {selected.layers.length} / 8 · last layer wins shared
                   attributes
@@ -497,10 +513,11 @@ export default function ShowCreator({
                       aria-label={`Layer ${index + 1} FX`}
                       value={l.recipeId}
                       onChange={(e) =>
-                        layerChange(l.id, { recipeId: e.target.value })
+                        layerChange(l.id, { recipeId: e.target.value, stepEditor: false, customEffect: e.target.value.startsWith('custom:') ? structuredClone(recipes.find(r=>r.id===e.target.value)?.effect) : undefined })
                       }
                     >
-                      {FX_RECIPES.map((r) => (
+                      {l.customEffect&&!recipes.some(r=>r.id===l.recipeId)&&<option value={l.recipeId}>{l.customEffect.name}</option>}
+                      {recipes.map((r) => (
                         <option key={r.id} value={r.id}>
                           {r.name}
                         </option>
@@ -540,10 +557,32 @@ export default function ShowCreator({
                     >
                       ×
                     </button>
+                    {l.stepEditor&&l.customEffect&&<StepEditor effect={l.customEffect} onChange={customEffect=>layerChange(l.id,{customEffect})}/>}
+                    <div className="layer-controls">
+                      <label>Intensity %<input aria-label={`Layer ${index+1} intensity`} type="number" min={0} max={100} value={l.intensity ?? selected.intensity} onChange={e=>layerChange(l.id,{intensity:Math.max(0,Math.min(100,Number(e.target.value)))})} /></label>
+                      <label>Color<input aria-label={`Layer ${index+1} color`} type="color" value={l.color ?? selected.color} onChange={e=>layerChange(l.id,{color:e.target.value})} /></label>
+                      <label>Cycle<select aria-label={`Layer ${index+1} musical cycle`} value={l.cycleBeats ?? ''} onChange={e=>layerChange(l.id,{cycleBeats:e.target.value ? Number(e.target.value):undefined})}>
+                        <option value="">Recipe default</option>{[[16,'4 Bars'],[8,'2 Bars'],[4,'1 Bar'],[2,'½ Bar'],[1,'1 Beat'],[0.5,'½ Beat'],[0.25,'¼ Beat'],[0.125,'⅛ Beat'],[0.0625,'1/16 Beat'],[1/3,'Beat Triplet']].map(([value,label])=><option key={value} value={value}>{label}</option>)}
+                      </select></label>
+                      <label>Rate<select aria-label={`Layer ${index+1} rate`} value={l.rateMultiplier ?? 1} onChange={e=>layerChange(l.id,{rateMultiplier:Number(e.target.value)})}>{[0.25,0.5,1,2,3,4,8].map(rate=><option key={rate} value={rate}>{rate}×</option>)}</select></label>
+                      <label>Phase (beats)<input aria-label={`Layer ${index+1} phase`} type="number" min={-32} max={32} step={0.25} value={l.phaseOffsetBeats ?? 0} onChange={e=>layerChange(l.id,{phaseOffsetBeats:Math.max(-32,Math.min(32,Number(e.target.value)))})} /></label>
+                      <label>Phase spread %<input aria-label={`Layer ${index+1} phase spread`} type="number" min={0} max={200} value={l.phaseSpread ?? recipes.find(r=>r.id===l.recipeId)?.effect.phaseSpread ?? 0} onChange={e=>layerChange(l.id,{phaseSpread:Math.max(0,Math.min(200,Number(e.target.value)))})} /></label>
+                      <label>Direction<select aria-label={`Layer ${index+1} direction`} value={l.direction ?? 'forward'} onChange={e=>layerChange(l.id,{direction:e.target.value as 'forward'|'reverse'})}><option value="forward">Forward</option><option value="reverse">Reverse</option></select></label>
+                      <label>Offset %<input aria-label={`Layer ${index+1} offset`} type="number" min={-100} max={100} value={l.offset ?? recipes.find(r=>r.id===l.recipeId)?.effect.offset ?? 0} onChange={e=>layerChange(l.id,{offset:Math.max(-100,Math.min(100,Number(e.target.value)))})} /></label>
+                      {(recipes.find(r=>r.id===l.recipeId)?.category==='Movement') && <label>Movement<select aria-label={`Layer ${index+1} movement`} value={l.motionShape ?? 'circle'} onChange={e=>layerChange(l.id,{motionShape:e.target.value as CustomEffect['motionShape']})}>{['circle','figure-eight','diagonal','pan-sweep','tilt-sweep'].map(shape=><option key={shape}>{shape}</option>)}</select></label>}
+                      <div className="layer-order"><button aria-label={`Move layer ${index+1} up`} disabled={index===0} onClick={()=>reorderLayer(index,-1)}>↑</button><button aria-label={`Move layer ${index+1} down`} disabled={index===selected.layers.length-1} onClick={()=>reorderLayer(index,1)}>↓</button><button onClick={()=>layerChange(l.id,{intensity:undefined,color:undefined,cycleBeats:undefined,rateMultiplier:undefined,phaseOffsetBeats:undefined,phaseSpread:undefined,direction:undefined,offset:undefined,motionShape:undefined})}>Reset Layer</button></div>
+                    </div>
                   </div>
                 ))}
               </div>
               <div className="creator-actions creator-actions-footer">
+                <button onClick={()=>add({...cloneSection(selected),name:selected.name+' Copy'})} disabled={sections.length>=200}>Duplicate Section</button>
+                <button onClick={()=>{setCopiedSection(structuredClone(selected));void navigator.clipboard?.writeText(JSON.stringify(selected)).catch(()=>{});}}>Copy Section</button>
+                <button disabled={sections.length>=200} onClick={async()=>{
+                  let source=copiedSection;
+                  try { const parsed:unknown=JSON.parse(await navigator.clipboard.readText()); if(isShowSection(parsed))source=parsed; } catch {}
+                  if(source)add(cloneSection(source));
+                }}>Paste Section</button>
                 <button
                   onClick={() => {
                     const next = [
@@ -563,7 +602,7 @@ export default function ShowCreator({
           <section className="creator-card">
             <header>
               <span>FX RECIPE LIBRARY</span>
-              <small>{FX_RECIPES.length} recipes</small>
+              <small>{recipes.length} recipes</small>
             </header>
             <p className="creator-hint">
               Add recipes to the selected section. Row FX use a group's
@@ -576,7 +615,7 @@ export default function ShowCreator({
               onChange={(e) => setQuery(e.target.value)}
             />
             <div className="recipe-filters">
-              {["All", "Intensity", "Rows", "Movement", "Color"].map((c) => (
+              {["All", "Favorites", "Intensity", "Rows", "Movement", "Color", "Custom"].map((c) => (
                 <button
                   key={c}
                   className={category === c ? "active" : ""}
@@ -587,9 +626,9 @@ export default function ShowCreator({
               ))}
             </div>
             <div className="recipe-list">
-              {FX_RECIPES.filter(
+              {recipes.filter(
                 (r) =>
-                  (category === "All" || r.category === category) &&
+                  (category === "All" || (category === "Favorites" ? favorites.includes(r.id) : r.category === category)) &&
                   `${r.name} ${r.description}`
                     .toLowerCase()
                     .includes(query.toLowerCase()),
@@ -601,6 +640,7 @@ export default function ShowCreator({
                     <p>{r.description}</p>
                   </div>
                   <div>
+                    <button aria-label={`Favorite ${r.name}`} aria-pressed={favorites.includes(r.id)} onClick={()=>favorite(r.id)}>{favorites.includes(r.id)?'★':'☆'}</button>
                     <button
                       disabled={Boolean(
                         selected && selected.layers.length >= 8,

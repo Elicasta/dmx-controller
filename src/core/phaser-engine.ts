@@ -128,7 +128,7 @@ export function phaserStepValue(steps: readonly PhaserStep[], phase: number): nu
 
 export function phaserCycleMs(effect: Pick<PhaserTiming, 'bpm' | 'cycleBeats'>): number {
   const bpm = Math.max(20, Math.min(300, Number.isFinite(effect.bpm) ? effect.bpm : 120));
-  const cycleBeats = Math.max(.125, Math.min(32, Number.isFinite(effect.cycleBeats) ? Number(effect.cycleBeats) : 1));
+  const cycleBeats = Math.max(.0625, Math.min(32, Number.isFinite(effect.cycleBeats) ? Number(effect.cycleBeats) : 1));
   return (60000 / bpm) * cycleBeats;
 }
 
