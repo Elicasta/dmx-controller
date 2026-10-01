@@ -6,6 +6,7 @@ import {
   type PointerEvent,
 } from "react";
 import type { ShowCue } from "../lib/show";
+import { beatSnapStep, estimateTempoFromSamples, type TempoEstimate } from "../core/audio-tempo";
 import {
   FX_RECIPES,
   barMs,
@@ -60,9 +61,10 @@ export default function ShowTimelineEditor(props: Props) {
   const [cursor, setCursor] = useState(props.initialBar ?? 0);
   const [playing, setPlaying] = useState(false);
   const [zoom, setZoom] = useState(36);
-  const [snap, setSnap] = useState(1);
+  const [snapMode, setSnapMode] = useState<"bar"|"beat"|"half-beat"|"quarter-beat"|"free">("bar");
   const [lanes, setLanes] = useState(3);
   const [peaks, setPeaks] = useState<number[]>([]);
+  const [tempoEstimate, setTempoEstimate] = useState<TempoEstimate | null>(null);
   const [audioError, setAudioError] = useState("");
   const undo = useRef<ShowTimeline[]>([]),
     redo = useRef<ShowTimeline[]>([]);
@@ -74,6 +76,10 @@ export default function ShowTimelineEditor(props: Props) {
     raf = useRef<number | null>(null),
     drag = useRef<Drag | null>(null);
   const msPerBar = barMs(timeline);
+  const snap = beatSnapStep(timeline.beatsPerBar, snapMode);
+  const beatWidth = zoom / Math.max(1, timeline.beatsPerBar);
+  const cursorBar = Math.floor(Math.max(0, cursor));
+  const cursorBeat = Math.min(timeline.beatsPerBar, Math.floor((Math.max(0, cursor) - cursorBar) * timeline.beatsPerBar) + 1);
   const clipEnd = Math.max(
     0,
     ...timeline.clips.map((c) => c.startBar + c.lengthBars),
@@ -233,6 +239,7 @@ export default function ShowTimelineEditor(props: Props) {
   useEffect(() => {
     let cancelled = false;
     setPeaks([]);
+    setTempoEstimate(null);
     if (!audioUrl) return;
     const context = new AudioContext();
     void fetch(audioUrl)
@@ -253,6 +260,7 @@ export default function ShowTimelineEditor(props: Props) {
           return peak;
         });
         setPeaks(next);
+        setTempoEstimate(estimateTempoFromSamples(samples, buffer.sampleRate));
       })
       .catch(() => {
         if (!cancelled)
@@ -340,6 +348,23 @@ export default function ShowTimelineEditor(props: Props) {
   const wavePath = peaks
     .map((p, i) => `M ${i} ${24 - p * 22} L ${i} ${24 + p * 22}`)
     .join(" ");
+
+  function applyTempoEstimate(alignBeatGrid: boolean) {
+    if (!tempoEstimate) return;
+    const nextBpm = tempoEstimate.bpm;
+    const nextBarMs = (60000 / nextBpm) * timeline.beatsPerBar;
+    let audioOffsetBars = timeline.audioOffsetBars;
+    if (alignBeatGrid && audioUrl) {
+      const beatMs = 60000 / nextBpm;
+      const currentStartMs = timeline.audioOffsetBars * nextBarMs;
+      const absoluteDetectedBeat = currentStartMs + tempoEstimate.firstBeatMs;
+      const alignedBeatMs = Math.max(0, Math.round(absoluteDetectedBeat / beatMs) * beatMs);
+      let nextStartMs = alignedBeatMs - tempoEstimate.firstBeatMs;
+      while (nextStartMs < 0) nextStartMs += beatMs;
+      audioOffsetBars = nextStartMs / nextBarMs;
+    }
+    edit({ ...timeline, bpm: nextBpm, audioOffsetBars });
+  }
   return (
     <div className="show-bar-timeline" data-history={historyVersion}
       onDragOver={(e) => { if (e.dataTransfer.types.includes("Files")) { e.preventDefault(); e.dataTransfer.dropEffect = "copy"; } }}
@@ -387,7 +412,7 @@ export default function ShowTimelineEditor(props: Props) {
           {playing ? "Pause" : "Play Show"}
         </button>
         <button onClick={stop}>Stop / Rewind</button>
-        <output>BAR {(cursor + 1).toFixed(2)}</output>
+        <output>BAR {cursorBar + 1} · BEAT {cursorBeat}</output>
         <label>
           BPM
           <input
@@ -422,12 +447,14 @@ export default function ShowTimelineEditor(props: Props) {
         <label>
           Snap
           <select
-            value={snap}
-            onChange={(e) => setSnap(Number(e.target.value))}
+            value={snapMode}
+            onChange={(e) => setSnapMode(e.target.value as "bar"|"beat"|"half-beat"|"quarter-beat"|"free")}
           >
-            <option value={1}>Bar</option>
-            <option value={0.25}>Quarter bar</option>
-            <option value={0.0625}>Fine</option>
+            <option value="bar">1 Bar</option>
+            <option value="beat">1 Beat</option>
+            <option value="half-beat">1/2 Beat</option>
+            <option value="quarter-beat">1/4 Beat</option>
+            <option value="free">Fine</option>
           </select>
         </label>
         <label>
@@ -458,6 +485,17 @@ export default function ShowTimelineEditor(props: Props) {
           />
         </label>
       </div>
+      {tempoEstimate && <section className="timeline-tempo-analysis">
+        <div>
+          <span>AUDIO ANALYSIS</span>
+          <strong>≈ {tempoEstimate.bpm} BPM</strong>
+          <small>{Math.round(tempoEstimate.confidence * 100)}% confidence · detected beat phase {Math.round(tempoEstimate.firstBeatMs)} ms</small>
+        </div>
+        <div>
+          <button disabled={playing} onClick={() => applyTempoEstimate(false)}>Use BPM</button>
+          <button className="console-primary" disabled={playing} onClick={() => applyTempoEstimate(true)}>Use BPM + Align Beats</button>
+        </div>
+      </section>}
       <div className="timeline-edit-layout">
         <aside className="timeline-cue-library">
           <div className="timeline-library-tabs"><button aria-label="Cue library" aria-pressed={libraryMode==="cues"} onClick={()=>setLibraryMode("cues")}>Cues</button><button aria-pressed={libraryMode==="fx"} onClick={()=>setLibraryMode("fx")}>FX recipes</button></div>
@@ -499,10 +537,14 @@ export default function ShowTimelineEditor(props: Props) {
               style={{ width: totalBars * zoom + 100 }}
             >
               <div className="timeline-ruler-row">
-                <div className="lane-label">BARS</div>
+                <div className="lane-label">BARS · {timeline.beatsPerBar}/4</div>
                 <div
                   className="bar-ruler"
-                  style={{ width: totalBars * zoom }}
+                  style={{
+                    width: totalBars * zoom,
+                    "--bar-width": `${zoom}px`,
+                    "--beat-width": `${beatWidth}px`,
+                  } as import("react").CSSProperties}
                   onClick={(e) => {
                     pause();
                     seek(
@@ -530,6 +572,7 @@ export default function ShowTimelineEditor(props: Props) {
                     {
                       width: totalBars * zoom,
                       "--bar-width": `${zoom}px`,
+                      "--beat-width": `${beatWidth}px`,
                     } as import("react").CSSProperties
                   }
                   onDragOver={(e) => {
@@ -618,6 +661,7 @@ export default function ShowTimelineEditor(props: Props) {
                       {
                         width: totalBars * zoom,
                         "--bar-width": `${zoom}px`,
+                      "--beat-width": `${beatWidth}px`,
                       } as import("react").CSSProperties
                     }
                     onDragOver={(e) => {
