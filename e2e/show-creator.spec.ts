@@ -879,11 +879,28 @@ test('section layers keep independent settings, priority and Song library saves'
   await page.getByRole('button',{name:'Save to Song Library',exact:true}).click();
   await expect.poll(async()=> (await readShow(page)).cues?.length).toBe(8);
   await page.getByRole('button',{name:'Song Bank',exact:true}).click();
-  await expect(page.locator('.saved-song-program')).toHaveCount(1);
+  await expect(page.locator('.reusable-song-library article')).toHaveCount(1);
   await page.reload();
   await page.getByRole('button',{name:'SHOW',exact:true}).click();
   await page.getByRole('button',{name:'Show Creator',exact:true}).click();
   await expect(page.getByLabel('Section notes')).toHaveValue('Audience hit on beat four');
   await expect(page.getByLabel('Layer 1 intensity',{exact:true})).toHaveValue('80');
   await page.screenshot({path:info.outputPath('section-layer-controls.png')});
+});
+
+test('Programmer exposes Visualizer-backed orthographic views and keeps them while zooming', async({page},info)=>{
+  await seed(page); await page.goto('/');
+  await page.getByRole('button',{name:'CREATE',exact:true}).click();
+  await page.getByRole('button',{name:'Programmer',exact:true}).click();
+  const viz=page.locator('.programmer-stage .visualizer-3d');
+  for(const name of ['Top','Front','Side']){
+    await viz.getByRole('button',{name,exact:true}).click();
+    await expect(viz).toHaveAttribute('data-projection','orthographic');
+    await viz.locator('canvas').hover();
+    await page.mouse.wheel(0,80);
+    await expect(viz).toHaveAttribute('data-camera',name.toLowerCase());
+  }
+  await viz.getByRole('button',{name:'Perspective',exact:true}).click();
+  await expect(viz).toHaveAttribute('data-projection','perspective');
+  await page.screenshot({path:info.outputPath('programmer-orthographic-views.png')});
 });

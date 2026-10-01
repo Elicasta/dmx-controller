@@ -27,5 +27,8 @@ Browser checks cover cached waveform, trim playback, lane seeking, keyboard step
 - Supported rates: ¼×, ½×, 1×, 2×, 3×, 4×, 8×. Cycles include bars, half/quarter/eighth/sixteenth beats and triplets.
 - Favorites are preferences in localStorage; they are not part of the reusable Song master.
 
+## Visualizer programming views
+Perspective, Top, Front and Side use the same scene renderer. Orthographic views preserve scale across depth; zoom preserves the selected projection. Dragging switches to free perspective orbit.
+
 ## Still to complete
-Managed native media/relink workflow, video output, orthographic Visualizer views, beam/surface rendering, Step Editor and Recording editing/overdub remain in the ordered refinement backlog. External linking comes last.
+Managed native media/relink workflow, video output, beam/surface rendering, Step Editor and Recording editing/overdub remain in the ordered refinement backlog. External linking comes last.

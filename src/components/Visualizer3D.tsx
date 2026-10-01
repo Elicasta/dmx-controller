@@ -676,7 +676,9 @@ function drawAssetDetails(
 }
 
 function cameraLabel(selection: CameraSelection) {
-  if (selection === 'foh') return 'FOH';
+  if (selection === 'foh') return 'Perspective';
+  if (selection === 'front') return 'Front';
+  if (selection === 'side') return 'Side';
   if (selection === 'stage-left') return 'Stage Left';
   if (selection === 'stage-right') return 'Stage Right';
   if (selection === 'top') return 'Top';
@@ -705,6 +707,7 @@ export default function Visualizer3D({
   const flybyStartRef = useRef(0);
   const [cameraSelection, setCameraSelection] = useState<CameraSelection>('foh');
   const [orbit, setOrbit] = useState(() => cameraOrbitFromPose(visualizerCameraPreset('foh', snapshot.dimensions)));
+  const [orthographicZoom, setOrthographicZoom] = useState(1);
   const [haze, setHaze] = useState(.68);
   const [showCrowd, setShowCrowd] = useState(false);
   const [quality, setQuality] = useState<VisualizerQuality>('quality');
@@ -721,6 +724,7 @@ export default function Visualizer3D({
   function selectCamera(preset: VisualizerCameraPreset) {
     const camera = visualizerCameraPreset(preset, snapshot.dimensions);
     setCameraSelection(preset);
+    setOrthographicZoom(1);
     setOrbit(cameraOrbitFromPose(camera));
     setPlayingFlyby(false);
   }
@@ -819,6 +823,10 @@ export default function Visualizer3D({
         context.setTransform(dpr, 0, 0, dpr, 0, 0);
 
         let camera = orbitVisualizerCamera(target, orbit.yaw, orbit.pitch, orbit.distance, 50);
+        if (cameraSelection === 'top' || cameraSelection === 'front' || cameraSelection === 'side') {
+          camera = visualizerCameraPreset(cameraSelection, snapshot.dimensions);
+          camera.orthographicSize = (camera.orthographicSize ?? 10) * orthographicZoom;
+        }
         if (playingFlyby) {
           if (!flybyStartRef.current) flybyStartRef.current = now;
           const progress = (now - flybyStartRef.current) / FLYBY_MS;
@@ -869,7 +877,7 @@ export default function Visualizer3D({
       disposed = true;
       window.cancelAnimationFrame(frame);
     };
-  }, [snapshot, orbit, haze, showCrowd, quality, compact, playingFlyby, cameraSelection, target, mediaRevision, selectedElementId]);
+  }, [snapshot, orbit, haze, showCrowd, quality, compact, playingFlyby, cameraSelection, orthographicZoom, target, mediaRevision, selectedElementId]);
 
   function beginOrbit(event: ReactPointerEvent<HTMLCanvasElement>) {
     if (event.button !== 0 && event.pointerType === 'mouse') return;
@@ -917,6 +925,10 @@ export default function Visualizer3D({
   function zoom(event: ReactWheelEvent<HTMLCanvasElement>) {
     event.preventDefault();
     setPlayingFlyby(false);
+    if (cameraSelection === 'top' || cameraSelection === 'front' || cameraSelection === 'side') {
+      setOrthographicZoom(current => clamp(current * (event.deltaY > 0 ? 1.08 : .92), .2, 4));
+      return;
+    }
     setCameraSelection('custom');
     setOrbit((current) => ({
       ...current,
@@ -935,10 +947,10 @@ export default function Visualizer3D({
     setPlayingFlyby(true);
   }
 
-  return <section ref={hostRef} className={`visualizer-3d ${compact ? 'compact' : ''} ${className}`}>
+  return <section ref={hostRef} data-projection={cameraSelection === "top" || cameraSelection === "front" || cameraSelection === "side" ? "orthographic" : "perspective"} data-camera={cameraSelection} className={`visualizer-3d ${compact ? 'compact' : ''} ${className}`}>
     <div className="visualizer-3d-toolbar">
       <div className="visualizer-camera-bank" role="group" aria-label="Visualizer cameras">
-        {(['foh', 'stage-left', 'stage-right', 'top', 'close'] as VisualizerCameraPreset[]).map((preset) =>
+        {(['foh', 'top', 'front', 'side', 'stage-left', 'stage-right', 'close'] as VisualizerCameraPreset[]).map((preset) =>
           <button key={preset} className={cameraSelection === preset ? 'active' : ''} onClick={() => selectCamera(preset)}>{cameraLabel(preset)}</button>
         )}
       </div>
