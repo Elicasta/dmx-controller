@@ -88,10 +88,15 @@ export function estimateTempoFromSamples(
     .map((frame, index) => (frame - peakFrames[index]) * secondsPerFrame)
     .filter((seconds) => seconds >= .18 && seconds <= 1.5);
   let preferredBpm: number | null = null;
+  let intervalConsistency = 0;
   if (intervals.length >= 3) {
-    preferredBpm = 60 / median(intervals);
+    const medianInterval = median(intervals);
+    preferredBpm = 60 / medianInterval;
     while (preferredBpm < 80) preferredBpm *= 2;
     while (preferredBpm > 180) preferredBpm /= 2;
+    const deviations = intervals.map((value) => Math.abs(value - medianInterval));
+    const relativeDeviation = median(deviations) / Math.max(.001, medianInterval);
+    intervalConsistency = clamp(1 - relativeDeviation / .2, 0, 1);
   }
 
   const candidates: Array<{ bpm: number; lag: number; score: number }> = [];
@@ -135,27 +140,23 @@ export function estimateTempoFromSamples(
   let best = candidates[0];
 
   if (preferredBpm !== null) {
-    const preferred = candidates
-      .filter((candidate) => Math.abs(candidate.bpm - preferredBpm!) <= 3)
-      .sort((a, b) => b.score - a.score)[0];
-    if (preferred && preferred.score >= best.score * .82) best = preferred;
+    const preferredRounded = Math.round(preferredBpm);
+    const preferred = candidates.find((candidate) => candidate.bpm === preferredRounded)
+      ?? candidates.reduce((nearest, candidate) =>
+        Math.abs(candidate.bpm - preferredBpm!) < Math.abs(nearest.bpm - preferredBpm!) ? candidate : nearest
+      );
+    if (intervalConsistency >= .72 || preferred.score >= best.score * .82) best = preferred;
   }
 
   const phaseScores = Array.from({ length: best.lag }, () => 0);
-  if (peakFrames.length) {
-    for (const frame of peakFrames) {
-      const phase = frame % best.lag;
-      const weight = novelty[frame];
-      phaseScores[phase] += weight;
-      phaseScores[(phase + 1) % best.lag] += weight * .2;
-      phaseScores[(phase - 1 + best.lag) % best.lag] += weight * .2;
-    }
-  } else {
+  if (!peakFrames.length) {
     for (let phase = 0; phase < best.lag; phase += 1) {
       for (let frame = phase; frame < frameCount; frame += best.lag) phaseScores[phase] += novelty[frame];
     }
   }
-  const bestPhase = phaseScores.reduce((winner, score, index) => score > phaseScores[winner] ? index : winner, 0);
+  const bestPhase = peakFrames.length
+    ? Math.round(((peakFrames[0] * secondsPerFrame * 1000) % (60000 / best.bpm)) / (secondsPerFrame * 1000)) % best.lag
+    : phaseScores.reduce((winner, score, index) => score > phaseScores[winner] ? index : winner, 0);
 
   const baseline = median(candidates.map((candidate) => candidate.score));
   const confidence = clamp((best.score - baseline) / Math.max(.08, 1 - baseline), 0, 1);
