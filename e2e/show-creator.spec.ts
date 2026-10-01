@@ -904,3 +904,41 @@ test('Programmer exposes Visualizer-backed orthographic views and keeps them whi
   await expect(viz).toHaveAttribute('data-projection','perspective');
   await page.screenshot({path:info.outputPath('programmer-orthographic-views.png')});
 });
+
+test('video output follows source seeks and pauses without editor chrome',async({page,context})=>{
+  await page.goto('/?media-output=1');
+  const output=await context.newPage();
+  await output.goto('/?media-output=1');
+  const sourceUrl=await page.evaluate(async()=>{
+    const canvas=document.createElement('canvas');canvas.width=320;canvas.height=180;
+    const ctx=canvas.getContext('2d')!;ctx.fillStyle='#224488';ctx.fillRect(0,0,320,180);
+    const stream=canvas.captureStream(10),chunks:BlobPart[]=[];
+    const recorder=new MediaRecorder(stream,{mimeType:'video/webm;codecs=vp8'});
+    const finished=new Promise<Blob>(resolve=>{recorder.ondataavailable=e=>chunks.push(e.data);recorder.onstop=()=>resolve(new Blob(chunks,{type:'video/webm'}));});
+    recorder.start();await new Promise(resolve=>setTimeout(resolve,1200));recorder.stop();
+    const blob=await finished;stream.getTracks().forEach(track=>track.stop());return URL.createObjectURL(blob);
+  });
+  await page.evaluate(url=>{
+    const channel=new BroadcastChannel('lumarig-media-output-v1');
+    channel.postMessage({type:'frame',state:{url,name:'video-test',position:.5,playing:false,sentAt:Date.now()}});
+    setTimeout(()=>channel.close(),100);
+  },sourceUrl);
+  await expect.poll(()=>output.getByLabel('Synchronized video output').evaluate((el:HTMLVideoElement)=>el.currentTime)).toBeCloseTo(.5,1);
+  expect(await output.getByLabel('Synchronized video output').evaluate((el:HTMLVideoElement)=>el.paused)).toBe(true);
+  await expect(output.locator('.show-workspace')).toHaveCount(0);
+  await expect(output.getByRole('button',{name:'Fullscreen',exact:true})).toBeAttached();
+  await page.evaluate(url=>{
+    const channel=new BroadcastChannel('lumarig-media-output-v1');
+    channel.postMessage({type:'frame',state:{url,name:'video-test',position:.2,playing:true,sentAt:Date.now()}});
+    setTimeout(()=>channel.close(),100);
+  },sourceUrl);
+  await expect.poll(()=>output.getByLabel('Synchronized video output').evaluate((el:HTMLVideoElement)=>el.currentTime)).toBeGreaterThan(.25);
+  await page.evaluate(url=>{
+    const channel=new BroadcastChannel('lumarig-media-output-v1');
+    channel.postMessage({type:'frame',state:{url,name:'video-test',position:.7,playing:false,sentAt:Date.now()}});
+    setTimeout(()=>channel.close(),100);
+  },sourceUrl);
+  await expect.poll(()=>output.getByLabel('Synchronized video output').evaluate((el:HTMLVideoElement)=>el.paused)).toBe(true);
+  await expect.poll(()=>output.getByLabel('Synchronized video output').evaluate((el:HTMLVideoElement)=>el.currentTime)).toBeCloseTo(.7,1);
+  await output.close();
+});

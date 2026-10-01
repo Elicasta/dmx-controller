@@ -1,3 +1,4 @@
+import { useMediaOutputPublisher } from "./components/MediaOutput";
 import { readProgramState, saveProgramState, type Recovery } from './lib/program-storage';
 import { insertSongProgram, programId, type SongProgram } from './lib/song-library';
 import SongBank from './components/SongBank';
@@ -848,6 +849,7 @@ export default function App() {
   const [showTrackDurationMs, setShowTrackDurationMs] = useState(0);
   const [showTrackPositionMs, setShowTrackPositionMs] = useState(0);
   const showTrackAudioRef = useRef<HTMLAudioElement | null>(null);
+  useMediaOutputPublisher(showTrackAudioRef, showTrackUrl, showTrackName);
   const cueLaunchGenerationRef = useRef(0);
   const timelineBaseRef = useRef<number[] | null>(null);
   const [recordingTakeName, setRecordingTakeName] = useState('');
@@ -3601,15 +3603,16 @@ export default function App() {
   }
   async function saveCreatorSongProgram() {
     if (!libraryReady) return;
-    const song = creatorSong;
-    if (!song) { setMessage('Choose a Song in Song Bank before saving its programming.'); return; }
+    const targets = creatorSong ? [creatorSong] : songsForShow(showFileRef.current);
+    if (!targets.length) { setMessage('Add a Song or sections before saving.'); return; }
     setSaveStatus('Saving…');
     try {
-      const next = buildSong(showFileRef.current, song, patchRef.current);
+      let next = showFileRef.current;
+      for (const song of targets) next = buildSong(next, song, patchRef.current);
       setShowFile(next);
-      const saved = await saveAppProgramState(next, { forceId: programId(next, song), workspace: currentWorkspaceCheckpoint() });
+      const saved = await saveAppProgramState(next, { ...(creatorSong ? { forceId: programId(next, creatorSong) } : { capture: 'all' as const }), workspace: currentWorkspaceCheckpoint() });
       setSongLibrary(saved.programs); setSaveStatus('Saved');
-      setMessage(`${song.name} rebuilt and saved to Song Library with its sections, layers, timeline and media.`);
+      setMessage(`${targets.length} Song Program(s) rebuilt and saved with their sections, layers, timeline and media.`);
     } catch (error) { setSaveStatus('Save failed'); setMessage(String(error)); }
   }
   function buildCreatorSections() {

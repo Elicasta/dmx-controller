@@ -1,3 +1,4 @@
+import { openMediaOutput } from "./MediaOutput";
 import { waveformForBlob, displayPeaks, type Waveform } from '../lib/media-waveform';
 import { mediaWindow, mediaPosition, steppedBar } from '../lib/timeline-media';
 import ResizableWorkspace from './ResizableWorkspace';
@@ -442,6 +443,7 @@ export default function ShowTimelineEditor(props: Props) {
           {playing ? "Pause" : "Play Show"}
         </button>
         <button onClick={stop}>Stop / Rewind</button>
+        {/\.mp4$/i.test(audioName) && <button onClick={()=>void openMediaOutput().catch(error=>setAudioError(String(error)))}>Pop Out Video</button>}
         <button aria-label="Rewind timeline" onClick={() => seek(0)}>⏮</button>
         <button aria-label="Previous beat" onClick={() => seek(steppedBar(cursorRef.current, -1, timeline.beatsPerBar))}>‹ Beat</button>
         <button aria-label="Next beat" onClick={() => seek(steppedBar(cursorRef.current, 1, timeline.beatsPerBar))}>Beat ›</button>

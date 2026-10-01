@@ -30,5 +30,9 @@ Browser checks cover cached waveform, trim playback, lane seeking, keyboard step
 ## Visualizer programming views
 Perspective, Top, Front and Side use the same scene renderer. Orthographic views preserve scale across depth; zoom preserves the selected projection. Dragging switches to free perspective orbit.
 
+## Video output
+Timeline MP4 media can open a dedicated native output window. The output follows the main media element's source, position and playing state; audio stays in the main transport and output video is muted. Aspect ratio is preserved. Double-click or use Fullscreen to enter output fullscreen. Switching sources updates an already open output. Closing the main application ends output.
+The browser follower regression uses a real recorded video. Native window creation/fullscreen compile checks are covered by CI; physical multi-monitor playback still requires Mac verification.
+
 ## Still to complete
-Managed native media/relink workflow, video output, beam/surface rendering, Step Editor and Recording editing/overdub remain in the ordered refinement backlog. External linking comes last.
+Managed native media/relink workflow, stage screen file/image assignment, beam/surface rendering, Step Editor and Recording editing/overdub remain in the ordered refinement backlog. External linking comes last.
