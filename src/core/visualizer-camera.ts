@@ -98,11 +98,20 @@ export function screenRayFromVisualizerPoint(
   return { origin: { ...camera.position }, direction };
 }
 
-export function intersectVisualizerRayWithYPlane(ray: VisualizerRay, y: number): Vec3 | null {
-  if (Math.abs(ray.direction.y) < EPSILON) return null;
-  const distance = (y - ray.origin.y) / ray.direction.y;
+export function intersectVisualizerRayWithPlane(
+  ray: VisualizerRay,
+  axis: 'x' | 'y' | 'z',
+  value: number
+): Vec3 | null {
+  const direction = ray.direction[axis];
+  if (Math.abs(direction) < EPSILON) return null;
+  const distance = (value - ray.origin[axis]) / direction;
   if (distance <= 0) return null;
   return add(ray.origin, scale(ray.direction, distance));
+}
+
+export function intersectVisualizerRayWithYPlane(ray: VisualizerRay, y: number): Vec3 | null {
+  return intersectVisualizerRayWithPlane(ray, 'y', y);
 }
 
 export function projectVisualizerPoint(
