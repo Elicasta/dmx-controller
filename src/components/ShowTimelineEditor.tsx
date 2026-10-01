@@ -365,6 +365,18 @@ export default function ShowTimelineEditor(props: Props) {
     }
     edit({ ...timeline, bpm: nextBpm, audioOffsetBars });
   }
+
+  function alignCurrentAudioToBar() {
+    const audio = audioRef.current;
+    if (!audio || !audioUrl) return;
+    pause();
+    const audioBars = (audio.currentTime * 1000) / msPerBar;
+    const targetBar = Math.max(1, Math.ceil(audioBars - 1e-6));
+    edit({
+      ...timeline,
+      audioOffsetBars: Math.max(0, targetBar - audioBars),
+    });
+  }
   return (
     <div className="show-bar-timeline" data-history={historyVersion}
       onDragOver={(e) => { if (e.dataTransfer.types.includes("Files")) { e.preventDefault(); e.dataTransfer.dropEffect = "copy"; } }}
@@ -494,6 +506,7 @@ export default function ShowTimelineEditor(props: Props) {
         <div>
           <button disabled={playing} onClick={() => applyTempoEstimate(false)}>Use BPM</button>
           <button className="console-primary" disabled={playing} onClick={() => applyTempoEstimate(true)}>Use BPM + Align Beats</button>
+          <button disabled={playing || !audioUrl} onClick={alignCurrentAudioToBar}>Snap Current Audio to Bar</button>
         </div>
       </section>}
       <div className="timeline-edit-layout">
