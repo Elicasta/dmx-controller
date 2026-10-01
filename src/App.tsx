@@ -649,6 +649,7 @@ export default function App() {
   const [showRecovery, setShowRecovery] = useState<ShowRecoverySnapshot[]>(loadShowRecovery);
   const [transport, setTransport] = useState<TransportSnapshot>(() => makeTransportSnapshot());
   const [connections, setConnections] = useState<ConnectionMap>(() => makeConnectionMap());
+  const [externalTransportSource, setExternalTransportSource] = useState<TransportSource>('lumalive');
   const [liveBank, setLiveBank] = useState<LiveBank>('fixtures');
   const [liveProgrammerOpen, setLiveProgrammerOpen] = useState(false);
   const [livePaletteFamily, setLivePaletteFamily] = useState<LivePaletteFamily>('groups');
@@ -1067,6 +1068,52 @@ export default function App() {
   useEffect(() => { midiLearnMappingIdRef.current = midiLearnMappingId; }, [midiLearnMappingId]);
   useEffect(() => { audioArmedRef.current = audioArmed; }, [audioArmed]);
   useEffect(() => { showTrackUrlRef.current = showTrackUrl; }, [showTrackUrl]);
+  useEffect(() => {
+    setConnections((current) => {
+      let next = updateConnection(current, 'dmx', {
+        state: dmxStatus.connected ? 'connected' : dmxStatus.last_error ? 'error' : 'ready',
+        detail: dmxStatus.device_name || 'Virtual output'
+      });
+      next = updateConnection(next, 'visualizer', {
+        state: directStatus.clients > 0 ? 'connected' : 'ready',
+        detail: directStatus.clients > 0 ? `${directStatus.clients} external client(s)` : 'Integrated renderer ready'
+      });
+      next = updateConnection(next, 'lumastudio', {
+        state: studioBridgeStatus.connectedClients > 0 ? 'connected' : studioBridgeStatus.listening ? 'ready' : 'offline',
+        detail: studioBridgeStatus.connectedClients > 0 ? `${studioBridgeStatus.connectedClients} client(s)` : `Port ${studioBridgeStatus.port}`
+      });
+      next = updateConnection(next, 'midi-input', {
+        state: midiStatus.connected ? 'connected' : midiStatus.last_error ? 'error' : 'offline',
+        detail: midiStatus.input_name || 'No MIDI input'
+      });
+      next = updateConnection(next, 'lumalive', {
+        state: externalTransportSource === 'lumalive' && studioBridgeStatus.connectedClients > 0 ? 'connected' : 'ready',
+        detail: 'Shared transport route'
+      });
+      next = updateConnection(next, 'ableton', {
+        state: externalTransportSource === 'ableton' && studioBridgeStatus.connectedClients > 0 ? 'connected' : 'ready',
+        detail: 'MIDI / bridge route ready'
+      });
+      return next;
+    });
+  }, [dmxStatus.connected, dmxStatus.device_name, dmxStatus.last_error, directStatus.clients, studioBridgeStatus.connectedClients, studioBridgeStatus.listening, studioBridgeStatus.port, midiStatus.connected, midiStatus.input_name, midiStatus.last_error, externalTransportSource]);
+
+  useEffect(() => {
+    const source: TransportSource = tempoSource === 'midi'
+      ? 'midi'
+      : externalTransportRunning
+        ? externalTransportSource
+        : 'internal';
+    const bpm = tempoSource === 'midi' && midiBpm ? midiBpm : externalTransportRunning ? externalTrack.bpm : effectBpm;
+    const positionMs = externalTransportRunning ? externalSongPositionMs : showTrackPositionMs;
+    setTransport((current) => updateTransport(current, {
+      source,
+      playing: externalTransportRunning || Boolean(showTrackAudioRef.current && !showTrackAudioRef.current.paused),
+      bpm,
+      positionMs,
+      song: externalTrack.songName || showTrackName || undefined
+    }));
+  }, [tempoSource, midiBpm, externalTransportRunning, externalTransportSource, externalTrack.bpm, externalTrack.songName, effectBpm, externalSongPositionMs, showTrackPositionMs, showTrackName]);
   useEffect(() => {
     if (stageFixture) setOrganizerDraft(stageFixture);
   }, [stageFixture?.id]);
@@ -2415,6 +2462,13 @@ export default function App() {
         externalTransportRunningRef.current = playing;
         setEffectBpm(bpm);
         effectBpmRef.current = bpm;
+        setTransport((current) => updateTransport(current, {
+          source: externalTransportSource,
+          playing,
+          positionMs,
+          bpm,
+          song: externalTrack.songName || showTrackName || undefined
+        }));
       }
     });
     return dispatcher.dispatch(id, command);
