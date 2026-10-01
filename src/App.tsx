@@ -671,6 +671,7 @@ export default function App() {
     return () => window.clearInterval(timer);
   }, []);
 
+  const recoveryFingerprintRef = useRef('');
   const sharedShowRevisionRef = useRef(1);
   const [activeLocation, setActiveLocation] = useState<{id:string;name:string;estimated:boolean}|null>(null);
   const directSequenceRef = useRef(0);
@@ -1083,6 +1084,36 @@ export default function App() {
     try { window.localStorage.setItem(SHOW_RECOVERY_STORAGE_KEY, JSON.stringify(showRecovery)); }
     catch { /* recovery is best-effort and must never block the live application */ }
   }, [showRecovery]);
+  useEffect(() => {
+    const timer = window.setTimeout(() => {
+      const recoveryShow: ShowFile = {
+        ...sanitizeShow(showFile),
+        // Recorded takes can be enormous. They already persist in the active show;
+        // recovery focuses on show/song programming and stays lightweight.
+        recordings: []
+      };
+      const fingerprint = JSON.stringify({
+        show: recoveryShow,
+        patch: patch.map((fixture) => [fixture.id, fixture.address, fixture.profileId, fixture.modeId]),
+        stage: stageElements.map((element) => [element.id, element.transform, element.dimensions])
+      });
+      if (fingerprint === recoveryFingerprintRef.current) return;
+      recoveryFingerprintRef.current = fingerprint;
+      const snapshot: ShowRecoverySnapshot = {
+        id: `recovery-${Date.now().toString(36)}`,
+        savedAt: new Date().toISOString(),
+        reason: 'Autosave',
+        show: recoveryShow,
+        patch: patch.map((fixture, index) => migratePatchedFixture(fixture, index, patch.length, stageSettings.dimensions)),
+        stageElements: stageElements.map((element) => migrateStageElement(element, stageSettings.dimensions)),
+        stageSettings: { ...stageSettings, dimensions: { ...stageSettings.dimensions } },
+        looks: structuredClone(savedLooks)
+      };
+      setShowRecovery((current) => [snapshot, ...current].slice(0, 12));
+    }, 1400);
+    return () => window.clearTimeout(timer);
+  }, [showFile, patch, stageElements, stageSettings, savedLooks]);
+
   useEffect(() => window.localStorage.setItem(MIDI_STORAGE_KEY, JSON.stringify(midiMappings)), [midiMappings]);
   useEffect(() => window.localStorage.setItem(SETTINGS_STORAGE_KEY, JSON.stringify(settings)), [settings]);
   useEffect(() => {
@@ -1760,6 +1791,86 @@ export default function App() {
     if (activeCueId === id) setActiveCueId(null);
   }
 
+  function showHasProgramming(show: ShowFile = showFile) {
+    return Boolean(
+      show.cues.length
+      || (show.creatorSections?.length ?? 0)
+      || (show.timeline?.clips.length ?? 0)
+      || (show.timelineShows?.some((item) => item.timeline.clips.length) ?? false)
+      || (show.notes?.trim())
+    );
+  }
+
+  function checkpointRecovery(reason: string) {
+    const snapshot: ShowRecoverySnapshot = {
+      id: `recovery-${Date.now().toString(36)}`,
+      savedAt: new Date().toISOString(),
+      reason,
+      show: { ...sanitizeShow(showFile), recordings: [] },
+      patch: patch.map((fixture, index) => migratePatchedFixture(fixture, index, patch.length, stageSettings.dimensions)),
+      stageElements: stageElements.map((element) => migrateStageElement(element, stageSettings.dimensions)),
+      stageSettings: { ...stageSettings, dimensions: { ...stageSettings.dimensions } },
+      looks: structuredClone(savedLooks)
+    };
+    setShowRecovery((current) => [snapshot, ...current.filter((item) => item.id !== snapshot.id)].slice(0, 12));
+  }
+
+  function saveSongProgram(songName: string, announce = true) {
+    const cleanName = songName.trim();
+    if (!cleanName) return;
+    const existing = songLibrary.find((item) => item.name.toLowerCase() === cleanName.toLowerCase());
+    const program = deriveSongProgram(showFile, cleanName, existing?.id);
+    if (!program.sections.length && !program.cues.length) {
+      if (announce) setMessage(`No programming found for ${cleanName} yet.`);
+      return;
+    }
+    setSongLibrary((current) => [program, ...current.filter((item) => item.id !== program.id)].slice(0, 100));
+    if (announce) setMessage(`${cleanName} saved to Song Library.`);
+  }
+
+  function saveAllCurrentSongs(announce = false) {
+    const names = showSongNames(showFile);
+    if (!names.length) return;
+    const programs = names.map((name) => {
+      const existing = songLibrary.find((item) => item.name.toLowerCase() === name.toLowerCase());
+      return deriveSongProgram(showFile, name, existing?.id);
+    }).filter((program) => program.sections.length || program.cues.length);
+    setSongLibrary((current) => {
+      const replaced = new Set(programs.map((program) => program.id));
+      return [...programs, ...current.filter((item) => !replaced.has(item.id))].slice(0, 100);
+    });
+    if (announce) setMessage(`${programs.length} song program${programs.length === 1 ? '' : 's'} saved.`);
+  }
+
+  function loadSongProgram(program: SongProgram) {
+    checkpointRecovery(`Before loading song: ${program.name}`);
+    setShowFile((current) => sanitizeShow(mergeSongProgramIntoShow(current, program)));
+    setShowMode('creator');
+    setMessage(`${program.name} loaded from Song Library into ${showFile.name}.`);
+  }
+
+  function deleteSongProgram(id: string) {
+    const program = songLibrary.find((item) => item.id === id);
+    if (!program) return;
+    if (!window.confirm(`Delete the saved Song Program “${program.name}”? Shows already using it are not changed.`)) return;
+    setSongLibrary((current) => current.filter((item) => item.id !== id));
+    setMessage(`${program.name} removed from Song Library.`);
+  }
+
+  function restoreRecovery(snapshot: ShowRecoverySnapshot) {
+    clearShowAudio();
+    stopFade();
+    clearBusk(false);
+    if (activeEffectRef.current || activeCustomEffectIdRef.current) stopEffect(false);
+    setShowFile(sanitizeShow(snapshot.show));
+    setPatch(snapshot.patch.map((fixture, index) => migratePatchedFixture(fixture, index, snapshot.patch.length, snapshot.stageSettings.dimensions)));
+    setStageElements(snapshot.stageElements.map((element) => migrateStageElement(element, snapshot.stageSettings.dimensions)));
+    setStageSettings(snapshot.stageSettings);
+    setSavedLooks(snapshot.looks);
+    setActiveCueId(null);
+    setMessage(`Recovered ${snapshot.show.name} from ${new Date(snapshot.savedAt).toLocaleString()}.`);
+  }
+
   function saveShowProject(status: 'template' | 'draft' | 'show' = 'show') {
     const cleanName = showFile.name.trim() || 'Untitled Show';
     const existing = showLibrary.find((item) => item.name.toLowerCase() === cleanName.toLowerCase() && item.status === status);
@@ -1797,6 +1908,27 @@ export default function App() {
   }
 
   function newShowProject() {
+    if (showHasProgramming()) {
+      checkpointRecovery('Before New Show');
+      saveAllCurrentSongs(false);
+      const cleanName = showFile.name.trim() || 'Untitled Show';
+      const existingDraft = showLibrary.find((item) => item.name.toLowerCase() === cleanName.toLowerCase() && item.status === 'draft');
+      const snapshot: ShowProjectSnapshot = {
+        id: existingDraft?.id ?? `show-${Date.now().toString(36)}`,
+        name: cleanName,
+        savedAt: new Date().toISOString(),
+        status: 'draft',
+        revision: sharedShowRevisionRef.current,
+        lastEditor: 'lumarig',
+        show: sanitizeShow({ ...showFile, name: cleanName }),
+        patch: patch.map((fixture, index) => migratePatchedFixture(fixture, index, patch.length, stageSettings.dimensions)),
+        stageElements: stageElements.map((element) => migrateStageElement(element, stageSettings.dimensions)),
+        stageSettings: { ...stageSettings, dimensions: { ...stageSettings.dimensions } },
+        looks: structuredClone(savedLooks)
+      };
+      setShowLibrary((current) => [snapshot, ...current.filter((item) => item.id !== snapshot.id)].slice(0, 40));
+    }
+
     clearShowAudio();
     stopFade();
     clearBusk(false);
@@ -1810,7 +1942,9 @@ export default function App() {
     }
     setShowFile({ ...EMPTY_SHOW, name: nextName, cues: [], groups: [], positionPalettes: [], recordings: [], externalTrack: { ...DEFAULT_EXTERNAL_TRACK_SYNC } });
     setActiveCueId(null);
-    setMessage('New show started. Your fixture patch and stage remain available until you load another saved show.');
+    setMessage(showHasProgramming()
+      ? 'Previous programming autosaved as a Draft + Song Programs. New show started.'
+      : 'New show started. Your fixture patch and stage remain available.');
   }
 
   function deleteShowProject(id: string) {
