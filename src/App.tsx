@@ -4203,7 +4203,7 @@ export default function App() {
 
           {programMode === 'stage' && <div className="programmer-v3">
             <div className="programmer-stage-head"><div><span>PROGRAMMER</span><strong>{selectedFixtureTargets.length ? `${selectedFixtureTargets.length} fixture${selectedFixtureTargets.length === 1 ? '' : 's'} selected` : 'Select fixtures or a group'}</strong></div><div className="programmer-target-actions"><button onClick={selectAllFixtures}>ALL</button><button onClick={clearFixtureSelection}>CLEAR</button></div></div>
-            <div className="programmer-stage">{renderStagePreview(true)}</div>
+            <div className="programmer-stage programmer-visualizer-stage"><Visualizer3D snapshot={stageSnapshot} className="programmer-visualizer" selectedElementId={selectedStageElementId} onSelectElement={(id)=>{setSelectedStageElementId(id);clearFixtureSelection();}} onTransformElement={updateStageElementTransform}/></div>
             <DraggablePanelDeck
               storageKey="lumarig.programmer-panels.v1"
               className="programmer-attribute-deck programmer-attribute-deck-v4"
