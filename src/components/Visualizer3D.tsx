@@ -61,6 +61,57 @@ function scale(value: Vec3, amount: number): Vec3 {
   return { x: value.x * amount, y: value.y * amount, z: value.z * amount };
 }
 
+function subtract(a: Vec3, b: Vec3): Vec3 {
+  return { x: a.x - b.x, y: a.y - b.y, z: a.z - b.z };
+}
+
+function cross(a: Vec3, b: Vec3): Vec3 {
+  return {
+    x: a.y * b.z - a.z * b.y,
+    y: a.z * b.x - a.x * b.z,
+    z: a.x * b.y - a.y * b.x
+  };
+}
+
+function vectorLength(value: Vec3) {
+  return Math.hypot(value.x, value.y, value.z);
+}
+
+function normalize(value: Vec3): Vec3 {
+  const magnitude = Math.max(1e-6, vectorLength(value));
+  return scale(value, 1 / magnitude);
+}
+
+type BeamSurfaceHit = {
+  distance: number;
+  point: Vec3;
+  surface: 'floor' | 'ceiling' | 'wall';
+};
+
+function roomBeamHit(origin: Vec3, direction: Vec3, stage: StageDimensions, maxLength: number): BeamSurfaceHit | null {
+  const halfWidth = stage.roomWidth / 2;
+  const maxDepth = Math.max(stage.roomDepth, stage.depth);
+  const candidates: BeamSurfaceHit[] = [];
+
+  const addHit = (distance: number, surface: BeamSurfaceHit['surface']) => {
+    if (!Number.isFinite(distance) || distance <= .04 || distance > maxLength) return;
+    const point = add(origin, scale(direction, distance));
+    if (point.x < -halfWidth - .03 || point.x > halfWidth + .03) return;
+    if (point.y < -.03 || point.y > stage.roomHeight + .03) return;
+    if (point.z < -.03 || point.z > maxDepth + .03) return;
+    candidates.push({ distance, point, surface });
+  };
+
+  if (direction.y < -1e-4) addHit((0 - origin.y) / direction.y, 'floor');
+  if (direction.y > 1e-4) addHit((stage.roomHeight - origin.y) / direction.y, 'ceiling');
+  if (direction.x < -1e-4) addHit((-halfWidth - origin.x) / direction.x, 'wall');
+  if (direction.x > 1e-4) addHit((halfWidth - origin.x) / direction.x, 'wall');
+  if (direction.z < -1e-4) addHit((0 - origin.z) / direction.z, 'wall');
+  if (direction.z > 1e-4) addHit((maxDepth - origin.z) / direction.z, 'wall');
+
+  return candidates.sort((a, b) => a.distance - b.distance)[0] ?? null;
+}
+
 function rotateLocal(point: Vec3, rotation: EulerDegrees): Vec3 {
   const yaw = radians(rotation.yaw);
   const pitch = radians(rotation.pitch);
@@ -343,95 +394,106 @@ function drawBeams(
   haze: number,
   quality: VisualizerQuality
 ) {
-  const basis = cameraBasis(camera);
-  const maxLength = Math.max(snapshot.dimensions.roomDepth, snapshot.dimensions.depth * 2.1);
-  const layerCount = quality === 'high' ? 6 : quality === 'quality' ? 4 : 2;
+  const maxLength = Math.max(snapshot.dimensions.roomDepth, snapshot.dimensions.depth * 2.5);
+  const layerCount = quality === 'high' ? 7 : quality === 'quality' ? 5 : 3;
   ctx.save();
   ctx.globalCompositeOperation = 'lighter';
 
   snapshot.patch.forEach((fixture, index) => {
     const rawIntensity = fixtureIntensity(snapshot, fixture);
     if (rawIntensity <= .01) return;
-    const intensity = Math.pow(rawIntensity, 1.18);
+    const intensity = Math.pow(rawIntensity, 1.14);
     const geometry = fixtureGeometryState(snapshot.output, fixture, index, snapshot.patch.length, snapshot.dimensions);
-
-    let beamLength = maxLength;
-    let floorHit = false;
-    if (geometry.beam.direction.y < -.015) {
-      const floorDistance = (0 - geometry.beam.origin.y) / geometry.beam.direction.y;
-      if (floorDistance > .05 && floorDistance < beamLength) {
-        beamLength = floorDistance;
-        floorHit = true;
-      }
-    }
-
-    const endpoint = pointAlongRay(geometry.beam, beamLength);
+    const beamDirection = normalize(geometry.beam.direction);
+    const surfaceHit = roomBeamHit(geometry.beam.origin, beamDirection, snapshot.dimensions, maxLength);
+    const beamLength = surfaceHit?.distance ?? maxLength;
+    const endpoint = surfaceHit?.point ?? add(geometry.beam.origin, scale(beamDirection, beamLength));
     const radius = Math.max(.035, Math.tan(radians(geometry.beam.angleDegrees / 2)) * beamLength);
     const start = projectVisualizerPoint(geometry.beam.origin, camera, width, height);
     const end = projectVisualizerPoint(endpoint, camera, width, height);
     if (start.depth <= 0 || end.depth <= 0) return;
 
+    // Use two real perpendicular axes around the beam rather than one
+    // camera-facing ribbon. This keeps the volume readable from side/end angles.
+    let axisA = cross(beamDirection, { x: 0, y: 1, z: 0 });
+    if (vectorLength(axisA) < .02) axisA = cross(beamDirection, { x: 1, y: 0, z: 0 });
+    axisA = normalize(axisA);
+    const axisB = normalize(cross(beamDirection, axisA));
+    const volumeAxes = [axisA, axisB];
+
     const color = fixtureColor(snapshot, fixture);
-    const hazeGain = .22 + haze * .92;
-    const baseAlpha = clamp((quality === 'high' ? .26 : quality === 'quality' ? .22 : .16) * intensity * hazeGain, .025, .72);
+    const hazeGain = .2 + haze * 1.02;
+    const baseAlpha = clamp((quality === 'high' ? .29 : quality === 'quality' ? .235 : .17) * intensity * hazeGain, .02, .76);
 
     for (let layer = layerCount - 1; layer >= 0; layer -= 1) {
-      const normalized = (layer + 1) / layerCount;
-      const widthScale = .22 + normalized * .9;
+      const normalizedLayer = (layer + 1) / layerCount;
+      const widthScale = .16 + normalizedLayer * .92;
       const layerRadius = radius * widthScale;
-      const endLeft = projectVisualizerPoint(add(endpoint, scale(basis.right, -layerRadius)), camera, width, height);
-      const endRight = projectVisualizerPoint(add(endpoint, scale(basis.right, layerRadius)), camera, width, height);
-      if (endLeft.depth <= 0 || endRight.depth <= 0) continue;
+      const alpha = baseAlpha * (1 - normalizedLayer * .58) * (quality === 'high' ? 1.1 : 1);
 
-      const alpha = baseAlpha * (1 - normalized * .55) * (quality === 'high' ? 1.08 : 1);
-      const gradient = ctx.createLinearGradient(start.x, start.y, end.x, end.y);
-      gradient.addColorStop(0, rgba(color, alpha * 1.45));
-      gradient.addColorStop(.08, rgba(color, alpha * 1.25));
-      gradient.addColorStop(.58, rgba(color, alpha * .72));
-      gradient.addColorStop(1, rgba(color, floorHit ? alpha * .18 : 0));
+      for (const axis of volumeAxes) {
+        const endLeft = projectVisualizerPoint(add(endpoint, scale(axis, -layerRadius)), camera, width, height);
+        const endRight = projectVisualizerPoint(add(endpoint, scale(axis, layerRadius)), camera, width, height);
+        if (endLeft.depth <= 0 || endRight.depth <= 0) continue;
 
-      const sourceHalfWidth = Math.max(1.2, 4.5 * (1 - normalized * .6));
-      ctx.beginPath();
-      ctx.moveTo(start.x - sourceHalfWidth, start.y);
-      ctx.lineTo(start.x + sourceHalfWidth, start.y);
-      ctx.lineTo(endRight.x, endRight.y);
-      ctx.lineTo(endLeft.x, endLeft.y);
-      ctx.closePath();
-      ctx.fillStyle = gradient;
-      ctx.fill();
+        const gradient = ctx.createLinearGradient(start.x, start.y, end.x, end.y);
+        gradient.addColorStop(0, rgba(color, alpha * 1.5));
+        gradient.addColorStop(.07, rgba(color, alpha * 1.3));
+        gradient.addColorStop(.58, rgba(color, alpha * .72));
+        gradient.addColorStop(1, rgba(color, surfaceHit ? alpha * .22 : 0));
+
+        const sourceHalfWidth = Math.max(1.1, 4.8 * (1 - normalizedLayer * .62));
+        ctx.beginPath();
+        ctx.moveTo(start.x - sourceHalfWidth, start.y);
+        ctx.lineTo(start.x + sourceHalfWidth, start.y);
+        ctx.lineTo(endRight.x, endRight.y);
+        ctx.lineTo(endLeft.x, endLeft.y);
+        ctx.closePath();
+        ctx.fillStyle = gradient;
+        ctx.globalAlpha = volumeAxes.length > 1 ? .68 : 1;
+        ctx.fill();
+        ctx.globalAlpha = 1;
+      }
     }
 
     const core = ctx.createLinearGradient(start.x, start.y, end.x, end.y);
-    core.addColorStop(0, rgba(color, clamp(baseAlpha * 2.6, 0, .96)));
-    core.addColorStop(.35, rgba(color, clamp(baseAlpha * 1.35, 0, .75)));
-    core.addColorStop(1, rgba(color, floorHit ? baseAlpha * .2 : 0));
+    core.addColorStop(0, rgba(color, clamp(baseAlpha * 2.8, 0, .98)));
+    core.addColorStop(.34, rgba(color, clamp(baseAlpha * 1.4, 0, .78)));
+    core.addColorStop(1, rgba(color, surfaceHit ? baseAlpha * .28 : 0));
     ctx.strokeStyle = core;
-    ctx.lineWidth = quality === 'high' ? Math.max(1.4, intensity * 2.6) : Math.max(1, intensity * 1.8);
+    ctx.lineWidth = quality === 'high' ? Math.max(1.6, intensity * 2.8) : Math.max(1, intensity * 1.9);
     ctx.beginPath();
     ctx.moveTo(start.x, start.y);
     ctx.lineTo(end.x, end.y);
     ctx.stroke();
 
-    const sourceRadius = clamp((quality === 'high' ? 150 : 110) / start.depth, 5, quality === 'high' ? 24 : 17);
+    const sourceRadius = clamp((quality === 'high' ? 165 : 118) / Math.max(.4, start.depth), 5, quality === 'high' ? 26 : 18);
     const sourceGlow = ctx.createRadialGradient(start.x, start.y, 0, start.x, start.y, sourceRadius);
-    sourceGlow.addColorStop(0, rgba(color, clamp(intensity * .95, 0, .95)));
-    sourceGlow.addColorStop(.28, rgba(color, clamp(intensity * .42, 0, .55)));
+    sourceGlow.addColorStop(0, rgba(color, clamp(intensity, 0, .98)));
+    sourceGlow.addColorStop(.28, rgba(color, clamp(intensity * .46, 0, .58)));
     sourceGlow.addColorStop(1, rgba(color, 0));
     ctx.fillStyle = sourceGlow;
     ctx.beginPath();
     ctx.arc(start.x, start.y, sourceRadius, 0, Math.PI * 2);
     ctx.fill();
 
-    if (floorHit) {
-      const edge = projectVisualizerPoint(add(endpoint, scale(basis.right, radius * .6)), camera, width, height);
-      const poolRadius = clamp(Math.hypot(edge.x - end.x, edge.y - end.y), 5, 120);
-      const pool = ctx.createRadialGradient(end.x, end.y, 0, end.x, end.y, poolRadius);
-      pool.addColorStop(0, rgba(color, clamp(baseAlpha * 1.7, 0, .72)));
-      pool.addColorStop(.42, rgba(color, clamp(baseAlpha * .7, 0, .34)));
-      pool.addColorStop(1, rgba(color, 0));
-      ctx.fillStyle = pool;
+    if (surfaceHit) {
+      const projectedA = projectVisualizerPoint(add(endpoint, scale(axisA, radius * .7)), camera, width, height);
+      const projectedB = projectVisualizerPoint(add(endpoint, scale(axisB, radius * .7)), camera, width, height);
+      const radiusA = clamp(Math.hypot(projectedA.x - end.x, projectedA.y - end.y), 6, 150);
+      const radiusB = clamp(Math.hypot(projectedB.x - end.x, projectedB.y - end.y), 4, 120);
+      const spillRadius = Math.max(radiusA, radiusB);
+      const spill = ctx.createRadialGradient(end.x, end.y, 0, end.x, end.y, spillRadius);
+      spill.addColorStop(0, rgba(color, clamp(baseAlpha * 2, 0, .82)));
+      spill.addColorStop(.34, rgba(color, clamp(baseAlpha * .95, 0, .46)));
+      spill.addColorStop(1, rgba(color, 0));
+      ctx.fillStyle = spill;
       ctx.beginPath();
-      ctx.ellipse(end.x, end.y, poolRadius, Math.max(2, poolRadius * .34), 0, 0, Math.PI * 2);
+      if (surfaceHit.surface === 'floor' || surfaceHit.surface === 'ceiling') {
+        ctx.ellipse(end.x, end.y, spillRadius, Math.max(3, spillRadius * .38), 0, 0, Math.PI * 2);
+      } else {
+        ctx.ellipse(end.x, end.y, spillRadius, Math.max(4, spillRadius * .68), 0, 0, Math.PI * 2);
+      }
       ctx.fill();
     }
   });
@@ -760,7 +822,9 @@ function cameraLabel(selection: CameraSelection) {
   if (selection === 'foh') return 'FOH';
   if (selection === 'stage-left') return 'Stage Left';
   if (selection === 'stage-right') return 'Stage Right';
-  if (selection === 'top') return 'Top';
+  if (selection === 'top') return 'Top · Ortho';
+  if (selection === 'front') return 'Front · Ortho';
+  if (selection === 'side') return 'Side · Ortho';
   if (selection === 'close') return 'Close';
   return 'Custom';
 }
@@ -801,7 +865,7 @@ export default function Visualizer3D({
   const [cameraSelection, setCameraSelection] = useState<CameraSelection>('foh');
   const [orbit, setOrbit] = useState(() => cameraOrbitFromPose(visualizerCameraPreset('foh', snapshot.dimensions)));
   const [haze, setHaze] = useState(.68);
-  const [showCrowd, setShowCrowd] = useState(true);
+  const [showCrowd, setShowCrowd] = useState(false);
   const [quality, setQuality] = useState<VisualizerQuality>('high');
   const [transformMode, setTransformMode] = useState<VisualizerTransformMode>('navigate');
   const [playingFlyby, setPlayingFlyby] = useState(false);
@@ -1101,7 +1165,7 @@ export default function Visualizer3D({
   return <section ref={hostRef} className={`visualizer-3d ${compact ? 'compact' : ''} ${className}`}>
     <div className="visualizer-3d-toolbar">
       <div className="visualizer-camera-bank" role="group" aria-label="Visualizer cameras">
-        {(['foh', 'stage-left', 'stage-right', 'top', 'close'] as VisualizerCameraPreset[]).map((preset) =>
+        {(['foh', 'front', 'side', 'top', 'stage-left', 'stage-right', 'close'] as VisualizerCameraPreset[]).map((preset) =>
           <button key={preset} className={cameraSelection === preset ? 'active' : ''} onClick={() => selectCamera(preset)}>{cameraLabel(preset)}</button>
         )}
       </div>
