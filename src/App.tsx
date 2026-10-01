@@ -3888,7 +3888,7 @@ export default function App() {
           onSelectScenery={(id) => { setSelectedStageElementId(id); clearFixtureSelection(); setSetupView('stage'); setStageMode('select'); }}
         />
 
-        <div className="setup-center console-center">
+        <div className={`setup-center console-center ${setupView === 'stage' ? 'stage-workspace-center' : ''}`}>
           {setupView === 'stage' && <>
             <div className="stage-console-toolbar">
               <div role="toolbar" aria-label="Stage Designer mode">{STAGE_DESIGNER_MODES.map((mode) => <button key={mode.id} className={stageMode === mode.id ? 'active' : ''} onClick={() => { setStageMode(mode.id); if (mode.id !== 'select') setProgramStageView('plot'); }}>{mode.label}</button>)}</div>
