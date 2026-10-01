@@ -76,6 +76,10 @@ export default function ShowTimelineEditor(props: Props) {
     redo = useRef<ShowTimeline[]>([]);
   const [historyVersion, setHistoryVersion] = useState(0);
   const latest = useRef(props);
+  const cursorRef = useRef(props.initialBar ?? 0),
+    playingRef = useRef(false),
+    raf = useRef<number | null>(null),
+    drag = useRef<Drag | null>(null);
   latest.current = props;
   zoomRef.current = zoom;
   followPlayheadRef.current = followPlayhead;
@@ -83,10 +87,6 @@ export default function ShowTimelineEditor(props: Props) {
     const next = clamp(masterBpm, 20, 300);
     if (!playingRef.current && latest.current.timeline.bpm !== next) latest.current.onChange({ ...latest.current.timeline, bpm: next });
   }, [masterBpm]);
-  const cursorRef = useRef(props.initialBar ?? 0),
-    playingRef = useRef(false),
-    raf = useRef<number | null>(null),
-    drag = useRef<Drag | null>(null);
   const msPerBar = barMs(timeline);
   const clipEnd = Math.max(
     0,
