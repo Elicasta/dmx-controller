@@ -127,22 +127,28 @@ function rgba(color: string, alpha: number) {
 function fixtureColor(snapshot: VisualizerSnapshot, fixture: PatchedFixture): string {
   const mode = findMode(fixture);
   const has = (parameter: string) => mode?.channels.some((channel) => channel.parameter === parameter) ?? false;
-  const red = has('red') ? readFixtureParameter(snapshot.output, fixture, 'red') : 255;
-  const green = has('green') ? readFixtureParameter(snapshot.output, fixture, 'green') : 255;
-  const blue = has('blue') ? readFixtureParameter(snapshot.output, fixture, 'blue') : 255;
+  const hasRgb = has('red') || has('green') || has('blue');
+  const red = has('red') ? readFixtureParameter(snapshot.output, fixture, 'red') : hasRgb ? 0 : 255;
+  const green = has('green') ? readFixtureParameter(snapshot.output, fixture, 'green') : hasRgb ? 0 : 255;
+  const blue = has('blue') ? readFixtureParameter(snapshot.output, fixture, 'blue') : hasRgb ? 0 : 255;
   const white = has('white') ? readFixtureParameter(snapshot.output, fixture, 'white') : 0;
   const amber = has('amber') ? readFixtureParameter(snapshot.output, fixture, 'amber') : 0;
-  const r = clamp(red + white * .7 + amber * .85, 0, 255);
-  const g = clamp(green + white * .7 + amber * .35, 0, 255);
-  const b = clamp(blue + white * .7, 0, 255);
+  const uv = has('uv') ? readFixtureParameter(snapshot.output, fixture, 'uv') : 0;
+  const r = clamp(red + white * .72 + amber * .92 + uv * .34, 0, 255);
+  const g = clamp(green + white * .72 + amber * .46 + uv * .05, 0, 255);
+  const b = clamp(blue + white * .76 + uv * .95, 0, 255);
   return `rgb(${Math.round(r)},${Math.round(g)},${Math.round(b)})`;
 }
 
 function fixtureIntensity(snapshot: VisualizerSnapshot, fixture: PatchedFixture): number {
   if (snapshot.blackout) return 0;
   const mode = findMode(fixture);
-  const hasDimmer = mode?.channels.some((channel) => channel.parameter === 'dimmer') ?? false;
-  return hasDimmer ? readFixtureParameter(snapshot.output, fixture, 'dimmer') / 255 : 1;
+  const has = (parameter: string) => mode?.channels.some((channel) => channel.parameter === parameter) ?? false;
+  if (has('dimmer')) return readFixtureParameter(snapshot.output, fixture, 'dimmer') / 255;
+  const additive = ['red', 'green', 'blue', 'white', 'amber', 'uv']
+    .filter(has)
+    .map((parameter) => readFixtureParameter(snapshot.output, fixture, parameter as 'red' | 'green' | 'blue' | 'white' | 'amber' | 'uv'));
+  return additive.length ? Math.max(...additive) / 255 : 1;
 }
 
 function polygon(ctx: CanvasRenderingContext2D, points: readonly Projected[]) {
