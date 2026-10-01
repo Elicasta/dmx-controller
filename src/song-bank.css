@@ -1,0 +1,304 @@
+.song-bank {
+  min-height: 0;
+  overflow: auto;
+  padding: 18px;
+  color: #dfe8ee;
+  background: #090e12;
+}
+.song-bank > header {
+  display: flex;
+  justify-content: space-between;
+  align-items: start;
+  gap: 16px;
+  margin-bottom: 18px;
+}
+.song-bank h2 {
+  margin: 6px 0;
+  font-size: 22px;
+}
+.song-bank p {
+  color: #9bafb9;
+  font-size: 12px;
+}
+.song-bank > header span {
+  color: #70e5ac;
+  font-size: 10px;
+  letter-spacing: 0.12em;
+  font-weight: 800;
+}
+.song-bank form {
+  display: grid;
+  grid-template-columns: minmax(160px, 1fr) auto minmax(160px, 1fr);
+  gap: 10px;
+  margin-bottom: 14px;
+}
+.song-bank input,
+.song-bank button,
+.song-bank .file-button {
+  min-height: 36px;
+  padding: 8px 10px;
+  border: 1px solid #33424c;
+  border-radius: 4px;
+  background: #132029;
+  color: #e1eaf0;
+  font-size: 12px;
+  min-width: 0;
+}
+.song-bank input {
+  background: #080f14;
+}
+.song-bank button.console-primary {
+  background: #70e5ac;
+  color: #071c13;
+}
+.song-bank button:disabled {
+  opacity: 0.4;
+}
+.song-bank-list {
+  display: grid;
+  gap: 10px;
+}
+.song-bank-list article {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 16px;
+  align-items: center;
+  padding: 14px;
+  border: 1px solid #2b3d47;
+  border-radius: 5px;
+  background: #101a21;
+}
+.song-bank-list article.active {
+  border-color: #70e5ac;
+}
+.song-bank-list article > div:first-child {
+  display: grid;
+  gap: 7px;
+}
+.song-bank-list article input {
+  font-size: 16px;
+  font-weight: 700;
+  width: 100%;
+}
+.song-bank-list article small {
+  color: #a4b8c2;
+  font-size: 11px;
+}
+.song-bank-list article span {
+  overflow-wrap: anywhere;
+  color: #b4c4cd;
+  font-size: 12px;
+}
+.song-bank-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.song-bank-actions .file-button {
+  display: flex;
+  align-items: center;
+  cursor: pointer;
+}
+.song-bank-actions input[type="file"] {
+  display: none;
+}
+.song-bank-empty {
+  padding: 30px;
+  border: 1px dashed #33424c;
+  text-align: center;
+}
+@media (max-width: 900px) {
+  .song-bank-list article {
+    grid-template-columns: 1fr;
+  }
+  .song-bank form {
+    grid-template-columns: minmax(0, 1fr) auto;
+  }
+  .song-bank form > input:last-child {
+    grid-column: 1/-1;
+  }
+}
+/* Each surface remains within its workspace while retaining the eight-channel layout. */
+.desk-classic-surface {
+  min-width: 0;
+  grid-template-columns: repeat(8, minmax(0, 1fr));
+}
+.desk-ma-surface {
+  min-width: 0;
+  grid-template-columns: 78px minmax(0, 1fr);
+}
+.desk-ma-executors {
+  grid-template-columns: repeat(8, minmax(0, 1fr));
+}
+.desk-busk-surface {
+  min-width: 0;
+}
+@container (max-width:1050px) {
+  .desk-classic-surface,
+  .desk-ma-surface,
+  .desk-busk-surface {
+    width: 100%;
+  }
+  .desk-classic-surface {
+    grid-template-columns: repeat(8, minmax(0, 1fr));
+  }
+}
+@media (max-width: 900px) {
+  .creator-columns {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .creator-library {
+    order: 2;
+  }
+  .creator-command {
+    flex-wrap: wrap;
+  }
+  .creator-actions {
+    flex-wrap: wrap;
+  }
+  .creator-fields {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+.programmer-attribute-deck.programmer-attribute-deck-v4.draggable-panel-deck {
+  min-height: 0;
+  overflow: hidden;
+  grid-row: 3 !important;
+}
+.programmer-attribute-deck .draggable-panel-grid {
+  min-height: 0;
+  flex: 1;
+  max-height: none;
+}
+.programmer-v3 > .looks-strip {
+  grid-row: 4 !important;
+  min-height: 0;
+  overflow: auto;
+}
+.programmer-stage-head {
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.programmer-target-actions {
+  flex-wrap: wrap;
+}
+.programmer-stage .visualizer-3d-toolbar {
+  flex-wrap: wrap;
+}
+.programmer-stage .visualizer-camera-bank,
+.programmer-stage .visualizer-playback-tools {
+  flex-wrap: wrap;
+}
+.live-console-v3.controller-live-view {
+  grid-template-columns: minmax(0, 1fr) !important;
+}
+.controller-live-view > .live-view-tabs,
+.controller-live-view > .desk-live-controller,
+.controller-live-view > .live-system-strip {
+  grid-column: 1/-1 !important;
+  min-width: 0;
+}
+.desk-surface-fader {
+  grid-template-columns: minmax(0, 1fr);
+}
+.desk-surface-flash {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.desk-faders-body {
+  grid-template-rows: minmax(0, 1fr) auto;
+}
+.desk-faders-body .desk-classic-surface {
+  min-height: 0;
+}
+.desk-surface-fader {
+  grid-template-rows: 46px 22px minmax(0, 1fr) 32px;
+}
+.desk-touch-fader {
+  min-height: 0;
+}
+.desk-ma-surface {
+  min-height: 0;
+}
+.desk-ma-executors .desk-surface-fader {
+  grid-template-rows: 0 22px minmax(0, 1fr) 0;
+}
+.desk-busk-surface {
+  min-height: 0;
+  grid-template-rows: 42px 84px minmax(0, 1fr) 46px;
+}
+.timeline-workspace > .show-bar-timeline {
+  padding: 10px;
+  grid-template-rows: auto auto minmax(180px, 1fr) auto;
+  overflow: auto;
+}
+.show-bar-timeline > .creator-command {
+  gap: 8px;
+  margin-bottom: 8px;
+  align-items: center;
+}
+.show-bar-timeline > .creator-command h2 {
+  font-size: 18px;
+  margin: 3px 0;
+}
+.show-bar-timeline > .creator-command p {
+  display: none;
+}
+.show-bar-timeline .creator-actions {
+  flex-wrap: wrap;
+}
+.timeline-workspace .timeline-toolbar {
+  gap: 6px;
+  margin-bottom: 6px;
+}
+.timeline-workspace .timeline-toolbar label {
+  width: 76px;
+  gap: 3px;
+}
+.timeline-workspace .timeline-toolbar label.file-button {
+  width: auto;
+}
+.timeline-workspace .timeline-toolbar input,
+.timeline-workspace .timeline-toolbar select {
+  min-height: 28px;
+  padding: 4px 6px;
+}
+.timeline-workspace .timeline-toolbar button {
+  min-height: 28px;
+  padding: 5px 8px;
+}
+.timeline-workspace .timeline-scroll {
+  flex: 1 1 0;
+  min-height: 80px;
+  scroll-behavior: auto;
+}
+.timeline-workspace .timeline-inspector {
+  padding: 6px 0;
+  gap: 6px;
+}
+.timeline-workspace .timeline-inspector label {
+  gap: 3px;
+}
+.timeline-workspace .timeline-show-select {
+  min-height: 36px;
+  max-height: 36px;
+  align-items: center;
+  padding-block: 2px;
+}
+.timeline-workspace .timeline-show-select select {
+  min-height: 30px;
+  height: 30px;
+  padding-block: 4px;
+}
+.show-bar-timeline > .creator-command {
+  min-height: 0;
+  padding: 0;
+}
+.timeline-workspace .timeline-scroll {
+  min-height: 150px;
+}
+.timeline-workspace > .show-bar-timeline {
+  grid-template-rows: auto auto minmax(250px, 1fr) auto;
+}

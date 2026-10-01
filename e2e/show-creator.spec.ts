@@ -143,7 +143,7 @@ test("solo creator builds an editable audio-aligned show and preserves the draft
   );
   await page.getByLabel("Audio starts at bar", { exact: true }).fill("2");
   await expect
-    .poll(async () => ((await readShow(page)).timeline ?? {}).audioOffsetBars)
+    .poll(async () => ((await readShow(page)).timelineShows?.[0]?.timeline ?? {}).audioOffsetBars)
     .toBe(1);
   const ruler = (await page.locator(".bar-ruler").boundingBox())!;
   await page.mouse.click(ruler.x + 36 * 1.5, ruler.y + 20);
@@ -168,9 +168,9 @@ test("solo creator builds an editable audio-aligned show and preserves the draft
   await page.getByRole("button", { name: "Timeline", exact: true }).click();
   await expect(page.locator(".timeline-clip")).toHaveCount(8);
   await expect(page.locator(".timeline-audio-block")).toContainText(
-    "relink audio",
+    "test-song.wav",
   );
-  expect((await readShow(page)).timeline.audioOffsetBars).toBe(1);
+  expect((await readShow(page)).timelineShows[0].timeline.audioOffsetBars).toBe(1);
   expect((await readShow(page)).cues[0].effectStack).toHaveLength(2);
   await page.getByRole("button", { name: "Show Creator", exact: true }).click();
   await expect(page.locator(".section-list>article")).toHaveCount(8);
@@ -261,6 +261,7 @@ test('programmer panels reorder, resize, collapse into a shelf and stay docked',
  await expect(page.locator('.draggable-programmer-panel').first()).toHaveAttribute('data-panel-id','color');
  const before=(await color.boundingBox())!;
  const resize=page.getByRole('button',{name:'Resize COLOR panel'});
+ await resize.scrollIntoViewIfNeeded();
  const handle=(await resize.boundingBox())!;
  await page.mouse.move(handle.x+handle.width/2,handle.y+handle.height/2);await page.mouse.down();
  await page.mouse.move(handle.x+260,handle.y+110,{steps:8});await page.mouse.up();
@@ -339,19 +340,18 @@ test('songs collapse, open inline timelines and preserve imported timeline shows
  await page.getByRole('button',{name:'Play Show',exact:true}).click();
  await expect.poll(()=>page.locator('.floating-stage-monitor [data-fixture="f0"]').getAttribute('data-level')).not.toBe('0');
  await page.getByRole('button',{name:'Stop / Rewind',exact:true}).click();
- console.log('VISUAL_REVIEW_CUES:'+ (await page.screenshot({type:'jpeg',quality:55})).toString('base64'));
  await page.getByRole('button',{name:'Close visualizer',exact:true}).click();
  await page.getByRole('button',{name:'Close timeline',exact:true}).click();
  const show=await readShow(page);show.name='Imported Song';
  await page.getByLabel('Import timeline show',{exact:true}).setInputFiles({name:'song.json',mimeType:'application/json',buffer:Buffer.from(JSON.stringify(show))});
  await expect(page.locator('.song-cue-group')).toHaveCount(2);
- await expect.poll(async()=>((await readShow(page)).timelineShows??[]).length).toBe(1);
+ await expect.poll(async()=>((await readShow(page)).timelineShows??[]).length).toBe(2);
  await page.getByRole('button',{name:'Open timeline for Imported Song',exact:true}).click();
  await expect(page.locator('.timeline-clip')).toHaveCount(8);
  await page.reload();await page.getByRole('button',{name:'SHOW',exact:true}).click();
  await page.getByRole('button',{name:'Cues',exact:true}).click();
  await expect(page.locator('.song-cue-group')).toHaveCount(2);
- expect((await readShow(page)).timelineShows[0].timeline.clips).toHaveLength(8);
+ expect((await readShow(page)).timelineShows.find((t:any)=>t.name==='Imported Song').timeline.clips).toHaveLength(8);
 });
 test('LIVE remains bounded with all recipe assignments and audio drop avoids seek loops',async({page},info)=>{
  await seed(page);await page.setViewportSize({width:820,height:650});await page.goto('/');
@@ -376,11 +376,10 @@ test('LIVE remains bounded with all recipe assignments and audio drop avoids see
  await expect(page.locator('.desk-assign-grid button').filter({hasText:'Row Chase'})).toHaveCount(1);
  await page.locator('.desk-assign-grid button').filter({hasText:'Row Chase'}).click();
  await page.getByRole('button',{name:'DONE',exact:true}).click();
- console.log('VISUAL_REVIEW_LIVE:'+ (await page.screenshot({type:'jpeg',quality:55})).toString('base64'));
  await page.getByRole('button',{name:'SHOW',exact:true}).click();
  await page.locator('.show-subtabs').getByRole('button',{name:'Timeline',exact:true}).click();
  await page.getByRole('button',{name:'FX recipes',exact:true}).click();
- await page.locator('.timeline-fx-recipe').filter({hasText:'Row Chase'}).dragTo(page.locator('[data-lane="2"]'),{targetPosition:{x:18,y:25}});
+ await page.locator('.timeline-fx-recipe').filter({hasText:'Row Chase'}).dragTo(page.locator('[data-lane="2"]'),{targetPosition:{x:118,y:55}});
  await expect(page.locator('.timeline-clip')).toHaveCount(1);
  expect((await readShow(page)).cues[0].effectStack).toHaveLength(1);
  const data=await page.evaluateHandle(bytes=>{const d=new DataTransfer();d.items.add(new File([new Uint8Array(bytes)],'drop-song.wav',{type:''}));return d;},Array.from(wav()));
@@ -496,7 +495,7 @@ test('master tempo stays consistent from Creator through Timeline and LIVE',asyn
  await page.getByRole('button',{name:'Build / Update 8 Sections',exact:true}).click();
  await page.getByRole('button',{name:'Timeline',exact:true}).click();
  await expect(page.getByLabel('Master BPM')).toHaveValue('132');
- await expect.poll(async()=>((await readShow(page)).timeline??{}).bpm).toBe(132);
+ await expect.poll(async()=>((await readShow(page)).timelineShows?.[0]?.timeline??{}).bpm).toBe(132);
  await page.getByRole('button',{name:'LIVE',exact:true}).click();
  await expect(page.locator('.desk-surface-status b')).toContainText('132');
 });
@@ -524,6 +523,55 @@ test('Stage stays full-size in Build and Programmer',async({page})=>{
  await page.getByRole('button',{name:'3D',exact:true}).click();
  const programmerStage=page.locator('.programmer-stage');
  const programmerBox=(await programmerStage.boundingBox())!;
- expect(programmerBox.height).toBeGreaterThanOrEqual(300);
+ expect(programmerBox.height).toBeGreaterThanOrEqual(180);
+ const deckBox=(await page.locator('.draggable-panel-deck').boundingBox())!;
+ expect(programmerBox.y+programmerBox.height).toBeLessThanOrEqual(deckBox.y+1);
+ expect(deckBox.height).toBeGreaterThanOrEqual(190);
  await expect(programmerStage.locator('canvas.visualizer-3d-canvas')).toBeVisible();
+});
+
+test('song bank stores separate media and restores songs after restart', async ({page}, info) => {
+ await seed(page); await page.goto('/');
+ await page.getByRole('button',{name:'SHOW',exact:true}).click();
+ await page.getByRole('button',{name:'Song Bank',exact:true}).click();
+ for(const name of ['First Song','Second Song']) {
+  await page.getByLabel('New song name').fill(name);
+  await page.getByRole('button',{name:'Add song',exact:true}).click();
+  await page.getByLabel(`Link media for ${name}`).setInputFiles({name:name+'.wav',mimeType:'audio/wav',buffer:wav()});
+  await expect(page.locator('.song-bank-list article').filter({has:page.getByLabel(`Song name ${name}`)})).toContainText(name+'.wav');
+ }
+ const first=page.locator('.song-bank-list article').filter({has:page.getByLabel('Song name First Song')});
+ await first.getByRole('button',{name:'Build song',exact:true}).click();
+ await page.getByLabel('Master tempo',{exact:true}).fill('132');
+ await page.getByRole('button',{name:/Worship Song/}).click();
+ await page.getByRole('button',{name:'Build / Update 8 Sections',exact:true}).click();
+ await page.getByRole('button',{name:'Open Timeline ↗',exact:true}).click();
+ await expect(page.locator('.timeline-clip')).toHaveCount(8);
+ await expect(page.locator('.timeline-audio-block')).toContainText('First Song.wav');
+ await page.getByLabel('Audio starts at bar',{exact:true}).fill('3');
+ await page.getByRole('button',{name:'Song Bank',exact:true}).click();
+ await page.locator('.song-bank-list article').filter({has:page.getByLabel('Song name Second Song')}).getByRole('button',{name:'Timeline',exact:true}).click();
+ await expect(page.locator('.timeline-clip')).toHaveCount(0);
+ await expect(page.getByLabel('Master BPM')).toHaveValue('120');
+ await expect(page.locator('.timeline-audio-block')).toContainText('Second Song.wav');
+ await page.getByLabel('Timeline show').selectOption({label:'First Song'});
+ await expect(page.locator('.timeline-clip')).toHaveCount(8);
+ await expect(page.getByLabel('Audio starts at bar',{exact:true})).toHaveValue('3');
+ await expect(page.locator('.timeline-audio-block')).toContainText('First Song.wav');
+ await page.reload();
+ await page.getByRole('button',{name:'SHOW',exact:true}).click();
+ await page.getByRole('button',{name:'Timeline',exact:true}).click();
+ await expect(page.locator('.timeline-clip')).toHaveCount(8);
+ await expect(page.locator('.timeline-audio-block')).toContainText('First Song.wav');
+ await expect.poll(()=>page.locator('audio').evaluate((audio:HTMLAudioElement)=>audio.readyState)).toBeGreaterThan(0);
+ await page.getByRole('button',{name:'Song Bank',exact:true}).click();
+ await page.getByLabel('Song name First Song').fill('Renamed Song');
+ await page.getByLabel('Search song bank').click();
+ await expect(page.getByLabel('Song name Renamed Song')).toBeVisible();
+ await page.screenshot({path:info.outputPath('song-bank.png')});
+ const show=await readShow(page);
+ expect(show.cues.every((c:any)=>c.trackName==='Renamed Song')).toBe(true);
+ expect(show.songs.find((s:any)=>s.name==='Renamed Song').mediaName).toBe('First Song.wav');
+ expect(show.songs.find((s:any)=>s.name==='Renamed Song').bpm).toBe(132);
+ expect(show.songs.find((s:any)=>s.name==='Second Song').bpm).toBe(120);
 });

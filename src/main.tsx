@@ -4,6 +4,7 @@ import App from './App';
 import StageMonitor from './components/StageMonitor';
 import './styles.css';
 import './operator-cleanup.css';
+import './song-bank.css';
 
 ReactDOM.createRoot(document.getElementById('root')!).render(
   <React.StrictMode>

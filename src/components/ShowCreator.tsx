@@ -11,6 +11,9 @@ import {
   type ShowSection,
 } from "../lib/show-design";
 type Props = {
+  songName?: string;
+  onRenameSong?: (name: string) => void;
+  onSongBank?: () => void;
   sections: ShowSection[];
   setSections: Dispatch<SetStateAction<ShowSection[]>>;
   groups: FixtureGroup[];
@@ -33,6 +36,9 @@ function loadPresets() {
   }
 }
 export default function ShowCreator({
+  songName,
+  onRenameSong,
+  onSongBank,
   sections,
   setSections,
   groups,
@@ -45,7 +51,7 @@ export default function ShowCreator({
   masterBpm,
   onMasterBpmChange,
 }: Props) {
-  const [song, setSong] = useState(sections[0]?.song ?? "New Song");
+  const [song, setSong] = useState(songName ?? sections[0]?.song ?? "New Song");
   const [bpm, setBpm] = useState(sections[0]?.bpm ?? masterBpm);
   const [groupId, setGroupId] = useState(
     sections[0]?.groupId ?? groups[0]?.id ?? "",
@@ -150,7 +156,7 @@ export default function ShowCreator({
           </p>
         </div>
         <div className="creator-actions">
-          <button onClick={onTimeline}>Open Timeline ↗</button>
+          <button onClick={onSongBank}>Song Bank</button><button onClick={onTimeline}>Open Timeline ↗</button>
           <button
             className="console-primary"
             disabled={!sections.length || !fixtures.length}
@@ -170,7 +176,7 @@ export default function ShowCreator({
             <div className="creator-fields">
               <label>
                 Song name
-                <input value={song} onChange={(e) => setSong(e.target.value)} />
+                <input aria-label="Creator song name" value={song} onChange={(e) => setSong(e.target.value)} onBlur={() => onRenameSong?.(song)} />
               </label>
               <label>
                 Master tempo
@@ -276,7 +282,7 @@ export default function ShowCreator({
                         className={previewingId === s.id ? "section-preview active" : "section-preview"}
                         aria-label={`Preview ${s.name}`}
                         title={previewingId === s.id ? "Previewing" : "Preview section"}
-                        onClick={() => preview(s)}
+                        onClick={() => previewingId === s.id ? stopPreview() : preview(s)}
                       >
                         {previewingId === s.id ? "■" : "▶"}
                       </button>
