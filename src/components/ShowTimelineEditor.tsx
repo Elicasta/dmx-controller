@@ -524,11 +524,11 @@ export default function ShowTimelineEditor(props: Props) {
           />
         </label>
         <label className="file-button">
-          {audioUrl ? "Relink Audio" : "Load Audio"}
+          {audioUrl ? "Relink Media" : "Load Audio / MP4"}
           <input
             aria-label="Load timeline audio"
             type="file"
-            accept="audio/*"
+            accept="audio/*,video/mp4,video/*"
             onChange={(e) => {
               const f = e.target.files?.[0];
               if (f) {
@@ -559,7 +559,7 @@ export default function ShowTimelineEditor(props: Props) {
             SHOW CUES <small>{cues.length}</small>
           </header>
           <p>Drag to a lane or click to append.</p>
-          {libraryMode==="fx" ? <><p>Target: {props.fxTargetName??"current group"}. Drag a recipe to a lane.</p>{FX_RECIPES.map(recipe=><button className="timeline-fx-recipe" key={recipe.id} draggable onDragStart={e=>{e.dataTransfer.setData("application/lumarig-fx",recipe.id);e.dataTransfer.effectAllowed="copy";}} onClick={()=>{checkpoint();props.onAddFx?.(recipe.id,clipEnd,0);}}><span>{recipe.name}<small>{recipe.category}</small></span></button>)}</> : cues.length ? (
+          {libraryMode==="fx" ? <><p>Target: {props.fxTargetName??"current group"}. Drag a recipe to a lane.</p><input className="timeline-fx-search" aria-label="Search timeline FX" placeholder="Search FX…" value={fxSearch} onChange={(event)=>setFxSearch(event.target.value)}/><div className="timeline-fx-browser">{FX_RECIPES.filter((recipe)=>!fxSearch.trim()||(`${recipe.name} ${recipe.category} ${recipe.description}`).toLowerCase().includes(fxSearch.trim().toLowerCase())).map(recipe=><button className="timeline-fx-recipe" key={recipe.id} draggable onDragStart={e=>{e.dataTransfer.setData("application/lumarig-fx",recipe.id);e.dataTransfer.effectAllowed="copy";}} onClick={()=>{checkpoint();props.onAddFx?.(recipe.id,clipEnd,0);}}><span>{recipe.name}<small>{recipe.category}</small></span></button>)}</div></> : cues.length ? (
             cues.filter(c=>!props.songFilter||(c.trackName?.trim()||"Unfiled cues")===props.songFilter).map((c) => (
               <button
                 key={c.id}
@@ -637,13 +637,14 @@ export default function ShowTimelineEditor(props: Props) {
                   }}
                   onDrop={(e) => {
                     const file = e.dataTransfer.files?.[0];
-                    if (file && (file.type.startsWith("audio/") || /\.(wav|mp3|m4a|aac|aif|aiff|ogg|flac)$/i.test(file.name))) {
+                    if (file && (file.type.startsWith("audio/") || file.type.startsWith("video/") || /\.(wav|mp3|m4a|aac|aif|aiff|ogg|flac|mp4|m4v|mov|webm)$/i.test(file.name))) {
                       e.preventDefault();
                       e.stopPropagation();
                       pause();
                       onLoadAudio(file);
                     }
                   }}
+                  onClick={seekFromLane}
                 >
                   {audioUrl || timeline.audioName ? (
                     <div
@@ -657,7 +658,7 @@ export default function ShowTimelineEditor(props: Props) {
                         left: timeline.audioOffsetBars * zoom,
                         width: Math.max(
                           180,
-                          (audioDurationMs / msPerBar) * zoom,
+                          (trimmedDurationMs / msPerBar) * zoom,
                         ),
                       }}
                       onKeyDown={(e) => {
@@ -674,6 +675,7 @@ export default function ShowTimelineEditor(props: Props) {
                         }
                       }}
                       onPointerDown={(e) => {
+                        e.stopPropagation();
                         pause();
                         e.currentTarget.setPointerCapture(e.pointerId);
                         drag.current = {
@@ -695,9 +697,11 @@ export default function ShowTimelineEditor(props: Props) {
                         {audioName || timeline.audioName}{" "}
                         {!audioUrl && "· relink audio"}
                       </strong>
-                      <svg viewBox="0 0 320 48" preserveAspectRatio="none">
+                      <svg viewBox={`0 0 ${Math.max(1,peaks.length)} 48`} preserveAspectRatio="none" aria-label="Audio waveform">
                         <path d={wavePath} />
                       </svg>
+                      <span className="audio-trim-handle trim-in" aria-label="Trim media in" onPointerDown={(e)=>{e.stopPropagation();pause();e.currentTarget.setPointerCapture(e.pointerId);drag.current={kind:"trim-in",id:"audio",x:e.clientX,start:trimInMs,length:trimOutMs,lane:0,nextLane:0,before:structuredClone(timeline)};}} onPointerMove={movePointer} onPointerUp={endPointer} onPointerCancel={endPointer}/>
+                      <span className="audio-trim-handle trim-out" aria-label="Trim media out" onPointerDown={(e)=>{e.stopPropagation();pause();e.currentTarget.setPointerCapture(e.pointerId);drag.current={kind:"trim-out",id:"audio",x:e.clientX,start:trimInMs,length:trimOutMs,lane:0,nextLane:0,before:structuredClone(timeline)};}} onPointerMove={movePointer} onPointerUp={endPointer} onPointerCancel={endPointer}/>
                     </div>
                   ) : (
                     <p>
@@ -729,6 +733,7 @@ export default function ShowTimelineEditor(props: Props) {
                       }
                     }}
                     onDrop={(e) => dropCue(e, lane)}
+                    onClick={seekFromLane}
                   >
                     {timeline.clips
                       .filter((c) => c.lane === lane)
@@ -823,6 +828,11 @@ export default function ShowTimelineEditor(props: Props) {
                 }
               />
             </label>
+            {audioUrl && <>
+              <label>Trim in<input aria-label="Timeline trim in" type="number" min="0" max={Math.max(0,audioDurationMs)} step="10" value={Math.round(trimInMs)} disabled={playing} onChange={(e)=>edit({...timeline,trimInMs:clamp(Number(e.target.value),0,Math.max(0,trimOutMs-100))})}/></label>
+              <label>Trim out<input aria-label="Timeline trim out" type="number" min={trimInMs+100} max={Math.max(trimInMs+100,audioDurationMs)} step="10" value={Math.round(trimOutMs)} disabled={playing} onChange={(e)=>edit({...timeline,trimOutMs:clamp(Number(e.target.value),trimInMs+100,Math.max(trimInMs+100,audioDurationMs))})}/></label>
+              <button disabled={playing} onClick={()=>edit({...timeline,trimInMs:0,trimOutMs:audioDurationMs})}>Reset Trim</button>
+            </>}
             {selected && (
               <>
                 <label>
@@ -915,7 +925,7 @@ export default function ShowTimelineEditor(props: Props) {
           </div>
           <p className="creator-hint">
             FX lanes mix from top to bottom. Lower lanes win when two clips
-            write the same channel. Audio is relinked when reopening a show.{" "}
+            write the same channel. Media is stored in the LumaRig library when imported.{" "}
             {audioError}
           </p>
         </main>
