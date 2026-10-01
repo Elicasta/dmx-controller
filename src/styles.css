@@ -3297,3 +3297,95 @@ body,#root { min-width:0; width:100%; overflow:hidden; }
     scroll-snap-align: start;
   }
 }
+
+
+/* Application chrome polish: visual only, preserve operator surface geometry. */
+.console-header {
+  border-bottom-color: rgba(255,255,255,.075);
+  background: rgba(8,11,14,.9);
+  box-shadow: 0 10px 28px rgba(0,0,0,.2);
+  backdrop-filter: blur(22px) saturate(125%);
+  -webkit-backdrop-filter: blur(22px) saturate(125%);
+}
+.console-brand input {
+  letter-spacing: -.015em;
+}
+.console-center,
+.console-browser,
+.setup-inspector,
+.effects-inspector,
+.console-panel {
+  border-color: rgba(255,255,255,.075);
+  box-shadow: inset 0 1px 0 rgba(255,255,255,.025);
+}
+.console-center,
+.console-browser {
+  border-radius: 11px;
+}
+.workspace-subtabs {
+  border-color: rgba(255,255,255,.07);
+  border-radius: 10px;
+  background: rgba(11,15,19,.78);
+}
+.workspace-subtabs button {
+  border-radius: 7px;
+  transition: background .14s ease, color .14s ease, box-shadow .14s ease;
+}
+.workspace-subtabs button.active {
+  background: rgba(255,255,255,.065);
+  box-shadow: inset 0 -2px var(--console-green), inset 0 1px 0 rgba(255,255,255,.035);
+}
+.console-search input,
+.console-app select,
+.console-app textarea {
+  border-color: rgba(255,255,255,.085);
+  border-radius: 8px;
+}
+.tempo-pill,
+.connection-pill,
+.console-blackout {
+  border-radius: 10px;
+  box-shadow: inset 0 1px 0 rgba(255,255,255,.025);
+}
+@media(max-width:820px) {
+  .console-header {
+    grid-template-columns: minmax(140px,1fr) auto;
+    min-height: 58px;
+  }
+  .console-brand {
+    padding: 7px 10px;
+  }
+  .console-header-status {
+    padding: 7px 9px;
+    gap: 5px;
+  }
+  .console-header-status .tempo-pill,
+  .console-header-status .connection-pill,
+  .console-header-status .console-blackout {
+    height: 36px;
+  }
+  .console-header-status .connection-pill {
+    min-width: 72px;
+    max-width: 92px;
+    padding: 0 8px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .console-workspace-tabs {
+    grid-column: 1/-1;
+    grid-row: 2;
+    min-height: 38px;
+    width: 100%;
+    overflow-x: auto;
+    background: rgba(8,11,14,.92);
+  }
+  .console-workspace-tabs button {
+    min-width: 86px;
+    min-height: 38px;
+  }
+  .console-workspace {
+    padding: 6px;
+    gap: 6px;
+  }
+}
