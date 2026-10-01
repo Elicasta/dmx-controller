@@ -286,7 +286,7 @@ export default function ShowTimelineEditor(props: Props) {
           return Math.min(1, peak * .78 + rms * .42);
         });
         setPeaks(next);
-        setTempoEstimate(estimateTempoFromSamples(samples, buffer.sampleRate));
+        setTempoEstimate(estimateTempoFromSamples(channels[0], buffer.sampleRate));
       })
       .catch(() => {
         if (!cancelled)
