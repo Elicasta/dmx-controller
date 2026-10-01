@@ -27,6 +27,8 @@ export type SectionLayer = {
   groupId: string;
   energy: number;
   enabled: boolean;
+  rateMultiplier?: number;
+  priority?: number;
 };
 export type ShowSection = {
   id: string;
@@ -40,6 +42,7 @@ export type ShowSection = {
   fadeMs: number;
   recipeId: string;
   energy: number;
+  rateMultiplier?: number;
   layers: SectionLayer[];
 };
 export type TimelineClip = {
@@ -376,6 +379,7 @@ export function createSection(
     fadeMs: lift ? 1200 : 2500,
     recipeId: lift ? "wave" : "breathe",
     energy: lift ? 80 : 40,
+    rateMultiplier: 1,
     layers: [],
   };
 }
@@ -410,9 +414,11 @@ export function sectionStack(
       groupId: section.groupId,
       energy: section.energy,
       enabled: true,
+      rateMultiplier: section.rateMultiplier ?? 1,
+      priority: 0,
     },
     ...section.layers,
-  ];
+  ].sort((a, b) => (a.priority ?? 0) - (b.priority ?? 0));
   return specs
     .filter((l) => l.enabled && l.recipeId)
     .map((layer) => {
@@ -441,7 +447,8 @@ export function sectionStack(
       )
         throw Error("Movement FX need a target with moving fixtures.");
       const effect = structuredClone(found.effect);
-      effect.bpm = section.bpm;
+      const rateMultiplier = Math.max(.25, Math.min(8, layer.rateMultiplier ?? 1));
+      effect.bpm = section.bpm * rateMultiplier;
       effect.depth *= layer.energy / 100;
       if (effect.parameter === "dimmer") {
         effect.depth *= section.intensity / 100;
@@ -758,6 +765,7 @@ export function isShowSection(value: unknown): value is ShowSection {
     finite(s.bars, 0.25, 512) &&
     finite(s.fadeMs, 0, 60000) &&
     finite(s.energy, 0, 100) &&
+    (s.rateMultiplier === undefined || finite(s.rateMultiplier, .25, 8)) &&
     Array.isArray(s.layers) &&
     s.layers.length <= 8 &&
     s.layers.every(
@@ -767,6 +775,8 @@ export function isShowSection(value: unknown): value is ShowSection {
         typeof l.recipeId === "string" &&
         typeof l.groupId === "string" &&
         finite(l.energy, 0, 100) &&
+        (l.rateMultiplier === undefined || finite(l.rateMultiplier, .25, 8)) &&
+        (l.priority === undefined || finite(l.priority, -100, 100)) &&
         typeof l.enabled === "boolean",
     )
   );
