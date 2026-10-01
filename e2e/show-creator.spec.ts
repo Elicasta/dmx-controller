@@ -106,7 +106,7 @@ test("solo creator builds an editable audio-aligned show and preserves the draft
     .locator(".timeline-cue-library>button")
     .first()
     .dragTo(page.locator('[data-lane="2"]'), {
-      targetPosition: { x: 72, y: 25 },
+      targetPosition: { x: 118, y: 55 },
     });
   await expect(page.locator(".timeline-clip")).toHaveCount(9);
   await expect(page.getByLabel("Clip lane")).toHaveValue("2");
