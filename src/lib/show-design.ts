@@ -76,9 +76,11 @@ export const SHOW_COLORS = [
 export type FxRecipe = {
   id: string;
   name: string;
-  category: "Intensity" | "Rows" | "Movement" | "Color";
+  category: "Intensity" | "Rows" | "Movement" | "Color" | "Scene";
   description: string;
   effect: CustomEffect;
+  scope?: "target" | "scene";
+  defaultBars?: number;
 };
 const base: CustomEffect = {
   id: "recipe",
@@ -98,6 +100,7 @@ function recipe(
   category: FxRecipe["category"],
   description: string,
   effect: Partial<CustomEffect>,
+  options: Pick<FxRecipe, "scope" | "defaultBars"> = {},
 ): FxRecipe {
   return {
     id,
@@ -105,6 +108,7 @@ function recipe(
     category,
     description,
     effect: { ...base, ...effect, id, name },
+    ...options,
   };
 }
 export const FX_RECIPES: FxRecipe[] = [
@@ -271,6 +275,61 @@ export const FX_RECIPES: FxRecipe[] = [
     colorBlend: "smooth",
     cycleBeats: 8,
   }),
+  recipe("scene-blinder", "Blinder Hit", "Scene", "Full-rig white hit for a beat or musical accent", {
+    parameter: "color",
+    waveform: "step",
+    depth: 100,
+    phaseSpread: 0,
+    cycleBeats: 1,
+    colorPalette: ["#ffffff"],
+    colorBlend: "step",
+    lanes: [{ parameter: "dimmer", waveform: "step", depth: 0, offset: 100, mode: "absolute" }],
+  }, { scope: "scene", defaultBars: .25 }),
+  recipe("scene-blackout", "Blackout", "Scene", "Full-rig intensity blackout", {
+    parameter: "dimmer",
+    waveform: "step",
+    depth: 0,
+    offset: 0,
+    phaseSpread: 0,
+    cycleBeats: 1,
+    mode: "absolute",
+  }, { scope: "scene", defaultBars: 1 }),
+  recipe("scene-warm", "Scene · Warm White", "Scene", "Set every compatible fixture to a warm white wash", {
+    parameter: "color",
+    waveform: "step",
+    depth: 100,
+    phaseSpread: 0,
+    cycleBeats: 1,
+    colorPalette: ["#ffd8a0"],
+    colorBlend: "step",
+  }, { scope: "scene", defaultBars: 4 }),
+  recipe("scene-white", "Scene · Clean White", "Scene", "Set every compatible fixture to clean white", {
+    parameter: "color",
+    waveform: "step",
+    depth: 100,
+    phaseSpread: 0,
+    cycleBeats: 1,
+    colorPalette: ["#ffffff"],
+    colorBlend: "step",
+  }, { scope: "scene", defaultBars: 4 }),
+  recipe("scene-blue", "Scene · Deep Blue", "Scene", "Set the complete scene to deep blue", {
+    parameter: "color",
+    waveform: "step",
+    depth: 100,
+    phaseSpread: 0,
+    cycleBeats: 1,
+    colorPalette: ["#145dff"],
+    colorBlend: "step",
+  }, { scope: "scene", defaultBars: 4 }),
+  recipe("scene-crimson", "Scene · Crimson", "Scene", "Set the complete scene to crimson", {
+    parameter: "color",
+    waveform: "step",
+    depth: 100,
+    phaseSpread: 0,
+    cycleBeats: 1,
+    colorPalette: ["#dc214c"],
+    colorBlend: "step",
+  }, { scope: "scene", defaultBars: 4 }),
 ];
 export const SONG_TEMPLATES = [
   {
