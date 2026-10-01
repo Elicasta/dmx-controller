@@ -220,6 +220,25 @@ describe("solo show design", () => {
   it("all library recipes remain importable", () => {
     expect(FX_RECIPES.every((r) => isEffectRecipe(r.effect))).toBe(true);
   });
+  it("includes scene-wide blinder and color drops for the timeline", () => {
+    const blinder = FX_RECIPES.find((recipe) => recipe.id === "scene-blinder");
+    const blue = FX_RECIPES.find((recipe) => recipe.id === "scene-blue");
+    expect(blinder).toMatchObject({ scope: "scene", defaultBars: .25 });
+    expect(blue).toMatchObject({ scope: "scene", defaultBars: 4 });
+
+    const scene = {
+      ...createSection("Blinder", "Song", "", 120),
+      recipeId: "scene-blinder",
+      intensity: 100,
+      energy: 100,
+      fadeMs: 0,
+    };
+    const layer = sectionStack(scene, fixtures, [group]);
+    expect(layer[0].targetIds).toEqual(fixtures.map((fixture) => fixture.id));
+    const rendered = renderEffectStack(layer, fixtures, 0, frame);
+    expect(value(rendered, fixtures[0])).toBe(255);
+    expect(value(rendered, fixtures[0], "red")).toBe(255);
+  });
   it("invalid numbers and imported grid shapes are rejected", () => {
     expect(isShowTimeline({ ...EMPTY_TIMELINE, bpm: NaN })).toBe(false);
     expect(
