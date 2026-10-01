@@ -4,7 +4,9 @@ import StageMonitor, { openStageWindow, useStagePublisher } from './components/S
 import Visualizer3D from './components/Visualizer3D';
 import { StageMediaSurface, requestStageVideoInputs, type StageVideoInputOption } from './components/StageMediaSurface';
 import SongCueLibrary from './components/SongCueLibrary';
+import BpmField from './components/BpmField';
 import { moveRundownItemCues } from './lib/show';
+import { deriveSongProgram, isSongProgram, mergeSongProgramIntoShow, showSongNames, type SongProgram } from './lib/song-library';
 import { activeTimelineCueId, createSection, EMPTY_TIMELINE, FX_RECIPES, SHOW_COLORS, buildSectionCues, renderEffectStack, renderShowTimeline, isEffectRecipe, type EffectStackLayer, type ShowSection } from './lib/show-design';
 import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState, type ChangeEvent, type PointerEvent as ReactPointerEvent } from 'react';
 import { lumaVizDirectStatus, pollLumaVizDirectMessages, semanticFrameFromResolvedOutput, sendLumaVizDirectFrame, sendLumaVizDirectMessage, startLumaVizDirect, type LumaVizDirectStatus, type SharedShowPatchMutation } from './core/lumaviz-direct';
@@ -140,6 +142,8 @@ import { phaserStepValue, type PhaserStep } from './core/phaser-engine';
 import { makeSelectionGrid, moveFixtureInSelectionGrid, normalizeSelectionGrid, type SelectionGridTraversal } from './core/selection-grid';
 import { RemoteRelay, type RelayCommandEnvelope, type RemoteRelayConfig, type RemoteRelayStatus } from './core/remote-relay';
 import { StudioBridgeDispatcher } from './core/studio-bridge-dispatcher';
+import { makeTransportSnapshot, updateTransport, transportSourceLabel, type TransportSnapshot, type TransportSource } from './core/transport-engine';
+import { makeConnectionMap, updateConnection, type ConnectionMap } from './core/connection-manager';
 import type { StudioBridgeCommand, StudioSongIdentity } from './core/studio-bridge-protocol';
 
 const ShowCreator = lazy(() => import('./components/ShowCreator'));
