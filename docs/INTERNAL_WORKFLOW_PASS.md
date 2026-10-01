@@ -34,5 +34,9 @@ Perspective, Top, Front and Side use the same scene renderer. Orthographic views
 Timeline MP4 media can open a dedicated native output window. The output follows the main media element's source, position and playing state; audio stays in the main transport and output video is muted. Aspect ratio is preserved. Double-click or use Fullscreen to enter output fullscreen. Switching sources updates an already open output. Closing the main application ends output.
 The browser follower regression uses a real recorded video. Native window creation/fullscreen compile checks are covered by CI; physical multi-monitor playback still requires Mac verification.
 
+## Beat Step Editor
+Open from a Section with Add Step Editor. Each pattern has its own layer target, musical cycle/rate and priority. Patterns support up to 64 steps, beat/half/quarter/eighth/sixteenth subdivisions and triplets. Intensity, color, optional pan/tilt/strobe/white/UV parameters are stored in the same custom FX snapshot as the Song. Copy/paste preserves all programmed attributes. Extending the pattern adds empty beats and changing subdivisions preserves beat locations.
+Per-step triggering of arbitrary named presets/effects is not yet supported; direct beat attribute programming is implemented.
+
 ## Still to complete
-Managed native media/relink workflow, stage screen file/image assignment, beam/surface rendering, Step Editor and Recording editing/overdub remain in the ordered refinement backlog. External linking comes last.
+Managed native media/relink workflow, stage screen file/image assignment, beam/surface rendering, per-step preset triggers and Recording editing/overdub remain in the ordered refinement backlog. External linking comes last.

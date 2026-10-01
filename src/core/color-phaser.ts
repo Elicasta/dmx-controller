@@ -39,7 +39,7 @@ export function renderColorPhaser(
         });
   const cycle =
     (60000 / Math.max(20, Math.min(300, effect.bpm))) *
-    Math.max(0.125, effect.cycleBeats ?? 4);
+    Math.max(0.0625, effect.cycleBeats ?? 4);
   return targets.flatMap((fixture, index) => {
     const travel =
       (Math.max(0, elapsedMs) / cycle) *

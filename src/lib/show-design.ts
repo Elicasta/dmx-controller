@@ -23,6 +23,7 @@ export type EffectStackLayer = {
   phaseOffsetBeats?: number;
 };
 export type SectionLayer = {
+  stepEditor?: boolean;
   customEffect?: CustomEffect;
   intensity?: number;
   color?: string;
@@ -632,7 +633,11 @@ export function isEffectRecipe(value: unknown): value is CustomEffect {
     finite(l.offset, -100, 100) &&
     ["sine", "triangle", "square", "saw", "reverse-saw", "step"].includes(
       l.waveform,
-    );
+    ) &&
+    (l.steps === undefined || (Array.isArray(l.steps) && l.steps.length <= 64 && l.steps.every(s => s && finite(s.value,0,100)))) &&
+    (l.phaseOffset === undefined || finite(l.phaseOffset,-32,32)) &&
+    (l.rateMultiplier === undefined || finite(l.rateMultiplier,0.125,8)) &&
+    (l.mode === undefined || ["absolute","relative"].includes(l.mode));
   return (
     typeof e.id === "string" &&
     typeof e.name === "string" &&
@@ -656,7 +661,7 @@ export function isEffectRecipe(value: unknown): value is CustomEffect {
       ].includes(e.gridPhaseMode)) &&
     (e.colorPalette === undefined ||
       (Array.isArray(e.colorPalette) &&
-        e.colorPalette.length <= 16 &&
+        e.colorPalette.length <= 64 &&
         e.colorPalette.every(hex))) &&
     (e.colorBlend === undefined || ["smooth", "step"].includes(e.colorBlend)) &&
     (e.motionShape === undefined ||
@@ -750,6 +755,7 @@ export function isShowSection(value: unknown): value is ShowSection {
         typeof l.groupId === "string" &&
         finite(l.energy, 0, 100) &&
         (l.customEffect === undefined || isEffectRecipe(l.customEffect)) &&
+        (l.stepEditor === undefined || typeof l.stepEditor === "boolean") &&
         (l.intensity === undefined || finite(l.intensity, 0, 100)) &&
         (l.color === undefined || hex(l.color)) &&
         (l.cycleBeats === undefined || finite(l.cycleBeats, 0.0625, 32)) &&

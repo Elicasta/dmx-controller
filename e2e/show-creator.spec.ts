@@ -944,3 +944,31 @@ test('video output follows source seeks and pauses without editor chrome',async(
   await expect.poll(()=>output.getByLabel('Synchronized video output').evaluate((el:HTMLVideoElement)=>el.currentTime)).toBeCloseTo(.7,1);
   await output.close();
 });
+
+test('beat Step Editor renders hits and keeps the musical pattern in Song programming',async({page})=>{
+  await seed(page);await page.goto('/');
+  await page.getByRole('button',{name:'SHOW',exact:true}).click();
+  await page.getByRole('button',{name:'Show Creator',exact:true}).click();
+  await page.getByRole('button',{name:/Worship Song/}).click();
+  await page.getByRole('button',{name:'＋ Step Editor',exact:true}).click();
+  const editor=page.getByLabel('Beat Step Editor');
+  await expect(editor.locator('.beat-step-grid button')).toHaveCount(8);
+  await editor.getByRole('button',{name:'Step 1, beat 1.00',exact:true}).click();
+  await expect(editor.getByLabel('Step Intensity / Blinder',{exact:true})).toHaveValue('100');
+  await editor.getByLabel('Step color',{exact:true}).fill('#ff0000');
+  await editor.getByLabel('Step subdivision',{exact:true}).selectOption('4');
+  await expect(editor.locator('.beat-step-grid button')).toHaveCount(16);
+  await editor.getByRole('button',{name:'Copy Step',exact:true}).click();
+  await editor.getByRole('button',{name:'Step 5, beat 2.00',exact:true}).click();
+  await editor.getByRole('button',{name:'Paste Step',exact:true}).click();
+  await expect(editor.getByLabel('Step color',{exact:true})).toHaveValue('#ff0000');
+  await page.getByRole('button',{name:'Save to Song Library',exact:true}).click();
+  await expect.poll(async()=> (await readShow(page)).cues?.length).toBe(8);
+  const effect=(await readShow(page)).creatorSections[0].layers[0].customEffect;
+  expect(effect.colorPalette).toHaveLength(16);
+  expect(effect.lanes[0].steps[4].value).toBe(100);
+  await page.reload();
+  await page.getByRole('button',{name:'SHOW',exact:true}).click();
+  await page.getByRole('button',{name:'Show Creator',exact:true}).click();
+  await expect(page.getByLabel('Beat Step Editor').locator('.beat-step-grid button')).toHaveCount(16);
+});

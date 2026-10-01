@@ -1,3 +1,5 @@
+import StepEditor from "./StepEditor";
+import { createStepProgram } from "../lib/step-program";
 import ResizableWorkspace from './ResizableWorkspace';
 import TempoInput from './TempoInput';
 import { useEffect, useMemo, useState, type Dispatch, type SetStateAction } from "react";
@@ -490,6 +492,7 @@ export default function ShowCreator({
               </div>
               <header>
                 <span>STACKED FX</span>
+                <button disabled={selected.layers.length>=8} onClick={()=>update({layers:[...selected.layers,{id:crypto.randomUUID(),recipeId:'custom:steps',customEffect:createStepProgram(selected.bpm,selected.color),stepEditor:true,groupId:selected.groupId,energy:100,enabled:true}]})}>＋ Step Editor</button>
                 <small>
                   {selected.layers.length} / 8 · last layer wins shared
                   attributes
@@ -510,9 +513,10 @@ export default function ShowCreator({
                       aria-label={`Layer ${index + 1} FX`}
                       value={l.recipeId}
                       onChange={(e) =>
-                        layerChange(l.id, { recipeId: e.target.value, customEffect: e.target.value.startsWith('custom:') ? structuredClone(recipes.find(r=>r.id===e.target.value)?.effect) : undefined })
+                        layerChange(l.id, { recipeId: e.target.value, stepEditor: false, customEffect: e.target.value.startsWith('custom:') ? structuredClone(recipes.find(r=>r.id===e.target.value)?.effect) : undefined })
                       }
                     >
+                      {l.customEffect&&!recipes.some(r=>r.id===l.recipeId)&&<option value={l.recipeId}>{l.customEffect.name}</option>}
                       {recipes.map((r) => (
                         <option key={r.id} value={r.id}>
                           {r.name}
@@ -553,6 +557,7 @@ export default function ShowCreator({
                     >
                       ×
                     </button>
+                    {l.stepEditor&&l.customEffect&&<StepEditor effect={l.customEffect} onChange={customEffect=>layerChange(l.id,{customEffect})}/>}
                     <div className="layer-controls">
                       <label>Intensity %<input aria-label={`Layer ${index+1} intensity`} type="number" min={0} max={100} value={l.intensity ?? selected.intensity} onChange={e=>layerChange(l.id,{intensity:Math.max(0,Math.min(100,Number(e.target.value)))})} /></label>
                       <label>Color<input aria-label={`Layer ${index+1} color`} type="color" value={l.color ?? selected.color} onChange={e=>layerChange(l.id,{color:e.target.value})} /></label>
