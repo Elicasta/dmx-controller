@@ -539,7 +539,7 @@ test('Stage stays full-size in Build and Programmer',async({page})=>{
 test('song bank stores separate media and restores songs after restart', async ({page}, info) => {
  await seed(page); await page.goto('/');
  await page.getByRole('button',{name:'SHOW',exact:true}).click();
- await page.locator('.show-mode-tabs').getByRole('button',{name:'Song Bank',exact:true}).click();
+ await page.locator('.show-subtabs').getByRole('button',{name:'Song Bank',exact:true}).click();
  for(const name of ['First Song','Second Song']) {
   await page.getByLabel('New song name').fill(name);
   await page.getByRole('button',{name:'Add song',exact:true}).click();
