@@ -66,6 +66,8 @@ export default function ShowTimelineEditor(props: Props) {
   const [lanes, setLanes] = useState(3);
   const [peaks, setPeaks] = useState<number[]>([]);
   const [tempoEstimate, setTempoEstimate] = useState<TempoEstimate | null>(null);
+  const [analysisRevision, setAnalysisRevision] = useState(0);
+  const tapTempoRef = useRef<number[]>([]);
   const [audioError, setAudioError] = useState("");
   const undo = useRef<ShowTimeline[]>([]),
     redo = useRef<ShowTimeline[]>([]);
@@ -295,7 +297,7 @@ export default function ShowTimelineEditor(props: Props) {
     return () => {
       cancelled = true;
     };
-  }, [audioUrl]);
+  }, [audioUrl, analysisRevision]);
   function begin(
     e: PointerEvent<HTMLElement>,
     clip: TimelineClip,
@@ -425,6 +427,20 @@ export default function ShowTimelineEditor(props: Props) {
       audioOffsetBars: Math.max(0, targetBar - audioBars),
     });
   }
+
+  function tapTempo() {
+    const now = performance.now();
+    tapTempoRef.current = [...tapTempoRef.current.filter((time) => now - time < 4000), now].slice(-8);
+    if (tapTempoRef.current.length < 2) return;
+    const intervals = tapTempoRef.current.slice(1).map((time, index) => time - tapTempoRef.current[index]);
+    const average = intervals.reduce((sum, value) => sum + value, 0) / intervals.length;
+    const bpm = clamp(60000 / average, 20, 300);
+    edit({ ...timeline, bpm: Math.round(bpm * 10) / 10, tempoLocked: true });
+  }
+
+  function scaleTempo(multiplier: number) {
+    edit({ ...timeline, bpm: Math.round(clamp(timeline.bpm * multiplier, 20, 300) * 10) / 10, tempoLocked: true });
+  }
   return (
     <div className="show-bar-timeline" data-history={historyVersion}
       onDragOver={(e) => { if (e.dataTransfer.types.includes("Files")) { e.preventDefault(); e.dataTransfer.dropEffect = "copy"; } }}
@@ -546,10 +562,15 @@ export default function ShowTimelineEditor(props: Props) {
           <strong>≈ {tempoEstimate.bpm} BPM</strong>
           <small>{Math.round(tempoEstimate.confidence * 100)}% confidence · detected beat phase {Math.round(tempoEstimate.firstBeatMs)} ms</small>
         </div>
-        <div>
-          <button disabled={playing} onClick={() => applyTempoEstimate(false)}>Use BPM</button>
-          <button className="console-primary" disabled={playing} onClick={() => applyTempoEstimate(true)}>Use BPM + Align Beats</button>
-          <button disabled={playing || !audioUrl} onClick={alignCurrentAudioToBar}>Snap Current Audio to Bar</button>
+        <div className="tempo-analysis-actions">
+          <button disabled={playing || timeline.tempoLocked} onClick={() => applyTempoEstimate(false)}>Use Detected</button>
+          <button className="console-primary" disabled={playing || timeline.tempoLocked} onClick={() => applyTempoEstimate(true)}>Use + Align</button>
+          <button disabled={playing || !audioUrl} onClick={alignCurrentAudioToBar}>Set Downbeat Here</button>
+          <button disabled={playing} onClick={() => scaleTempo(.5)}>½ BPM</button>
+          <button disabled={playing} onClick={() => scaleTempo(2)}>2× BPM</button>
+          <button disabled={playing} onClick={tapTempo}>Tap</button>
+          <button disabled={playing || !audioUrl} onClick={() => setAnalysisRevision((value)=>value+1)}>Re-analyze</button>
+          <button className={timeline.tempoLocked?'active':''} disabled={playing} onClick={() => edit({...timeline,tempoLocked:!timeline.tempoLocked})}>{timeline.tempoLocked?'Tempo Locked':'Lock Tempo'}</button>
         </div>
       </section>}
       <div className="timeline-edit-layout">
