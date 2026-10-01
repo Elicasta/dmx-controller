@@ -29,6 +29,8 @@ type Props = {
   onFrame: (elapsedMs: number) => void;
   onStop: () => void;
   onCreator: () => void;
+  masterBpm: number;
+  onMasterBpmChange: (bpm: number) => void;
 };
 type Drag = {
   kind: "move" | "resize" | "audio";
@@ -53,6 +55,8 @@ export default function ShowTimelineEditor(props: Props) {
     onChange,
     onLoadAudio,
     onCreator,
+    masterBpm,
+    onMasterBpmChange,
   } = props;
   const audioStarting = useRef(false);
   const [libraryMode,setLibraryMode]=useState<"cues"|"fx">("cues");
@@ -60,7 +64,11 @@ export default function ShowTimelineEditor(props: Props) {
   const [cursor, setCursor] = useState(props.initialBar ?? 0);
   const [playing, setPlaying] = useState(false);
   const [zoom, setZoom] = useState(36);
+  const zoomRef = useRef(36);
   const [snap, setSnap] = useState(1);
+  const [followPlayhead, setFollowPlayhead] = useState(true);
+  const followPlayheadRef = useRef(true);
+  const scrollRef = useRef<HTMLDivElement | null>(null);
   const [lanes, setLanes] = useState(3);
   const [peaks, setPeaks] = useState<number[]>([]);
   const [audioError, setAudioError] = useState("");
@@ -69,6 +77,12 @@ export default function ShowTimelineEditor(props: Props) {
   const [historyVersion, setHistoryVersion] = useState(0);
   const latest = useRef(props);
   latest.current = props;
+  zoomRef.current = zoom;
+  followPlayheadRef.current = followPlayhead;
+  useEffect(() => {
+    const next = clamp(masterBpm, 20, 300);
+    if (!playingRef.current && latest.current.timeline.bpm !== next) latest.current.onChange({ ...latest.current.timeline, bpm: next });
+  }, [masterBpm]);
   const cursorRef = useRef(props.initialBar ?? 0),
     playingRef = useRef(false),
     raf = useRef<number | null>(null),
@@ -200,6 +214,13 @@ export default function ShowTimelineEditor(props: Props) {
         setCursor(cursorRef.current);
         p.onFrame(cursorRef.current * barMs(p.timeline));
         syncAudio(cursorRef.current * barMs(p.timeline));
+        if (followPlayheadRef.current && scrollRef.current) {
+          const scroller = scrollRef.current;
+          const x = 100 + cursorRef.current * zoomRef.current;
+          const left = scroller.scrollLeft;
+          const right = left + scroller.clientWidth;
+          if (x > right - scroller.clientWidth * .2 || x < left + 110) scroller.scrollLeft = Math.max(0, x - scroller.clientWidth * .35);
+        }
         lastPaint = now;
       }
       const end = Math.max(
@@ -389,17 +410,15 @@ export default function ShowTimelineEditor(props: Props) {
         <button onClick={stop}>Stop / Rewind</button>
         <output>BAR {(cursor + 1).toFixed(2)}</output>
         <label>
-          BPM
+          Master BPM
           <input
-            aria-label="Timeline BPM"
+            aria-label="Master BPM"
             type="number"
             min={20}
             max={300}
-            value={timeline.bpm}
+            value={masterBpm}
             disabled={playing}
-            onChange={(e) =>
-              edit({ ...timeline, bpm: clamp(Number(e.target.value), 20, 300) })
-            }
+            onChange={(e) => onMasterBpmChange(clamp(Number(e.target.value), 20, 300))}
           />
         </label>
         <label>
@@ -441,6 +460,8 @@ export default function ShowTimelineEditor(props: Props) {
             onChange={(e) => setZoom(Number(e.target.value))}
           />
         </label>
+        <button onClick={() => { const width = Math.max(320, (scrollRef.current?.clientWidth ?? 900) - 120); setZoom(clamp(width / Math.max(1, totalBars), 18, 100)); }}>Fit</button>
+        <button className={followPlayhead ? "active" : ""} aria-pressed={followPlayhead} onClick={() => setFollowPlayhead((value) => !value)}>Follow {followPlayhead ? "On" : "Off"}</button>
         <label className="file-button">
           {audioUrl ? "Relink Audio" : "Load Audio"}
           <input
@@ -493,7 +514,7 @@ export default function ShowTimelineEditor(props: Props) {
           )}
         </aside>
         <main className="timeline-arranger">
-          <div className="timeline-scroll">
+          <div className="timeline-scroll" ref={scrollRef}>
             <div
               className="timeline-sheet"
               style={{ width: totalBars * zoom + 100 }}
