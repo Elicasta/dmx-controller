@@ -408,20 +408,7 @@ export default function ShowCreator({
                 </label>
                 <label>
                   Section tempo
-                  <input
-                    type="number"
-                    min={20}
-                    max={300}
-                    value={selected.bpm}
-                    onChange={(e) =>
-                      update({
-                        bpm: Math.max(
-                          20,
-                          Math.min(300, Number(e.target.value)),
-                        ),
-                      })
-                    }
-                  />
+                  <TempoInput label="Section tempo" value={selected.bpm} onChange={value=>update({bpm:value})} />
                 </label>
                 <label>
                   Fade ms

@@ -539,7 +539,7 @@ test('Stage stays full-size in Build and Programmer',async({page})=>{
 test('song bank stores separate media and restores songs after restart', async ({page}, info) => {
  await seed(page); await page.goto('/');
  await page.getByRole('button',{name:'SHOW',exact:true}).click();
- await page.getByRole('button',{name:'Song Bank',exact:true}).click();
+ await page.locator('.show-mode-tabs').getByRole('button',{name:'Song Bank',exact:true}).click();
  for(const name of ['First Song','Second Song']) {
   await page.getByLabel('New song name').fill(name);
   await page.getByRole('button',{name:'Add song',exact:true}).click();
@@ -915,7 +915,9 @@ test('video output follows source seeks and pauses without editor chrome',async(
     const stream=canvas.captureStream(10),chunks:BlobPart[]=[];
     const recorder=new MediaRecorder(stream,{mimeType:'video/webm;codecs=vp8'});
     const finished=new Promise<Blob>(resolve=>{recorder.ondataavailable=e=>chunks.push(e.data);recorder.onstop=()=>resolve(new Blob(chunks,{type:'video/webm'}));});
-    recorder.start();await new Promise(resolve=>setTimeout(resolve,1200));recorder.stop();
+    let frame=0;
+    const animation=setInterval(()=>{ctx.fillStyle=frame++%2?'#224488':'#448822';ctx.fillRect(0,0,320,180);},50);
+    recorder.start();await new Promise(resolve=>setTimeout(resolve,1200));clearInterval(animation);recorder.stop();
     const blob=await finished;stream.getTracks().forEach(track=>track.stop());return URL.createObjectURL(blob);
   });
   await page.evaluate(url=>{

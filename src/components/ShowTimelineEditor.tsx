@@ -69,6 +69,7 @@ export default function ShowTimelineEditor(props: Props) {
   tempoLocked, onTempoLockChange,
   } = props;
   const audioStarting = useRef(false);
+  const playAttempt = useRef(0);
   const [libraryMode,setLibraryMode]=useState<"cues"|"fx">("cues");
   const [selectedId, setSelectedId] = useState("");
   const [cursor, setCursor] = useState(props.initialBar ?? 0);
@@ -167,15 +168,18 @@ export default function ShowTimelineEditor(props: Props) {
       audio.currentTime = source / 1000;
     if (playingRef.current && audio.paused && !audioStarting.current) {
       audioStarting.current = true;
-      void audio.play().then(()=>{if(!playingRef.current)audio.pause();}).catch(() => {
+      const attempt = ++playAttempt.current;
+      void audio.play().then(()=>{if(attempt===playAttempt.current&&!playingRef.current)audio.pause();}).catch(() => {
+        if(attempt!==playAttempt.current)return;
         setAudioError(
           "Audio could not play. Relink the track or press Play again.",
         );
         pause();
-      }).finally(() => { audioStarting.current = false; });
+      }).finally(() => { if(attempt===playAttempt.current)audioStarting.current = false; });
     }
   }
   function pause() {
+    ++playAttempt.current; audioStarting.current = false;
     playingRef.current = false;
     setPlaying(false);
     if (raf.current !== null) cancelAnimationFrame(raf.current);
@@ -259,12 +263,13 @@ export default function ShowTimelineEditor(props: Props) {
     raf.current = requestAnimationFrame(tick);
   }
   useEffect(() => {
-    const stopTransport=()=>{playingRef.current=false;setPlaying(false);if(raf.current!==null)cancelAnimationFrame(raf.current);raf.current=null;latest.current.audioRef.current?.pause();latest.current.onStop();};
+    const stopTransport=()=>{++playAttempt.current;audioStarting.current=false;playingRef.current=false;setPlaying(false);if(raf.current!==null)cancelAnimationFrame(raf.current);raf.current=null;latest.current.audioRef.current?.pause();latest.current.onStop();};
     window.addEventListener('lumarig-stop-timeline',stopTransport);
     return ()=>window.removeEventListener('lumarig-stop-timeline',stopTransport);
   },[]);
   useEffect(
     () => () => {
+      ++playAttempt.current;
       playingRef.current = false;
       if (raf.current !== null) cancelAnimationFrame(raf.current);
       latest.current.audioRef.current?.pause();
