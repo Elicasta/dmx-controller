@@ -62,6 +62,8 @@ export type ShowTimeline = {
   mediaKind?: 'audio' | 'video';
   trimInMs?: number;
   trimOutMs?: number;
+  tempoLocked?: boolean;
+  downbeatOffsetMs?: number;
   clips: TimelineClip[];
 };
 export const EMPTY_TIMELINE: ShowTimeline = {
@@ -799,6 +801,8 @@ export function isShowTimeline(value: unknown): value is ShowTimeline {
     (t.trimInMs === undefined || finite(t.trimInMs, 0, 24 * 60 * 60 * 1000)) &&
     (t.trimOutMs === undefined || finite(t.trimOutMs, 0, 24 * 60 * 60 * 1000)) &&
     (t.trimInMs === undefined || t.trimOutMs === undefined || t.trimOutMs >= t.trimInMs) &&
+    (t.tempoLocked === undefined || typeof t.tempoLocked === "boolean") &&
+    (t.downbeatOffsetMs === undefined || finite(t.downbeatOffsetMs, 0, 24 * 60 * 60 * 1000)) &&
     Array.isArray(t.clips) &&
     t.clips.length <= 1000 &&
     t.clips.every(
