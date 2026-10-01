@@ -1,6 +1,6 @@
 import { songsForShow } from './song-bank';
 import { isShowFile, renumberCues, resolveShowCueFrame, type ShowFile } from './show';
-import { EMPTY_TIMELINE } from './show-design';
+import { EMPTY_TIMELINE, isShowTimeline } from './show-design';
 import type { SongRecord } from './song-record';
 
 /** The editable library master. Shows retain independent copies linked by libraryId. */
@@ -34,7 +34,9 @@ export function isSongProgram(value: unknown): value is SongProgram {
   const p = value as SongProgram;
   return typeof p.id === 'string' && !!p.id && typeof p.savedAt === 'string'
     && Number.isInteger(p.revision) && p.revision > 0 && isShowFile(p.show)
-    && p.show.songs?.length === 1;
+    && p.show.songs?.length === 1 && isShowTimeline(p.show.timeline)
+    && new Set(p.show.cues.map(c => c.id)).size === p.show.cues.length
+    && p.show.timeline.clips.every(clip => p.show.cues.some(cue => cue.id === clip.cueId));
 }
 /** Remap all editable IDs; never overwrite a show's existing cues or groups. */
 export function insertSongProgram(show: ShowFile, program: SongProgram): { show: ShowFile; song: SongRecord } {

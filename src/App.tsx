@@ -1041,7 +1041,7 @@ export default function App() {
       const saved = await saveProgramState(working, { seed: showLibrary.map(item => item.show) });
       if (cancelled) return;
       setSongLibrary(saved.programs); setShowRecovery(saved.recovery);
-      setShowFile(working); setLibraryReady(true); setLibraryOpening(false); setSaveStatus('Saved');
+      setShowFile({ ...working, songs: songsForShow(working).map(song => ({ ...song, libraryId: programId(working, song) })) }); setLibraryReady(true); setLibraryOpening(false); setSaveStatus('Saved');
     }).catch(error => { if (!cancelled) { setLibraryOpening(false); setSaveStatus('Save unavailable'); setMessage(String(error)); } });
     return () => { cancelled = true; };
   }, []);
@@ -1800,7 +1800,8 @@ export default function App() {
     stopFade();
     clearBusk(false);
     if (activeEffectRef.current || activeCustomEffectIdRef.current) stopEffect(false);
-    setShowFile(sanitizeShow(snapshot.show));
+    const loaded = sanitizeShow(snapshot.show);
+    setShowFile({ ...loaded, songs: songsForShow(loaded).map(song => ({ ...song, libraryId: programId(loaded, song) })) });
     setPatch(snapshot.patch.map((fixture, index) => migratePatchedFixture(fixture, index, snapshot.patch.length, snapshot.stageSettings.dimensions)));
     setStageElements(snapshot.stageElements.map((element) => migrateStageElement(element, snapshot.stageSettings.dimensions)));
     setStageSettings(snapshot.stageSettings);
