@@ -4311,7 +4311,7 @@ export default function App() {
 
       {workspace === 'live' && <section className={`live-console live-console-v3 ${liveView === 'performance' ? 'controller-live-view' : ''}`}>
         {liveView !== 'performance' && <header className="live-command-bar">
-          <div className="live-show-state"><small>LIVE PERFORMANCE</small><strong>{showFile.name}</strong><span>{liveEffectLabel ? `FX · ${liveEffectLabel}` : 'PROGRAM OUTPUT'}</span></div>
+          <div className="live-show-state"><small>LIVE PERFORMANCE</small><strong>{showFile.name}</strong><span>{dmxStatus.blackout ? 'BLACKOUT ACTIVE' : liveEffectLabel ? `FX · ${liveEffectLabel}` : 'LOCAL CONTROL'}</span></div>
           <div className="live-cue-deck">
             <button className="live-back" onClick={goPreviousCue}>BACK</button>
             <div className="live-cue-card current"><small>CURRENT</small><strong>{activeCue?.name ?? 'Ready'}</strong><span>{activeCue ? `Cue ${activeCue.number}` : 'No cue running'}</span></div>
@@ -4322,7 +4322,7 @@ export default function App() {
         </header>}
 
         <nav className="live-view-tabs">{([
-          ['performance','Controller'],['overrides','Fixtures'],['groups','Groups'],['settings','System']
+          ['performance','Controller'],['overrides','Fixtures'],['groups','Groups'],['masters','Masters'],['shortcuts','Shortcuts'],['settings','System']
         ] as Array<[LiveView,string]>).map(([id,label])=><button key={id} className={liveView===id?'active':''} onClick={()=>setLiveView(id)}>{label}</button>)}</nav>
 
         {liveView === 'performance' && <DesktopLiveController
