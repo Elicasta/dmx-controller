@@ -4,5 +4,7 @@
 <dict>
   <key>NSMicrophoneUsageDescription</key>
   <string>DMX Controller uses audio input only when you enable sound-reactive lighting.</string>
+  <key>NSCameraUsageDescription</key>
+  <string>LumaRig uses video input only when you select an NDI or capture source for a visualizer screen.</string>
 </dict>
 </plist>

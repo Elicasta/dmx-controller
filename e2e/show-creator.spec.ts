@@ -293,7 +293,7 @@ test('color input, compact panels and detached stage follow actual output', asyn
  await expect(hue).toHaveValue('1');
  await expect(page.locator('.selected-color-readout strong')).not.toHaveText(oldColor!);
  const wheel=page.getByRole('slider',{name:'Color wheel',exact:true});await wheel.click({position:{x:39,y:5}});
- await page.getByRole('button',{name:'Stage Monitor',exact:true}).click();
+ await page.getByRole('button',{name:'Visualizer',exact:true}).click();
  await expect(page.locator('.floating-stage-monitor [data-fixture]')).toHaveCount(4);
  await expect.poll(()=>page.locator('.floating-stage-monitor [data-fixture="f0"]').getAttribute('data-level')).not.toBe('0');
  const before=(await page.locator('.program-center').boundingBox())!;
@@ -333,14 +333,14 @@ test('songs collapse, open inline timelines and preserve imported timeline shows
  const integrated=(await page.locator('.cue-integrated-timeline').boundingBox())!;
  const cueWorkspace=(await page.locator('.show-cue-layout').boundingBox())!;
  expect(integrated.x+integrated.width).toBeGreaterThan(cueWorkspace.x+cueWorkspace.width-5);
- await page.getByRole('button',{name:'Stage Monitor',exact:true}).click();
+ await page.getByRole('button',{name:'Visualizer',exact:true}).click();
  const monitorHeader=(await page.locator('.floating-stage-monitor>header').boundingBox())!;
  await page.mouse.move(monitorHeader.x+60,monitorHeader.y+15);await page.mouse.down();await page.mouse.move(monitorHeader.x+710,monitorHeader.y+345,{steps:8});await page.mouse.up();
  await page.getByRole('button',{name:'Play Show',exact:true}).click();
  await expect.poll(()=>page.locator('.floating-stage-monitor [data-fixture="f0"]').getAttribute('data-level')).not.toBe('0');
  await page.getByRole('button',{name:'Stop / Rewind',exact:true}).click();
  console.log('VISUAL_REVIEW_CUES:'+ (await page.screenshot({type:'jpeg',quality:55})).toString('base64'));
- await page.getByRole('button',{name:'Close stage monitor',exact:true}).click();
+ await page.getByRole('button',{name:'Close visualizer',exact:true}).click();
  await page.getByRole('button',{name:'Close timeline',exact:true}).click();
  const show=await readShow(page);show.name='Imported Song';
  await page.getByLabel('Import timeline show',{exact:true}).setInputFiles({name:'song.json',mimeType:'application/json',buffer:Buffer.from(JSON.stringify(show))});
@@ -421,4 +421,60 @@ test('cue rundown keeps nested sections and media items after reload',async({pag
  await page.getByRole('button',{name:'Cues',exact:true}).click();
  await expect(page.locator('.show-rundown-section')).toHaveCount(2);
  await expect(page.locator('.rundown-item.media')).toContainText('Walk-in Video');
+});
+
+
+test('integrated visualizer keeps venue presets isolated and opens the renderer',async({page})=>{
+ await seed(page);
+ page.on('dialog',dialog=>void dialog.accept());
+ await page.goto('/');
+
+ await page.getByRole('button',{name:'BUILD',exact:true}).click();
+ await page.getByRole('button',{name:'Stage',exact:true}).click();
+ await page.getByRole('button',{name:/Apostolic Day 2026/}).first().click();
+
+ await expect.poll(async()=>page.evaluate(()=>{
+   const doc=JSON.parse(localStorage.getItem('dmx-controller.stage-elements.v1')??'{"elements":[]}');
+   return (doc.elements??[]).every((element:any)=>String(element.id).startsWith('apostolic-day-2026:'));
+ })).toBe(true);
+
+ await page.getByRole('button',{name:/Cornerstone · Main Sanctuary/}).first().click();
+ await expect.poll(async()=>page.evaluate(()=>{
+   const doc=JSON.parse(localStorage.getItem('dmx-controller.stage-elements.v1')??'{"elements":[]}');
+   const ids=(doc.elements??[]).map((element:any)=>String(element.id));
+   return ids.length>0
+     && ids.every((id:string)=>id.startsWith('cornerstone-main-sanctuary:'))
+     && !ids.some((id:string)=>id.startsWith('apostolic-day-2026:'));
+ })).toBe(true);
+
+ await page.getByRole('button',{name:'VISUALIZER',exact:true}).click();
+ await expect(page.locator('.visualizer-workspace')).toBeVisible();
+ await expect(page.locator('.visualizer-workspace canvas.visualizer-3d-canvas')).toBeVisible();
+ await expect(page.getByRole('button',{name:'▶ Flyby',exact:true}).first()).toBeVisible();
+
+ const initialObjectCount=await page.evaluate(()=>{
+   const doc=JSON.parse(localStorage.getItem('dmx-controller.stage-elements.v1')??'{"elements":[]}');
+   return (doc.elements??[]).length;
+ });
+ const audioWarehouse=page.locator('.visualizer-warehouse details').filter({hasText:'Audio'});
+ await audioWarehouse.locator('summary').click();
+ await audioWarehouse.getByRole('button',{name:'＋ PA Speaker',exact:true}).click();
+ await expect(page.locator('.visualizer-object-inspector')).toContainText('PA Speaker 1');
+ await expect.poll(async()=>page.evaluate(()=>{
+   const doc=JSON.parse(localStorage.getItem('dmx-controller.stage-elements.v1')??'{"elements":[]}');
+   return (doc.elements??[]).length;
+ })).toBe(initialObjectCount+1);
+
+ await page.locator('.visualizer-object-inspector').getByRole('button',{name:'Duplicate',exact:true}).click();
+ await expect(page.locator('.visualizer-object-inspector')).toContainText('PA Speaker 1 Copy');
+ await expect.poll(async()=>page.evaluate(()=>{
+   const doc=JSON.parse(localStorage.getItem('dmx-controller.stage-elements.v1')??'{"elements":[]}');
+   return (doc.elements??[]).length;
+ })).toBe(initialObjectCount+2);
+
+ await page.locator('.visualizer-object-inspector').getByRole('button',{name:'Delete',exact:true}).click();
+ await expect.poll(async()=>page.evaluate(()=>{
+   const doc=JSON.parse(localStorage.getItem('dmx-controller.stage-elements.v1')??'{"elements":[]}');
+   return (doc.elements??[]).length;
+ })).toBe(initialObjectCount+1);
 });

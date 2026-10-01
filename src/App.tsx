@@ -1,6 +1,8 @@
 import ResizableWorkspace from './components/ResizableWorkspace';
 import DraggablePanelDeck from './components/DraggablePanelDeck';
-import StageMonitor, { useStagePublisher } from './components/StageMonitor';
+import StageMonitor, { openStageWindow, useStagePublisher } from './components/StageMonitor';
+import Visualizer3D from './components/Visualizer3D';
+import { StageMediaSurface, requestStageVideoInputs, type StageVideoInputOption } from './components/StageMediaSurface';
 import SongCueLibrary from './components/SongCueLibrary';
 import { moveRundownItemCues } from './lib/show';
 import { activeTimelineCueId, createSection, EMPTY_TIMELINE, FX_RECIPES, SHOW_COLORS, buildSectionCues, renderEffectStack, renderShowTimeline, isEffectRecipe, type EffectStackLayer, type ShowSection } from './lib/show-design';
@@ -89,17 +91,17 @@ import {
 import { DesktopLiveController } from './components/DesktopLiveController';
 import './desktop-live-controller.css';
 import {
-  STAGE_ELEMENT_LIBRARY,
+  STAGE_WAREHOUSE,
   clampStageElement,
   isStageDocument,
   isStageElement,
   makeStageDocument,
-  makeStageElement,
+  makeStageWarehouseElement,
   migrateStageElement,
   stageElementPosition,
-  type StageElement,
-  type StageElementType
+  type StageElement
 } from './lib/stage';
+import { STAGE_PRESETS, instantiateStagePreset, type StagePresetId } from './lib/stage-presets';
 import {
   DEFAULT_MIDI_MAPPINGS,
   midiBindingLabel,
@@ -142,7 +144,7 @@ import type { StudioBridgeCommand, StudioSongIdentity } from './core/studio-brid
 const ShowCreator = lazy(() => import('./components/ShowCreator'));
 const ShowTimelineEditor = lazy(() => import('./components/ShowTimelineEditor'));
 
-type Workspace = 'build' | 'create' | 'show' | 'live';
+type Workspace = 'build' | 'create' | 'show' | 'visualizer' | 'live';
 type SetupView = 'fixtures' | 'groups' | 'stage' | 'settings';
 type ProgramMode = 'stage' | 'looks' | 'fx' | 'colors' | 'media' | 'presets';
 type ShowMode = 'creator' | 'cues' | 'timeline' | 'tracks' | 'library' | 'sync' | 'recordings';
@@ -258,6 +260,7 @@ const SETTINGS_STORAGE_KEY = 'dmx-controller.settings.v1';
 const STAGE_STORAGE_KEY = 'dmx-controller.stage-elements.v1';
 const STAGE_BACKUP_STORAGE_KEY = 'dmx-controller.stage-elements.backup.v1';
 const STAGE_SETTINGS_STORAGE_KEY = 'dmx-controller.stage-settings.v2';
+const STAGE_PRESET_STORAGE_KEY = 'dmx-controller.stage-preset.v1';
 const REMOTE_RELAY_STORAGE_KEY = 'dmx-controller.remote-relay.v1';
 const FADE_TIMES = [0, 500, 1000, 2000, 5000] as const;
 
@@ -571,7 +574,7 @@ function FixturePatchEditor({ fixture, onSave, onRemove, onToggleSelected, onTog
 }
 
 export default function App() {
-  const [workspace, setWorkspace] = useState<Workspace>(() => initialConsoleValue('workspace', ['build', 'create', 'show', 'live'], 'create'));
+  const [workspace, setWorkspace] = useState<Workspace>(() => initialConsoleValue('workspace', ['build', 'create', 'show', 'visualizer', 'live'], 'create'));
   const [setupView, setSetupView] = useState<SetupView>(() => initialConsoleValue('setup', ['fixtures', 'groups', 'stage', 'settings'], 'stage'));
   const [programMode, setProgramMode] = useState<ProgramMode>(() => initialConsoleValue('program', ['stage', 'looks', 'fx', 'colors', 'media', 'presets'], 'stage'));
   const [showMode, setShowMode] = useState<ShowMode>(() => initialConsoleValue('show', ['creator', 'cues', 'timeline', 'tracks', 'library', 'sync', 'recordings'], 'cues'));
@@ -817,6 +820,13 @@ export default function App() {
   const [stageElements, setStageElements] = useState<StageElement[]>(loadStageElements);
   const [selectedStageElementId, setSelectedStageElementId] = useState<string | null>(null);
   const [stageSettings, setStageSettings] = useState<StageSettings>(loadStageSettings);
+  const [activeStagePresetId, setActiveStagePresetId] = useState<StagePresetId | null>(() => {
+    if (typeof window === 'undefined') return null;
+    const stored = window.localStorage.getItem(STAGE_PRESET_STORAGE_KEY);
+    return STAGE_PRESETS.some((preset) => preset.id === stored) ? stored as StagePresetId : null;
+  });
+  const [stageVideoInputs, setStageVideoInputs] = useState<StageVideoInputOption[]>([]);
+  const [stageVideoInputError, setStageVideoInputError] = useState('');
   const [stageMonitorOpen,setStageMonitorOpen]=useState(false);
   const [midiMapOpen,setMidiMapOpen]=useState(false);
   const [timelineShowId,setTimelineShowId]=useState('');
@@ -1020,6 +1030,10 @@ export default function App() {
   }, []);
   useEffect(() => window.localStorage.setItem(STAGE_STORAGE_KEY, JSON.stringify(makeStageDocument(stageElements, stageSettings.dimensions))), [stageElements, stageSettings.dimensions]);
   useEffect(() => window.localStorage.setItem(STAGE_SETTINGS_STORAGE_KEY, JSON.stringify(stageSettings)), [stageSettings]);
+  useEffect(() => {
+    if (activeStagePresetId) window.localStorage.setItem(STAGE_PRESET_STORAGE_KEY, activeStagePresetId);
+    else window.localStorage.removeItem(STAGE_PRESET_STORAGE_KEY);
+  }, [activeStagePresetId]);
 
   const refreshDmxStatus = useCallback(async () => {
     try { setDmxStatus(await invoke<DmxStatus>('dmx_status')); } catch { /* browser preview */ }
@@ -2964,20 +2978,57 @@ export default function App() {
     setPatch((current) => assignFixturesToGroup(current, [fixtureId], ''));
   }
 
-  function addStageElement(type: StageElementType) {
-    const element = makeStageElement(type, stageElements.filter((item) => item.type === type).length, stageSettings.dimensions);
+  function loadStagePreset(presetId: StagePresetId) {
+    const preset = instantiateStagePreset(presetId);
+    if (stageElements.length > 0 && !window.confirm(`Load ${preset.name}? This replaces the current stage scene instead of stacking the presets together.`)) return;
+    setStageElements(preset.elements);
+    setStageSettings({ schemaVersion: 2, unit: 'feet', dimensions: preset.dimensions });
+    setSelectedStageElementId(preset.elements.find((element) => element.type === 'led-screen')?.id ?? preset.elements[0]?.id ?? null);
+    setActiveStagePresetId(presetId);
+    setStageMode('select');
+    setMessage(`${preset.name} loaded as a separate stage scene.`);
+  }
+
+  async function scanStageVideoInputs() {
+    setStageVideoInputError('');
+    try {
+      const inputs = await requestStageVideoInputs();
+      setStageVideoInputs(inputs);
+      setMessage(inputs.length ? `${inputs.length} video input${inputs.length === 1 ? '' : 's'} available for visualizer screens.` : 'No video inputs were found.');
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      setStageVideoInputError(message);
+      setMessage(`Video input scan failed: ${message}`);
+    }
+  }
+
+  function routeVideoInputToAllScreens(deviceId: string) {
+    const input = stageVideoInputs.find((item) => item.deviceId === deviceId);
+    if (!input) return;
+    setStageElements((current) => current.map((element) => element.type === 'led-screen'
+      ? { ...element, mediaSource: { kind: 'ndi', deviceId: input.deviceId, sourceName: input.label || 'ProPresenter', fit: element.mediaSource?.kind === 'ndi' ? element.mediaSource.fit ?? 'contain' : 'contain' } }
+      : element));
+    setMessage(`${input.label || 'Video input'} routed to every visualizer screen.`);
+  }
+
+  function addWarehouseStageElement(itemId: string) {
+    const count = stageElements.filter((element) => element.id.includes(`warehouse-${itemId}-`)).length;
+    const element = makeStageWarehouseElement(itemId, count, stageSettings.dimensions);
     setStageElements((current) => [...current, element]);
     setSelectedStageElementId(element.id);
-    setMessage(`${element.label} added to the stage design.`);
+    setActiveStagePresetId(null);
+    setMessage(`${element.label} added from the warehouse.`);
   }
 
   function updateStageElement(id: string, updates: Partial<StageElement>) {
+    if (Object.keys(updates).some((key) => key !== 'mediaSource')) setActiveStagePresetId(null);
     setStageElements((current) => current.map((element) => element.id === id
       ? migrateStageElement(clampStageElement({ ...element, ...updates }), stageSettings.dimensions)
       : element));
   }
 
   function updateStageElementPosition(id: string, axis: 'x' | 'y' | 'z', value: number) {
+    setActiveStagePresetId(null);
     setStageElements((current) => current.map((element) => {
       if (element.id !== id) return element;
       const migrated = migrateStageElement(element, stageSettings.dimensions);
@@ -2985,7 +3036,52 @@ export default function App() {
     }));
   }
 
+  function updateStageElementRotation(id: string, axis: 'yaw' | 'pitch' | 'roll', value: number) {
+    setActiveStagePresetId(null);
+    setStageElements((current) => current.map((element) => {
+      if (element.id !== id) return element;
+      const migrated = migrateStageElement(element, stageSettings.dimensions);
+      return { ...migrated, transform: { ...migrated.transform!, rotation: { ...migrated.transform!.rotation, [axis]: value } } };
+    }));
+  }
+
+  function updateStageElementDimension(id: string, axis: 'x' | 'y' | 'z', value: number) {
+    setActiveStagePresetId(null);
+    const safeValue = Math.max(.03, Math.min(100, Number.isFinite(value) ? value : .03));
+    setStageElements((current) => current.map((element) => {
+      if (element.id !== id) return element;
+      const migrated = migrateStageElement(element, stageSettings.dimensions);
+      return { ...migrated, dimensions: { ...migrated.dimensions!, [axis]: safeValue } };
+    }));
+  }
+
+  function duplicateStageElement(id: string) {
+    const source = stageElements.find((element) => element.id === id);
+    if (!source) return;
+    const migrated = migrateStageElement(source, stageSettings.dimensions);
+    const copy: StageElement = {
+      ...migrated,
+      id: `${source.id}-copy-${Date.now().toString(36)}`,
+      label: `${source.label} Copy`,
+      transform: migrated.transform ? {
+        position: {
+          x: migrated.transform.position.x + .45,
+          y: migrated.transform.position.y,
+          z: migrated.transform.position.z + .45
+        },
+        rotation: { ...migrated.transform.rotation }
+      } : undefined,
+      dimensions: migrated.dimensions ? { ...migrated.dimensions } : undefined,
+      mediaSource: migrated.mediaSource ? { ...migrated.mediaSource } : undefined
+    };
+    setStageElements((current) => [...current, copy]);
+    setSelectedStageElementId(copy.id);
+    setActiveStagePresetId(null);
+    setMessage(`${copy.label} duplicated.`);
+  }
+
   function removeStageElement(id: string) {
+    setActiveStagePresetId(null);
     setStageElements((current) => current.filter((element) => element.id !== id));
     setSelectedStageElementId(null);
     setMessage('Stage element removed.');
@@ -3481,7 +3577,7 @@ export default function App() {
               return;
             }
             setSelectedStageElementId(element.id);
-          }}><span className="stage-object-shape" style={{ borderColor: element.color, backgroundColor: element.type === 'led-screen' ? element.color : undefined }} /><b>{element.label}</b></button>;
+          }}><span className="stage-object-shape" style={{ borderColor: element.color, backgroundColor: element.type === 'led-screen' ? element.color : undefined }}>{element.type === 'led-screen' && <StageMediaSurface source={element.mediaSource}/>}</span><b>{element.label}</b></button>;
         })}
         {patch.map((fixture, index) => {
           const geometry = fixtureGeometryState(outputUniverse, fixture, index, patch.length, stageSettings.dimensions);
@@ -3750,7 +3846,7 @@ export default function App() {
     <main className={`console-app workspace-${workspace} ${dmxStatus.blackout ? 'blackout-is-active' : ''}`}>
       <header className="console-header">
         <div className="console-brand"><span className="brand-mark">◆</span><div className="brand-product"><b>LUMARIG</b><small>SHOW</small></div><div className="brand-show"><input aria-label="Current show name" value={showFile.name} onChange={(event) => setShowFile((current) => ({ ...current, name: event.target.value }))} /><small>LIVE SHOWFILE · R{sharedShowRevisionRef.current} · v{appVersion}</small></div></div>
-        <nav className="console-workspace-tabs" aria-label="Workspace">{(['build', 'create', 'show', 'live'] as Workspace[]).map((item) => <button key={item} className={workspace === item ? 'active' : ''} onClick={() => setWorkspace(item)}>{item.toUpperCase()}</button>)}</nav>
+        <nav className="console-workspace-tabs" aria-label="Workspace">{(['build', 'create', 'show', 'visualizer', 'live'] as Workspace[]).map((item) => <button key={item} className={workspace === item ? 'active' : ''} onClick={() => setWorkspace(item)}>{item.toUpperCase()}</button>)}</nav>
         <div className="console-header-status">
           <button className="tempo-pill" onClick={tapTempo}><strong>{tempoSource === 'midi' && midiBpm ? midiBpm : effectBpm} BPM</strong><small>{tempoSource === 'midi' ? 'MIDI CLOCK' : 'TAP'}</small></button>
           <button className={`connection-pill ${dmxStatus.connected ? 'online' : ''}`} onClick={() => { setWorkspace('build'); setSetupView('settings'); }}><i /><span><strong>DMX</strong><small>{dmxStatus.connected ? 'CONNECTED' : 'VIRTUAL'}</small></span></button>
@@ -3791,7 +3887,8 @@ export default function App() {
             <div className="stage-bottom-tools">
               <section><header><strong>TARGETS &amp; AIM</strong><span>{selectedMovingFixtures.length} mover{selectedMovingFixtures.length === 1 ? '' : 's'} selected</span></header><div className="inline-control-grid"><select value={selectedTargetId} onChange={(event) => setSelectedTargetId(event.target.value)}>{stageTargets.map((target) => <option key={target.id} value={target.id}>{target.name}</option>)}</select><select value={aimArrangement} onChange={(event) => setAimArrangement(event.target.value as TargetArrangement)}><option value="converge">Converge</option><option value="fan-horizontal">Horizontal fan</option><option value="fan-vertical">Vertical fan</option><option value="mirror">Mirror</option><option value="cross">Cross</option></select><select value={aimOrderMode} onChange={(event) => setAimOrderMode(event.target.value as FixtureOrderMode)}><option value="forward">Forward</option><option value="reverse">Reverse</option><option value="center-out">Center Out</option><option value="outside-in">Outside In</option><option value="mirror-pairs">Mirror Pairs</option><option value="odd-even">Odd → Even</option><option value="even-odd">Even → Odd</option></select><label className="inline-range"><span>Spread {aimSpreadMeters.toFixed(1)}m</span><input type="range" min=".1" max="20" step=".1" value={aimSpreadMeters} onChange={(event) => setAimSpreadMeters(Number(event.target.value))}/></label><button className="console-primary" disabled={!selectedTarget || !selectedMovingFixtures.length} onClick={() => selectedTarget && void aimAtTarget(selectedTarget)}>Aim selected</button></div></section>
               <section><header><strong>POSITION PALETTES</strong><span>{showFile.positionPalettes?.length ?? 0} saved</span></header><div className="palette-chip-row">{showFile.positionPalettes?.map((palette) => <button key={palette.id} onClick={() => void runPositionPalette(palette)}><span>{palette.kind}</span>{palette.name}</button>)}<button className="add-palette-chip" onClick={savePositionPalette}>＋ Save current</button></div></section>
-              <section><header><strong>STAGE ELEMENTS</strong><span>{stageElements.length}</span></header><div className="palette-chip-row">{STAGE_ELEMENT_LIBRARY.map((element) => <button key={element.type} onClick={() => addStageElement(element.type)}>＋ {element.name}</button>)}</div></section>
+              <section className="stage-preset-section"><header><strong>STAGE PRESETS</strong><span>{activeStagePresetId ? 'ACTIVE' : 'CUSTOM'}</span></header><div className="stage-preset-grid">{STAGE_PRESETS.map((preset) => <button key={preset.id} className={activeStagePresetId === preset.id ? 'active' : ''} onClick={() => loadStagePreset(preset.id)}><strong>{preset.name}</strong><small>{preset.description}</small></button>)}</div><small className="stage-preset-note">Loading a preset replaces the current stage scene. Church and Apostolic Day never stack into one layout.</small></section>
+              <section className="stage-warehouse-section"><header><strong>WAREHOUSE</strong><span>{STAGE_WAREHOUSE.length} objects</span></header><div className="stage-warehouse-groups">{(['Stage','Screens','Scenic','Audio','Band','People'] as const).map((category) => <div className="stage-warehouse-group" key={category}><span>{category}</span><div>{STAGE_WAREHOUSE.filter((item) => item.category === category).map((item) => <button key={item.id} onClick={() => addWarehouseStageElement(item.id)}>＋ {item.name}</button>)}</div></div>)}</div></section>
             </div>
           </>}
 
@@ -3809,8 +3906,8 @@ export default function App() {
             <section className="console-panel midi-mapping-console"><header><div><span>MIDI ASSIGNER</span><h2>Map controls</h2></div><b>{midiMappings.length} mappings</b></header><div className="midi-add-row"><select value={newMidiTarget} onChange={(event) => setNewMidiTarget(event.target.value)}>{midiControlGroups.map(([group, controls]) => <optgroup key={group} label={group}>{controls.map((control) => <option key={control.id} value={control.id}>{control.label}</option>)}</optgroup>)}</select><button className="console-primary" onClick={() => beginMidiAssignment()}>Add + Learn</button></div><div className="midi-map-list">{midiMappings.map((mapping) => { const control = midiControls.find((item) => item.id === mapping.target); const learning = midiLearnMappingId === mapping.id; return <div className={`midi-map-row ${learning ? 'is-learning' : ''}`} key={mapping.id}><strong>{control?.label ?? 'Unavailable'}</strong><span>{learning ? 'Move or press a control…' : midiBindingLabel(mapping)}</span><button onClick={() => setMidiLearnMappingId(learning ? null : mapping.id)}>{learning ? 'Cancel' : 'Learn'}</button><button onClick={() => removeMidiAssignment(mapping.id)}>Remove</button></div>; })}</div></section>
             <section className="console-panel connection-console remote-relay-console"><header><div><span>REMOTE CONTROL · SEPARATE NETWORKS</span><h2>Secure Cloud Relay</h2></div><b className={remoteRelayStatus === 'connected' ? 'healthy' : ''}>{remoteRelayStatus}</b></header><p>Both this Mac and the Vercel controller connect outbound to one private Supabase Realtime channel. No router port forwarding is required.</p><label><span>Supabase Project URL</span><input value={remoteRelayConfig.url} placeholder="https://project.supabase.co" onChange={(event) => setRemoteRelayConfig((current) => ({ ...current, url: event.target.value }))} /></label><label><span>Publishable Key</span><input type="password" value={remoteRelayConfig.publishableKey} onChange={(event) => setRemoteRelayConfig((current) => ({ ...current, publishableKey: event.target.value }))} /></label><div className="inspector-pair"><label><span>Account Email</span><input type="email" value={remoteRelayConfig.email} onChange={(event) => setRemoteRelayConfig((current) => ({ ...current, email: event.target.value }))} /></label><label><span>Password · never stored</span><input type="password" value={remoteRelayConfig.password ?? ''} onChange={(event) => setRemoteRelayConfig((current) => ({ ...current, password: event.target.value }))} /></label></div><label><span>Room Code · use the same code on the remote</span><div className="relay-room-row"><input value={remoteRelayConfig.roomCode} onChange={(event) => setRemoteRelayConfig((current) => ({ ...current, roomCode: event.target.value }))} /><button onClick={() => setRemoteRelayConfig((current) => ({ ...current, roomCode: `${crypto.randomUUID().replace(/-/g, '')}${crypto.randomUUID().replace(/-/g, '')}` }))}>Generate</button></div></label>{remoteRelayError && <p className="relay-error">{remoteRelayError}</p>}<div className="settings-actions">{remoteRelayStatus === 'connected' ? <button onClick={disconnectRemoteRelay}>Disconnect relay</button> : <button className="console-primary" onClick={connectRemoteRelay}>Connect remote relay</button>}</div></section>
             <section className="console-panel connection-console studio-bridge-console"><header><div><span>STUDIO LINK · SHOW CONTROL</span><h2>LumaStudio</h2></div><b className={studioBridgeStatus.listening && !studioBridgeStatus.lastError ? 'healthy' : ''}>{studioBridgeStatus.lastError ? 'Error' : studioBridgeStatus.connectedClients > 0 ? 'Connected' : studioBridgeStatus.listening ? 'Ready' : 'Starting'}</b></header><p>Semantic show-control bridge for Studio transport, cue recall, recorded lighting, FX and blackout. Studio never sends raw DMX.</p><div className="artnet-health-grid"><div><span>ENDPOINT</span><strong>ws://127.0.0.1:{studioBridgeStatus.port}/studio</strong></div><div><span>CLIENTS</span><strong>{studioBridgeStatus.connectedClients}</strong></div><div><span>PROTOCOL</span><strong>studio-bridge-v1</strong></div><div><span>AUTHORITY</span><strong>LumaRig</strong></div></div>{studioBridgeStatus.lastError && <p className="artnet-error">Studio Bridge: {studioBridgeStatus.lastError}</p>}<small>The bridge starts automatically. If Studio closes, lighting continues locally in LumaRig.</small></section>
-            <section className="console-panel connection-console visualizer-direct-console"><header><div><span>VISUALIZER LINK · SEMANTIC WEBSOCKET</span><h2>LumaRig Direct</h2></div><b className={directStatus.listening && !directStatus.lastError ? 'healthy' : ''}>{directStatus.clients > 0 ? 'Connected' : directStatus.listening ? 'Ready' : 'Error'}</b></header><p>Native semantic link for LumaViz. Sends resolved fixture identity, intensity, color, movement, beam and strobe without making LumaViz decode DMX.</p><div className="artnet-health-grid"><div><span>ENDPOINT</span><strong>ws://127.0.0.1:{directStatus.port}/lumaviz</strong></div><div><span>CLIENTS</span><strong>{directStatus.clients}</strong></div><div><span>FRAMES SENT</span><strong>{directStatus.framesSent.toLocaleString()}</strong></div><div><span>PROTOCOL</span><strong>fixture-frame-v1</strong></div></div>{directStatus.lastError && <p className="artnet-error">Direct: {directStatus.lastError}</p>}<small>LumaRig Direct starts automatically. Art-Net remains available below as the standard DMX-over-network fallback.</small></section>
-            <section className="console-panel connection-console visualizer-output-console"><header><div><span>VISUALIZER LINK · ART-NET</span><h2>LumaViz Connection</h2></div><b className={settings.visualizerArtNetEnabled && !artNetTelemetry.lastError ? 'healthy' : ''}>{artNetTelemetry.lastError ? 'Error' : settings.visualizerArtNetEnabled ? 'Live' : 'Off'}</b></header><p>LumaRig mirrors the final resolved DMX frame after cues, FX, manual overrides, group masters, and grand master. Physical DMX remains independent if the visualizer closes.</p><div className="artnet-health-grid"><div><span>TRANSPORT</span><strong>Art-Net / UDP 6454</strong></div><div><span>TARGET</span><strong>{settings.visualizerArtNetTarget || '127.0.0.1'}</strong></div><div><span>FRAMES SENT</span><strong>{artNetTelemetry.framesSent.toLocaleString()}</strong></div><div><span>STATUS</span><strong>{artNetTelemetry.lastError ? 'Send error' : settings.visualizerArtNetEnabled ? artNetTelemetry.framesSent > 0 ? 'Streaming' : 'Armed' : 'Stopped'}</strong></div></div>{artNetTelemetry.lastError && <p className="artnet-error">Art-Net: {artNetTelemetry.lastError}</p>}<label className="inspector-toggle"><span>Enable visualizer output</span><input type="checkbox" checked={settings.visualizerArtNetEnabled} onChange={(event) => setSettings((current) => ({ ...current, visualizerArtNetEnabled: event.target.checked }))} /></label><label><span>Target IPv4 address</span><input value={settings.visualizerArtNetTarget} placeholder="127.0.0.1" onChange={(event) => setSettings((current) => ({ ...current, visualizerArtNetTarget: event.target.value }))} /></label><small>Use 127.0.0.1 when LumaViz is on this computer. For another computer, use that machine's LAN IPv4. 255.255.255.255 broadcasts to the LAN.</small><div className="settings-actions"><button className="console-primary" onClick={() => setSettings((current) => ({ ...current, visualizerArtNetTarget: '127.0.0.1', visualizerArtNetEnabled: true }))}>Connect LumaViz · This Mac</button><button onClick={() => setSettings((current) => ({ ...current, visualizerArtNetTarget: '255.255.255.255', visualizerArtNetEnabled: true }))}>Broadcast LAN</button><button onClick={() => setSettings((current) => ({ ...current, visualizerArtNetEnabled: false }))}>Stop Link</button></div></section>
+            <details className="console-panel legacy-visualizer-console"><summary>Legacy External Visualizer Bridges</summary><section className="connection-console visualizer-direct-console"><header><div><span>LEGACY LINK · SEMANTIC WEBSOCKET</span><h2>LumaRig Direct</h2></div><b className={directStatus.listening && !directStatus.lastError ? 'healthy' : ''}>{directStatus.clients > 0 ? 'Connected' : directStatus.listening ? 'Ready' : 'Error'}</b></header><p>Native semantic link for LumaViz. Sends resolved fixture identity, intensity, color, movement, beam and strobe without making LumaViz decode DMX.</p><div className="artnet-health-grid"><div><span>ENDPOINT</span><strong>ws://127.0.0.1:{directStatus.port}/lumaviz</strong></div><div><span>CLIENTS</span><strong>{directStatus.clients}</strong></div><div><span>FRAMES SENT</span><strong>{directStatus.framesSent.toLocaleString()}</strong></div><div><span>PROTOCOL</span><strong>fixture-frame-v1</strong></div></div>{directStatus.lastError && <p className="artnet-error">Direct: {directStatus.lastError}</p>}<small>LumaRig Direct starts automatically. Art-Net remains available below as the standard DMX-over-network fallback.</small></section>
+            <section className="console-panel connection-console visualizer-output-console"><header><div><span>VISUALIZER LINK · ART-NET</span><h2>LumaViz Connection</h2></div><b className={settings.visualizerArtNetEnabled && !artNetTelemetry.lastError ? 'healthy' : ''}>{artNetTelemetry.lastError ? 'Error' : settings.visualizerArtNetEnabled ? 'Live' : 'Off'}</b></header><p>LumaRig mirrors the final resolved DMX frame after cues, FX, manual overrides, group masters, and grand master. Physical DMX remains independent if the visualizer closes.</p><div className="artnet-health-grid"><div><span>TRANSPORT</span><strong>Art-Net / UDP 6454</strong></div><div><span>TARGET</span><strong>{settings.visualizerArtNetTarget || '127.0.0.1'}</strong></div><div><span>FRAMES SENT</span><strong>{artNetTelemetry.framesSent.toLocaleString()}</strong></div><div><span>STATUS</span><strong>{artNetTelemetry.lastError ? 'Send error' : settings.visualizerArtNetEnabled ? artNetTelemetry.framesSent > 0 ? 'Streaming' : 'Armed' : 'Stopped'}</strong></div></div>{artNetTelemetry.lastError && <p className="artnet-error">Art-Net: {artNetTelemetry.lastError}</p>}<label className="inspector-toggle"><span>Enable visualizer output</span><input type="checkbox" checked={settings.visualizerArtNetEnabled} onChange={(event) => setSettings((current) => ({ ...current, visualizerArtNetEnabled: event.target.checked }))} /></label><label><span>Target IPv4 address</span><input value={settings.visualizerArtNetTarget} placeholder="127.0.0.1" onChange={(event) => setSettings((current) => ({ ...current, visualizerArtNetTarget: event.target.value }))} /></label><small>Use 127.0.0.1 when LumaViz is on this computer. For another computer, use that machine's LAN IPv4. 255.255.255.255 broadcasts to the LAN.</small><div className="settings-actions"><button className="console-primary" onClick={() => setSettings((current) => ({ ...current, visualizerArtNetTarget: '127.0.0.1', visualizerArtNetEnabled: true }))}>Connect LumaViz · This Mac</button><button onClick={() => setSettings((current) => ({ ...current, visualizerArtNetTarget: '255.255.255.255', visualizerArtNetEnabled: true }))}>Broadcast LAN</button><button onClick={() => setSettings((current) => ({ ...current, visualizerArtNetEnabled: false }))}>Stop Link</button></div></section></details>
             <section className="console-panel connection-console"><header><div><span>AUDIO REACTIVE · BETA</span><h2>Sound Input</h2></div><b>{audioArmed ? 'Armed' : audioEnabled ? 'Monitoring' : 'Off'}</b></header><div className="audio-meter"><span style={{ width: `${audioLevel * 100}%` }} /></div><label><span>Sensitivity · {settings.audioSensitivity}%</span><input type="range" min="1" max="100" value={settings.audioSensitivity} onChange={(event) => setSettings((current) => ({ ...current, audioSensitivity: Number(event.target.value) }))} /></label>{audioError && <p>{audioError}</p>}<div className="settings-actions">{audioEnabled ? <><button onClick={stopAudioInput}>Stop input</button><button className="console-primary" onClick={() => { audioBaseUniverseRef.current = [...universeRef.current]; setAudioArmed(!audioArmed); }}>{audioArmed ? 'Disarm lights' : 'Arm selected lights'}</button></> : <button className="console-primary" onClick={startAudioInput}>Enable input</button>}</div></section>
             <section className="console-panel software-update-console"><header><div><span>SOFTWARE UPDATE</span><h2>LumaRig</h2></div><b className={updateStatus === 'available' ? 'healthy' : ''}>v{appVersion}</b></header><div className="update-summary"><strong>{updateStatus === 'available' && updateInfo ? `Version ${updateInfo.version} available` : updateStatus === 'checking' ? 'Checking GitHub Releases…' : updateStatus === 'installing' ? 'Installing update…' : updateStatus === 'current' ? 'You are up to date' : updateStatus === 'error' ? 'Update check failed' : 'Automatic update checks enabled'}</strong><small>{updateStatus === 'available' ? 'The signed update is ready. Output will be zeroed and disconnected before the app restarts.' : 'Release builds check the public update feed shortly after launch.'}</small></div>{updateInfo?.notes && <p className="update-notes">{updateInfo.notes}</p>}{updateError && <p className="update-error">{updateError}</p>}<div className="settings-actions"><button disabled={updateStatus === 'checking' || updateStatus === 'installing'} onClick={() => void checkForUpdates(false)}>{updateStatus === 'checking' ? 'Checking…' : 'Check for Updates'}</button>{updateStatus === 'available' && updateInfo && <button className="console-primary" onClick={() => void installAvailableUpdate()}>{`Install v${updateInfo.version}`}</button>}</div></section>
             <section className="console-panel safety-settings"><header><div><span>PERFORMANCE SAFETY</span><h2>Guardrails</h2></div></header><label><span>Grand master limit</span><input type="range" min="10" max="100" value={settings.masterLimit} onChange={(event) => setSettings((current) => ({ ...current, masterLimit: Number(event.target.value) }))} /><b>{settings.masterLimit}%</b></label><label><span>Confirm blackout release</span><input type="checkbox" checked={settings.confirmBlackoutRelease} onChange={(event) => setSettings((current) => ({ ...current, confirmBlackoutRelease: event.target.checked }))} /></label></section>
@@ -3847,9 +3944,28 @@ export default function App() {
           </> : setupView === 'stage' && selectedStageElement ? <>
             <header><span>STAGE OBJECT</span><strong>{selectedStageElement.label}</strong><small>{selectedStageElement.type}</small></header>
             <label><span>Name</span><input value={selectedStageElement.label} onChange={(event) => updateStageElement(selectedStageElement.id, { label: event.target.value })} /></label>
+            <span className="inspector-section-label">POSITION · METERS</span>
             <div className="transform-grid">{(['x', 'y', 'z'] as const).map((axis) => <label key={axis}><span>{axis.toUpperCase()}</span><input type="number" step="0.1" value={Number(selectedStagePosition[axis].toFixed(2))} onChange={(event) => updateStageElementPosition(selectedStageElement.id, axis, Number(event.target.value))} /></label>)}</div>
-            <label><span>Size</span><input type="range" min="10" max="100" value={selectedStageElement.size} onChange={(event) => updateStageElement(selectedStageElement.id, { size: Number(event.target.value) })} /></label>
+            <span className="inspector-section-label">ROTATION · DEGREES</span>
+            <div className="transform-grid">{(['yaw', 'pitch', 'roll'] as const).map((axis) => <label key={axis}><span>{axis}</span><input type="number" step="1" value={Number((selectedStageElement.transform?.rotation[axis] ?? 0).toFixed(1))} onChange={(event) => updateStageElementRotation(selectedStageElement.id, axis, Number(event.target.value))} /></label>)}</div>
+            <span className="inspector-section-label">PHYSICAL SIZE · METERS</span>
+            <div className="transform-grid">{(['x', 'y', 'z'] as const).map((axis) => <label key={axis}><span>{axis.toUpperCase()}</span><input type="number" min=".03" step="0.05" value={Number((selectedStageElement.dimensions?.[axis] ?? 1).toFixed(2))} onChange={(event) => updateStageElementDimension(selectedStageElement.id, axis, Number(event.target.value))} /></label>)}</div>
+            <label><span>UI Scale</span><input type="range" min="10" max="100" value={selectedStageElement.size} onChange={(event) => updateStageElement(selectedStageElement.id, { size: Number(event.target.value) })} /></label>
             <label><span>Color</span><input className="inspector-color" type="color" value={selectedStageElement.color} onChange={(event) => updateStageElement(selectedStageElement.id, { color: event.target.value })} /></label>
+            {selectedStageElement.type === 'led-screen' && <section className="screen-source-inspector">
+              <header><span>SCREEN SOURCE</span><strong>ProPresenter / NDI</strong></header>
+              <label><span>Source</span><select value={selectedStageElement.mediaSource?.kind ?? 'none'} onChange={(event) => updateStageElement(selectedStageElement.id, { mediaSource: event.target.value === 'ndi' ? { kind: 'ndi', sourceName: 'ProPresenter', fit: 'contain' } : { kind: 'none' } })}><option value="none">Static color</option><option value="ndi">NDI / video input</option></select></label>
+              {selectedStageElement.mediaSource?.kind === 'ndi' && <>
+                <label><span>Input</span><select value={selectedStageElement.mediaSource.deviceId ?? ''} onChange={(event) => {
+                  const input = stageVideoInputs.find((item) => item.deviceId === event.target.value);
+                  updateStageElement(selectedStageElement.id, { mediaSource: { ...selectedStageElement.mediaSource!, kind: 'ndi', deviceId: event.target.value || undefined, sourceName: input?.label || 'ProPresenter' } });
+                }}><option value="">Select NDI / video input</option>{stageVideoInputs.map((input) => <option key={input.deviceId} value={input.deviceId}>{input.label}</option>)}</select></label>
+                <label><span>Fit</span><select value={selectedStageElement.mediaSource.fit ?? 'contain'} onChange={(event) => updateStageElement(selectedStageElement.id, { mediaSource: { ...selectedStageElement.mediaSource!, kind: 'ndi', fit: event.target.value as 'contain' | 'cover' } })}><option value="contain">Contain</option><option value="cover">Fill / crop</option></select></label>
+                <button onClick={() => void scanStageVideoInputs()}>Scan NDI / Video Inputs</button>
+                {stageVideoInputError && <small className="stage-source-error">{stageVideoInputError}</small>}
+                <small>Use ProPresenter NDI output through an NDI virtual video input. The selected feed is rendered on this screen in the stage view and pop-out monitor.</small>
+              </>}
+            </section>}
             <button className="danger-button stage-delete-button" onClick={() => removeStageElement(selectedStageElement.id)}>Delete Stage Object</button>
           </> : inspectedFixture ? <>
             <header><span>FIXTURE INSPECTOR</span><strong>{inspectedFixture.name}</strong><small>{findProfile(inspectedFixture.profileId)?.manufacturer} {findProfile(inspectedFixture.profileId)?.model}</small></header>
@@ -4091,13 +4207,66 @@ export default function App() {
 
           {programMode === 'colors' && <div className="create-focus-view"><header><div><span>COLOR PALETTES</span><h2>Fixture-aware color programming</h2></div></header><ColorDeck title="SELECTED COLOR" subtitle={selectedFixtureTargets.length ? `${selectedFixtureTargets.length} selected fixtures` : 'Select fixtures'} color={globalColor} disabled={selectedCompatibleColors.length === 0} presets={consoleColorPresets} onChange={applyGlobalColor} /><section className="palette-library-v3"><header><span>QUICK PALETTES</span><small>Applies to selected compatible fixtures</small></header><div>{consoleColorPresets.map((preset) => <button key={preset.name} disabled={selectedCompatibleColors.length === 0} onClick={() => applyGlobalColor(preset.color)}><i style={{background:preset.color}}/><strong>{preset.name}</strong><small>{preset.color.toUpperCase()}</small></button>)}</div></section></div>}
 
-          {programMode === 'media' && <div className="create-focus-view media-programmer"><header><div><span>MEDIA</span><h2>LumaViz + LumaStudio</h2></div><b className={directStatus.clients > 0 || studioBridgeStatus.connectedClients > 0 ? 'healthy' : ''}>{directStatus.clients + studioBridgeStatus.connectedClients > 0 ? 'LINKED' : 'WAITING'}</b></header><div className="media-link-grid"><section><span>LUMAVIZ DIRECT</span><strong>{directStatus.clients > 0 ? 'Connected' : 'Ready'}</strong><small>Semantic fixture + stage preview</small><div className="media-stage-preview">{renderStagePreview()}</div></section><section><span>LUMASTUDIO</span><strong>{studioBridgeStatus.connectedClients > 0 ? 'Connected' : 'Ready'}</strong><small>Studio transport authority · Rig lighting authority</small><div className="media-status-stack"><p>Port {studioBridgeStatus.port}</p><p>{externalTransportRunning ? 'Transport following' : externalTrack.armed ? 'External sync armed' : 'Local transport'}</p><p>{externalTrack.songName || showTrackName || 'No active media track'}</p></div><button onClick={() => { setWorkspace('show'); setShowMode('sync'); }}>OPEN SYNC</button></section></div></div>}
+          {programMode === 'media' && <div className="create-focus-view media-programmer"><header><div><span>MEDIA</span><h2>Visualizer + LumaStudio</h2></div><b className={studioBridgeStatus.connectedClients > 0 ? 'healthy' : ''}>{studioBridgeStatus.connectedClients > 0 ? 'STUDIO LINKED' : 'VISUALIZER READY'}</b></header><div className="media-link-grid"><section><span>INTEGRATED VISUALIZER</span><strong>Ready</strong><small>Same fixture + stage state as LumaRig</small><div className="media-stage-preview"><Visualizer3D snapshot={stageSnapshot} compact/></div><button onClick={() => setWorkspace('visualizer')}>OPEN VISUALIZER</button></section><section><span>LUMASTUDIO</span><strong>{studioBridgeStatus.connectedClients > 0 ? 'Connected' : 'Ready'}</strong><small>Studio transport authority · Rig lighting authority</small><div className="media-status-stack"><p>Port {studioBridgeStatus.port}</p><p>{externalTransportRunning ? 'Transport following' : externalTrack.armed ? 'External sync armed' : 'Local transport'}</p><p>{externalTrack.songName || showTrackName || 'No active media track'}</p></div><button onClick={() => { setWorkspace('show'); setShowMode('sync'); }}>OPEN SYNC</button></section></div></div>}
 
           {programMode === 'presets' && <div className="create-focus-view"><header><div><span>PRESETS</span><h2>Position + look library</h2></div><button onClick={savePositionPalette}>＋ Save Position</button></header><section className="preset-bank-v3"><div><h3>POSITION PALETTES</h3>{showFile.positionPalettes?.length ? showFile.positionPalettes.map((palette) => <button key={palette.id} onClick={() => void runPositionPalette(palette)}><span>{palette.kind}</span><strong>{palette.name}</strong></button>) : <p>No position palettes saved.</p>}</div><div><h3>LOOK PRESETS</h3>{allLooks.map((look) => <button key={look.id} onClick={() => runLook(look)}><i style={{background:lookSwatch(look.values)}}/><strong>{look.name}</strong></button>)}</div></section></div>}
         </div>
 
         {programMode !== 'fx' && <EffectsPanel title="FX / SELECTED TARGET" targetName={programEffectName} fixtures={programEffectFixtures} activeEffect={activeEffect} bpm={effectBpm} depth={effectDepth} disabled={false} onBpmChange={(value) => { setEffectBpm(value); effectBpmRef.current = value; setTempoSource('manual'); }} onDepthChange={(value) => { setEffectDepth(value); effectDepthRef.current = value; }} onStart={(effect) => toggleEffect(effect, programEffectFixtures.map((fixture) => fixture.id))} onPress={(effect) => startMomentaryEffect(effect, programEffectFixtures.map((fixture) => fixture.id))} onRelease={releaseMomentaryEffect} onStop={() => stopEffect()} />}
       </ResizableWorkspace>}
+
+
+      {workspace === 'visualizer' && <section className="console-workspace-wide visualizer-workspace">
+        <header className="visualizer-workspace-header">
+          <div><span>INTEGRATED VISUALIZER</span><h2>{STAGE_PRESETS.find((preset) => preset.id === activeStagePresetId)?.name ?? 'Current Show'}</h2><p>Live LumaRig output, stage geometry, screens, crowd, haze and camera flybys in one scene.</p></div>
+          <div className="visualizer-workspace-actions">
+            <button onClick={() => { setWorkspace('build'); setSetupView('stage'); }}>Edit Stage</button>
+            <button onClick={() => void scanStageVideoInputs()}>Scan NDI / Video</button>
+            <button className="console-primary" onClick={() => void openStageWindow()}>Pop Out ↗</button>
+          </div>
+        </header>
+        <div className="visualizer-workspace-layout">
+          <div className="visualizer-workspace-canvas"><Visualizer3D snapshot={stageSnapshot} selectedElementId={selectedStageElementId} onSelectElement={(id) => { setSelectedStageElementId(id); clearFixtureSelection(); }}/></div>
+          <aside className="visualizer-workspace-sidebar">
+            <section className="visualizer-scene-tree">
+              <span>SCENE</span>
+              <strong>{stageElements.length} objects</strong>
+              <small>{patch.length} patched fixtures · {stageElements.filter((element) => element.type === 'led-screen').length} screens</small>
+              <div>{stageElements.map((element) => <button key={element.id} className={selectedStageElementId === element.id ? 'active' : ''} onClick={() => { setSelectedStageElementId(element.id); clearFixtureSelection(); }}><i style={{ background: element.color }}/><span><strong>{element.label}</strong><small>{element.assetKind ?? element.type}</small></span></button>)}</div>
+            </section>
+
+            {selectedStageElement && <section className="visualizer-object-inspector">
+              <span>SELECTED OBJECT</span>
+              <strong>{selectedStageElement.label}</strong>
+              <label><span>Name</span><input value={selectedStageElement.label} onChange={(event) => updateStageElement(selectedStageElement.id, { label: event.target.value })}/></label>
+              <div className="visualizer-transform-grid">
+                {(['x','y','z'] as const).map((axis) => <label key={axis}><span>{axis.toUpperCase()}</span><input type="number" step=".1" value={Number(selectedStagePosition[axis].toFixed(2))} onChange={(event) => updateStageElementPosition(selectedStageElement.id, axis, Number(event.target.value))}/></label>)}
+              </div>
+              <div className="visualizer-transform-grid">
+                {(['yaw','pitch','roll'] as const).map((axis) => <label key={axis}><span>{axis}</span><input type="number" step="1" value={Number((selectedStageElement.transform?.rotation?.[axis] ?? 0).toFixed(1))} onChange={(event) => updateStageElementRotation(selectedStageElement.id, axis, Number(event.target.value))}/></label>)}
+              </div>
+              <div className="visualizer-transform-grid">
+                {(['x','y','z'] as const).map((axis) => <label key={axis}><span>{axis === 'x' ? 'W' : axis === 'y' ? 'H' : 'D'}</span><input type="number" min=".03" step=".1" value={Number((selectedStageElement.dimensions?.[axis] ?? 1).toFixed(2))} onChange={(event) => updateStageElementDimension(selectedStageElement.id, axis, Number(event.target.value))}/></label>)}
+              </div>
+              <label><span>Color</span><input className="inspector-color" type="color" value={selectedStageElement.color} onChange={(event) => updateStageElement(selectedStageElement.id, { color: event.target.value })}/></label>
+              {selectedStageElement.type === 'led-screen' && <div className="visualizer-screen-route">
+                <label><span>Screen Source</span><select value={selectedStageElement.mediaSource?.kind ?? 'none'} onChange={(event) => updateStageElement(selectedStageElement.id, { mediaSource: event.target.value === 'ndi' ? { kind: 'ndi', sourceName: 'ProPresenter', fit: 'contain' } : { kind: 'none' } })}><option value="none">Static</option><option value="ndi">NDI / Video Input</option></select></label>
+                {selectedStageElement.mediaSource?.kind === 'ndi' && <label><span>Input</span><select value={selectedStageElement.mediaSource.deviceId ?? ''} onChange={(event) => { const input=stageVideoInputs.find((item)=>item.deviceId===event.target.value); updateStageElement(selectedStageElement.id,{mediaSource:{kind:'ndi',deviceId:event.target.value||undefined,sourceName:input?.label||'ProPresenter',fit:selectedStageElement.mediaSource?.kind==='ndi'?selectedStageElement.mediaSource.fit??'contain':'contain'}}); }}><option value="">Select input</option>{stageVideoInputs.map((input)=><option key={input.deviceId} value={input.deviceId}>{input.label}</option>)}</select></label>}
+              </div>}
+              <div className="visualizer-object-actions"><button onClick={() => duplicateStageElement(selectedStageElement.id)}>Duplicate</button><button className="danger-button" onClick={() => removeStageElement(selectedStageElement.id)}>Delete</button></div>
+            </section>}
+
+            <section className="visualizer-warehouse">
+              <span>WAREHOUSE</span>
+              <strong>Add to this scene</strong>
+              <div>{(['Stage','Screens','Scenic','Audio','Band','People'] as const).map((category) => <details key={category}><summary>{category}</summary><div>{STAGE_WAREHOUSE.filter((item) => item.category === category).map((item) => <button key={item.id} onClick={() => addWarehouseStageElement(item.id)}>＋ {item.name}</button>)}</div></details>)}</div>
+            </section>
+
+            <section className="visualizer-input-panel"><span>SCREEN INPUTS</span><strong>{stageVideoInputs.length ? `${stageVideoInputs.length} available` : 'Not scanned'}</strong><small>{stageElements.filter((element) => element.type === 'led-screen' && element.mediaSource?.kind === 'ndi' && element.mediaSource.deviceId).length} screens assigned to live inputs</small>{stageVideoInputError && <small className="stage-source-error">{stageVideoInputError}</small>}{stageVideoInputs.length > 0 && <div>{stageVideoInputs.map((input) => <button key={input.deviceId} onClick={() => routeVideoInputToAllScreens(input.deviceId)}><strong>{input.label}</strong><small>Route to all screens</small></button>)}</div>}</section>
+            <section className="visualizer-preset-picker"><span>VENUE PRESETS</span>{STAGE_PRESETS.map((preset) => <button key={preset.id} className={activeStagePresetId === preset.id ? 'active' : ''} onClick={() => loadStagePreset(preset.id)}><strong>{preset.name}</strong><small>{preset.description}</small></button>)}</section>
+          </aside>
+        </div>
+      </section>}
 
       {workspace === 'show' && <section className="show-console console-workspace-wide show-console-v3">
         <nav className="workspace-subtabs show-subtabs">{([
@@ -4260,11 +4429,11 @@ export default function App() {
 
       {midiMapOpen&&<div className="midi-map-modal" role="dialog" aria-modal="true" aria-label="MIDI mapping"><button className="modal-scrim" aria-label="Close MIDI mapping" onClick={()=>setMidiMapOpen(false)}/><div className="midi-map-dialog"><button onClick={()=>setMidiMapOpen(false)}>Close MIDI Map</button><section className="console-panel midi-mapping-console"><header><div><span>MIDI ASSIGNER</span><h2>Map controls</h2></div><b>{midiMappings.length} mappings</b></header><div className="midi-add-row"><select value={newMidiTarget} onChange={(event) => setNewMidiTarget(event.target.value)}>{midiControlGroups.map(([group, controls]) => <optgroup key={group} label={group}>{controls.map((control) => <option key={control.id} value={control.id}>{control.label}</option>)}</optgroup>)}</select><button className="console-primary" onClick={() => beginMidiAssignment()}>Add + Learn</button></div><div className="midi-map-list">{midiMappings.map((mapping) => { const control = midiControls.find((item) => item.id === mapping.target); const learning = midiLearnMappingId === mapping.id; return <div className={`midi-map-row ${learning ? 'is-learning' : ''}`} key={mapping.id}><strong>{control?.label ?? 'Unavailable'}</strong><span>{learning ? 'Move or press a control…' : midiBindingLabel(mapping)}</span><button onClick={() => setMidiLearnMappingId(learning ? null : mapping.id)}>{learning ? 'Cancel' : 'Learn'}</button><button onClick={() => removeMidiAssignment(mapping.id)}>Remove</button></div>; })}</div></section></div></div>}
       {stageMonitorOpen&&<StageMonitor floating snapshot={stageSnapshot} onClose={()=>setStageMonitorOpen(false)}/>}
-      <div className="workspace-utility-bar"><button onClick={()=>setStageMonitorOpen(v=>!v)}>Stage Monitor</button><button onClick={()=>setMidiMapOpen(true)}>MIDI Map</button></div>
+      <div className="workspace-utility-bar"><button onClick={()=>setStageMonitorOpen(v=>!v)}>Visualizer</button><button onClick={()=>setMidiMapOpen(true)}>MIDI Map</button></div>
       <footer className="console-footer console-status-strip">
         <div className="status-connections">
           <button className={dmxStatus.connected ? 'healthy' : ''} onClick={() => { setWorkspace('build'); setSetupView('settings'); }}><i />DMX <b>{dmxStatus.connected ? 'ONLINE' : 'VIRTUAL'}</b></button>
-          <button className={directStatus.clients > 0 ? 'healthy' : ''} onClick={() => { setWorkspace('build'); setSetupView('settings'); }}><i />LUMAVIZ <b>{directStatus.clients > 0 ? 'LINKED' : 'READY'}</b></button>
+          <button className="healthy" onClick={() => setWorkspace('visualizer')}><i />VISUALIZER <b>READY</b></button>
           <button className={studioBridgeStatus.connectedClients > 0 ? 'healthy' : ''} onClick={() => { setWorkspace('show'); setShowMode('sync'); }}><i />STUDIO <b>{studioBridgeStatus.connectedClients > 0 ? 'LINKED' : 'READY'}</b></button>
           <button className={midiStatus.connected ? 'healthy' : ''} onClick={() => { setWorkspace('build'); setSetupView('settings'); }}><i />MIDI <b>{midiStatus.connected ? 'ONLINE' : 'OFF'}</b></button>
         </div>
