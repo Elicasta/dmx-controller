@@ -1,3 +1,4 @@
+import ResizableWorkspace from './ResizableWorkspace';
 import TempoInput from './TempoInput';
 import { useEffect, useMemo, useState, type Dispatch, type SetStateAction } from "react";
 import type { PatchedFixture } from "../lib/fixtures";
@@ -24,6 +25,8 @@ type Props = {
   onStop: () => void;
   onTimeline: () => void;
   onEditFx: (effect: CustomEffect) => void;
+  tempoLocked: boolean;
+  onTempoLockChange: (locked: boolean) => void;
   masterBpm: number;
   onMasterBpmChange: (bpm: number) => void;
 };
@@ -51,6 +54,7 @@ export default function ShowCreator({
   onEditFx,
   masterBpm,
   onMasterBpmChange,
+  tempoLocked, onTempoLockChange,
 }: Props) {
   const [song, setSong] = useState(songName ?? sections[0]?.song ?? "New Song");
   const [bpm, setBpm] = useState(sections[0]?.bpm ?? masterBpm);
@@ -167,13 +171,14 @@ export default function ShowCreator({
           </button>
         </div>
       </header>
-      <div className="creator-columns">
+      <ResizableWorkspace className="creator-columns" storageKey="lumarig.creator-columns.v1" compactMode="stack" leftEnabled={false} rightEnabled rightLabel="FX Library" rightDefault={310} centerMinimum={480}>
         <main className="creator-main">
           <section className="creator-card">
             <header>
               <span>YOUR SONG</span>
               <small>{fixtures.length} patched fixtures</small>
             </header>
+            <button className="tempo-lock" aria-pressed={tempoLocked} onClick={() => onTempoLockChange(!tempoLocked)}>{tempoLocked ? "Tempo Locked" : "Lock Tempo"}</button>
             <div className="creator-fields">
               <label>
                 Song name
@@ -341,7 +346,8 @@ export default function ShowCreator({
                   <button disabled={!previewingId} onClick={stopPreview}>■ Stop</button>
                 </div>
               </header>
-              <div className="creator-fields">
+              <button className="tempo-lock" aria-pressed={tempoLocked} onClick={() => onTempoLockChange(!tempoLocked)}>{tempoLocked ? "Tempo Locked" : "Lock Tempo"}</button>
+            <div className="creator-fields">
                 <label>
                   Section name
                   <input
@@ -437,7 +443,8 @@ export default function ShowCreator({
                   onChange={(e) => update({ color: e.target.value })}
                 />
               </div>
-              <div className="creator-fields">
+              <button className="tempo-lock" aria-pressed={tempoLocked} onClick={() => onTempoLockChange(!tempoLocked)}>{tempoLocked ? "Tempo Locked" : "Lock Tempo"}</button>
+            <div className="creator-fields">
                 <label>
                   Intensity · {selected.intensity}%
                   <input
@@ -671,7 +678,7 @@ export default function ShowCreator({
             )}
           </section>
         </aside>
-      </div>
+      </ResizableWorkspace>
     </div>
   );
 }

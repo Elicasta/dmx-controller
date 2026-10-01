@@ -46,7 +46,7 @@
 }
 .collapsed-panel-shelf>span{
   margin-right:3px;
-  color:#667984;
+  color:var(--text-muted);
   font-size:6px;
   font-weight:900;
   letter-spacing:.12em;
@@ -69,7 +69,7 @@
 }
 .collapsed-panel-shelf>button b{color:var(--operator-accent);font-size:8px}
 .collapsed-panel-shelf>button strong{font-size:7px;letter-spacing:.06em}
-.collapsed-panel-shelf>button small{color:#60727d;font-size:6px}
+.collapsed-panel-shelf>button small{color:var(--text-muted);font-size:6px}
 
 .draggable-panel-grid{
   gap:var(--operator-gap)!important;
@@ -225,7 +225,7 @@
   min-width:0;
 }
 .programmer-button-groups>section>span{
-  color:#6f808a;
+  color:var(--text-secondary);
   font-size:6px;
   font-weight:900;
   letter-spacing:.11em;

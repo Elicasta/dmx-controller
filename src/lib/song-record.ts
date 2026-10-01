@@ -3,6 +3,7 @@ export type SongRecord = {
   libraryId?: string;
   name: string;
   bpm: number;
+  tempoLocked?: boolean;
   mediaId?: string;
   mediaName?: string;
 };
@@ -17,6 +18,7 @@ export function isSongRecord(value: unknown): value is SongRecord {
     Number.isFinite(s.bpm) &&
     s.bpm >= 20 &&
     s.bpm <= 300 &&
+    (s.tempoLocked === undefined || typeof s.tempoLocked === 'boolean') &&
     (s.libraryId === undefined || (typeof s.libraryId === "string" && !!s.libraryId)) &&
     (s.mediaId === undefined || typeof s.mediaId === "string") &&
     (s.mediaName === undefined || typeof s.mediaName === "string")

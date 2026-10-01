@@ -98,4 +98,23 @@ describe('independent Song Programs and checkpoints', () => {
     for(let i=0;i<15;i++) state=checkpointState(state, {...EMPTY_SHOW, name:`Show ${i}`}, {recover:original,capture:'none'});
     expect(state.recovery).toHaveLength(10); expect(state.programs).toHaveLength(1);
   });
+  it('checkpoints the full workspace and retains the outgoing rig even for a blank Show', () => {
+    const workspace = { patch:structuredClone(DEFAULT_PATCH), looks:[], settings:{masterLimit:80} };
+    const original = structuredClone(EMPTY_SHOW);
+    const first = checkpointState(emptyProgramState(), original, {workspace});
+    const nextWorkspace = { ...workspace, patch:[] };
+    const next = checkpointState(first, {...original,name:'New'}, {workspace:nextWorkspace,recover:original,recoverWorkspace:workspace});
+    workspace.patch[0].name='Changed after save';
+    const reopened = validateProgramState(JSON.parse(JSON.stringify(next)));
+    expect(reopened.workspace!.patch).toEqual([]);
+    expect(reopened.recovery[0].workspace!.patch).toEqual(DEFAULT_PATCH);
+    expect(reopened.working!.name).toBe('New');
+    expect(reopened.recovery[0].show).toEqual(original);
+  });
+  it('retains manual tempo authority in reusable song copies', () => {
+    const original = programmed(); original.songs![0].tempoLocked = true;
+    const saved = checkpointState(emptyProgramState(), original);
+    const result = insertSongProgram(EMPTY_SHOW, saved.programs[0]);
+    expect(result.song).toMatchObject({bpm:130.5,tempoLocked:true});
+  });
 });
