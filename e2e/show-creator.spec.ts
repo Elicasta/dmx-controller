@@ -161,7 +161,7 @@ test("solo creator builds an editable audio-aligned show and preserves the draft
   await page
     .getByRole("button", { name: "Stop / Rewind", exact: true })
     .click();
-  await expect(page.locator(".timeline-toolbar output")).toHaveText("BAR 1.00");
+  await expect(page.locator(".timeline-toolbar output")).toHaveText("BAR 1 · BEAT 1");
   await page.screenshot({ path: info.outputPath("timeline.png") });
   await page.reload();
   await page.getByRole("button", { name: "SHOW", exact: true }).click();
@@ -385,7 +385,8 @@ test('LIVE remains bounded with all recipe assignments and audio drop avoids see
  await page.getByRole('button',{name:'FX recipes',exact:true}).click();
  await expect(page.locator('.timeline-fx-recipe').filter({hasText:'Blinder Hit'})).toHaveCount(1);
  await expect(page.locator('.timeline-fx-recipe').filter({hasText:'Scene · Deep Blue'})).toHaveCount(1);
- await page.locator('.timeline-fx-recipe').filter({hasText:'Row Chase'}).dragTo(page.locator('[data-lane="2"]'),{targetPosition:{x:18,y:25}});
+ const fxDrop=await page.evaluateHandle(()=>{const d=new DataTransfer();d.setData('application/lumarig-fx','row-chase');return d;});
+ await page.locator('[data-lane="2"]').dispatchEvent('drop',{dataTransfer:fxDrop});
  await expect(page.locator('.timeline-clip')).toHaveCount(1);
  expect((await readShow(page)).cues[0].effectStack).toHaveLength(1);
  const data=await page.evaluateHandle(bytes=>{const d=new DataTransfer();d.items.add(new File([new Uint8Array(bytes)],'drop-song.wav',{type:''}));return d;},Array.from(wav()));
