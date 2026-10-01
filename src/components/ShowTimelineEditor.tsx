@@ -1,3 +1,4 @@
+import TempoInput from './TempoInput';
 import {
   useEffect,
   useRef,
@@ -409,19 +410,9 @@ export default function ShowTimelineEditor(props: Props) {
         <output>BAR {(cursor + 1).toFixed(2)}</output>
         <label>
           Master BPM
-          <input
-            aria-label="Master BPM"
-            type="number"
-            min={20}
-            max={300}
-            value={masterBpm}
-            disabled={playing}
-            onChange={(e) => {
-              const next = clamp(Number(e.target.value), 20, 300);
-              edit({ ...timeline, bpm: next });
-              onMasterBpmChange(next);
-            }}
-          />
+          <TempoInput label="Master BPM" value={masterBpm} disabled={playing} onChange={next => {
+            edit({ ...timeline, bpm: next }); onMasterBpmChange(next);
+          }} />
         </label>
         <label>
           Beats / bar

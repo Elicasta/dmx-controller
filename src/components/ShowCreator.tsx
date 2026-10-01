@@ -1,3 +1,4 @@
+import TempoInput from './TempoInput';
 import { useEffect, useMemo, useState, type Dispatch, type SetStateAction } from "react";
 import type { PatchedFixture } from "../lib/fixtures";
 import type { FixtureGroup } from "../lib/show";
@@ -180,13 +181,7 @@ export default function ShowCreator({
               </label>
               <label>
                 Master tempo
-                <input
-                  type="number"
-                  min={20}
-                  max={300}
-                  value={bpm}
-                  onChange={(e) => setMasterTempo(Number(e.target.value))}
-                />
+                <TempoInput label="Master tempo" value={bpm} onChange={setMasterTempo} />
               </label>
               <label>
                 Starting target

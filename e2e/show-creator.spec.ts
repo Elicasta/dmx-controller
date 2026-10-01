@@ -575,3 +575,77 @@ test('song bank stores separate media and restores songs after restart', async (
  expect(show.songs.find((s:any)=>s.name==='Renamed Song').bpm).toBe(132);
  expect(show.songs.find((s:any)=>s.name==='Second Song').bpm).toBe(120);
 });
+
+test('Song Library survives New Show, reuse, restart, and Recovery', async ({page}, info) => {
+  const errors: string[]=[]; page.on('pageerror',e=>errors.push(e.message));
+  await seed(page); await page.goto('/');
+  await page.getByRole('button',{name:'SHOW',exact:true}).click();
+  await page.getByRole('button',{name:'Song Bank',exact:true}).click();
+  await expect(page.getByRole('status')).toHaveText('Saved');
+  await page.getByLabel('New song name').fill('Hineh Ma Tov');
+  await page.getByRole('button',{name:'Add song',exact:true}).click();
+  let row=page.locator('.song-bank > .song-bank-list article').filter({has:page.getByLabel('Song name Hineh Ma Tov')});
+  await row.getByLabel('Link media for Hineh Ma Tov').setInputFiles({name:'hineh.wav',mimeType:'audio/wav',buffer:wav()});
+  await row.getByRole('button',{name:'Build song',exact:true}).click();
+  const tempo=page.getByLabel('Master tempo');
+  await tempo.fill(''); await tempo.pressSequentially('130.5'); await tempo.press('Tab');
+  await expect(page.locator('.tempo-pill strong')).toHaveText('130.5 BPM');
+  await tempo.hover(); await page.mouse.wheel(0,500);
+  await expect(page.locator('.tempo-pill strong')).toHaveText('130.5 BPM');
+  await page.getByRole('button',{name:/Worship Song/}).click();
+  await page.getByRole('button',{name:'Build / Update 8 Sections',exact:true}).click();
+  await expect.poll(async()=>((await readShow(page)).cues??[]).length).toBe(8);
+  const original=await readShow(page);
+  await page.getByRole('button',{name:'Show Library',exact:true}).click();
+  await page.getByRole('button',{name:'＋ New Show',exact:true}).click();
+  await expect.poll(async()=>((await readShow(page)).cues??[]).length).toBe(0);
+  await page.getByRole('button',{name:'Song Bank',exact:true}).click();
+  const saved=page.getByRole('region',{name:'Song Library'}).locator('article').filter({hasText:'Hineh Ma Tov'});
+  await expect(saved).toContainText('8 cues'); await expect(saved).toContainText('hineh.wav');
+  await saved.getByRole('button',{name:'Add to Show',exact:true}).click();
+  await expect.poll(async()=>((await readShow(page)).cues??[]).length).toBe(8);
+  row=page.locator('.song-bank > .song-bank-list article').first();
+  await row.getByRole('button',{name:'Timeline',exact:true}).click();
+  await expect(page.locator('.timeline-audio-block')).toContainText('hineh.wav');
+  await expect(page.getByLabel('Master BPM')).toHaveValue('130.5');
+  await page.getByRole('button',{name:'Song Bank',exact:true}).click();
+  await expect(page.getByRole('status')).toHaveText('Saved');
+  await page.reload();
+  await page.getByRole('button',{name:'SHOW',exact:true}).click();
+  await page.getByRole('button',{name:'Song Bank',exact:true}).click();
+  await expect(page.getByRole('status')).toHaveText('Saved');
+  expect((await readShow(page)).cues).toHaveLength(8);
+  await page.screenshot({path:info.outputPath('reusable-song-library.png')});
+  await page.getByRole('button',{name:'Show Library',exact:true}).click();
+  await page.locator('.show-recovery summary').click();
+  await page.getByRole('button',{name:'Restore Show',exact:true}).first().click();
+  await expect.poll(async()=>((await readShow(page)).cues??[]).map((c:any)=>c.id)).toEqual(original.cues.map((c:any)=>c.id));
+  expect(errors).toEqual([]);
+});
+
+test('New Show cancels if its atomic checkpoint fails', async ({page}) => {
+  await seed(page); await page.goto('/');
+  await page.getByRole('button',{name:'SHOW',exact:true}).click();
+  await page.getByRole('button',{name:'Song Bank',exact:true}).click();
+  await expect(page.getByRole('status')).toHaveText('Saved');
+  await page.getByLabel('New song name').fill('Protected Song');
+  await page.getByRole('button',{name:'Add song',exact:true}).click();
+  await expect(page.getByRole('status')).toHaveText('Saved');
+  const before=await readShow(page);
+  await page.evaluate(()=>{
+    const original=IDBDatabase.prototype.transaction;
+    IDBDatabase.prototype.transaction=function(...args:Parameters<typeof original>){
+      if(this.name==='lumarig-program-library') throw new DOMException('Simulated disk full','QuotaExceededError');
+      return original.apply(this,args);
+    };
+  });
+  await page.getByRole('button',{name:'Show Library',exact:true}).click();
+  await page.getByRole('button',{name:'＋ New Show',exact:true}).click();
+  await expect(page.locator('.show-recovery [role="status"]')).toHaveText('Save failed');
+  expect(await readShow(page)).toEqual(before);
+  await page.reload();
+  await page.getByRole('button',{name:'SHOW',exact:true}).click();
+  await page.getByRole('button',{name:'Song Bank',exact:true}).click();
+  await expect(page.getByRole('status')).toHaveText('Saved');
+  await expect(page.getByLabel('Song name Protected Song')).toBeVisible();
+});

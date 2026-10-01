@@ -305,3 +305,16 @@
 .desk-surface-label{color:#dfe8ee}
 .desk-surface-label strong{color:#dfe8ee}
 .desk-surface-label small{color:#94a6b0}
+.reusable-song-library { margin-top:24px; border-top:1px solid #33424c; padding-top:16px; }
+.reusable-song-library h3 { margin:0; font-size:16px; }
+.reusable-song-library .song-bank-list { max-height:420px; overflow:auto; }
+.song-bank-list article > div { min-width:0; }
+.song-bank-list strong { overflow-wrap:anywhere; }
+.song-bank > header > div:last-child { flex-shrink:0; text-align:right; }
+.song-bank > header [role="status"] { color:#a4b8c2; }
+.show-recovery { padding:12px; color:#dfe8ee; }
+.show-recovery details > div { display:flex; justify-content:space-between; flex-wrap:wrap; gap:8px; padding:8px 0; }
+.show-recovery summary { cursor:pointer; padding:8px 0; }
+.library-save-guard { position:fixed; inset:0; z-index:10000; display:grid; place-items:center; background:rgba(8,15,20,.9); color:#dfe8ee; font-size:14px; cursor:progress; }
+.creator-library .recipe-list { max-height: min(52vh, 520px); overflow:auto; min-height:0; }
+.recipe-list article { min-width:0; }

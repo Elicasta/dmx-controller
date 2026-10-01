@@ -1,3 +1,5 @@
+import { readProgramState, saveProgramState, type Recovery } from './lib/program-storage';
+import { insertSongProgram, programId, type SongProgram } from './lib/song-library';
 import SongBank from './components/SongBank';
 import { buildSong, songsForShow, renameSong, storeSongMedia, readSongMedia, type SongRecord } from './lib/song-bank';
 import ResizableWorkspace from './components/ResizableWorkspace';
@@ -597,6 +599,16 @@ export default function App() {
   const patchRef = useRef(patch);
   const [savedLooks, setSavedLooks] = useState<FixtureLook[]>(loadSavedLooks);
   const [showFile, setShowFile] = useState<ShowFile>(loadShowFile);
+  const [songLibrary, setSongLibrary] = useState<SongProgram[]>([]);
+  const [showRecovery, setShowRecovery] = useState<Recovery[]>([]);
+  const [libraryReady, setLibraryReady] = useState(false);
+  const [libraryOpening, setLibraryOpening] = useState(true);
+  const [saveStatus, setSaveStatus] = useState('Opening Song Library…');
+  const [transitionBusy, setTransitionBusy] = useState(false);
+  const transitionRef = useRef(false);
+  const showFileRef = useRef(showFile);
+  showFileRef.current = showFile;
+  const saveSequence = useRef(0);
   const [showLibrary, setShowLibrary] = useState<ShowProjectSnapshot[]>(loadShowLibrary);
   const [liveBank, setLiveBank] = useState<LiveBank>('fixtures');
   const [liveProgrammerOpen, setLiveProgrammerOpen] = useState(false);
@@ -719,7 +731,7 @@ export default function App() {
   const remoteEffectLeaseRef = useRef<Map<string, number>>(new Map());
   if (!remoteRelayRef.current) remoteRelayRef.current = new RemoteRelay();
   const [message, setMessage] = useState('Control station ready. Connect DMX when you want physical output.');
-  const [appVersion, setAppVersion] = useState('0.2.2');
+  const [appVersion, setAppVersion] = useState('0.2.3');
   const [updateStatus, setUpdateStatus] = useState<UpdateStatus>('idle');
   const [updateInfo, setUpdateInfo] = useState<UpdateMetadata | null>(null);
   const [updateError, setUpdateError] = useState('');
@@ -1022,9 +1034,30 @@ export default function App() {
   useEffect(() => window.localStorage.setItem(LOOKS_STORAGE_KEY, JSON.stringify(savedLooks)), [savedLooks]);
   useEffect(() => window.localStorage.setItem(CUSTOM_FX_STORAGE_KEY, JSON.stringify(customEffects)), [customEffects]);
   useEffect(() => {
-    try { window.localStorage.setItem(SHOW_STORAGE_KEY, JSON.stringify(showFile)); }
-    catch { setMessage('Show storage is full. Delete an older recorded take before recording another.'); }
-  }, [showFile]);
+    let cancelled = false;
+    void readProgramState().then(async state => {
+      if (cancelled) return;
+      const working = state.working ?? showFileRef.current;
+      const saved = await saveProgramState(working, { seed: showLibrary.map(item => item.show) });
+      if (cancelled) return;
+      setSongLibrary(saved.programs); setShowRecovery(saved.recovery);
+      setShowFile(working); setLibraryReady(true); setLibraryOpening(false); setSaveStatus('Saved');
+    }).catch(error => { if (!cancelled) { setLibraryOpening(false); setSaveStatus('Save unavailable'); setMessage(String(error)); } });
+    return () => { cancelled = true; };
+  }, []);
+  useEffect(() => {
+    if (!libraryReady || transitionRef.current) return;
+    const sequence = ++saveSequence.current;
+    setSaveStatus('Saving…');
+    void saveProgramState(showFile).then(state => {
+      if (sequence !== saveSequence.current) return;
+      setSongLibrary(state.programs); setShowRecovery(state.recovery); setSaveStatus('Saved');
+    }).catch(error => {
+      if (sequence === saveSequence.current) { setSaveStatus('Save failed'); setMessage(String(error)); }
+    });
+    // Compatibility copy. The transactional checkpoint is authoritative on restart.
+    try { window.localStorage.setItem(SHOW_STORAGE_KEY, JSON.stringify(showFile)); } catch { /* checkpoint reports its own failures */ }
+  }, [showFile, libraryReady]);
   useEffect(() => {
     try { window.localStorage.setItem(SHOW_LIBRARY_STORAGE_KEY, JSON.stringify(showLibrary)); }
     catch { setMessage('Show library storage is full. Delete an older saved show or large recording.'); }
@@ -1552,11 +1585,12 @@ export default function App() {
   }
 
   function setMasterTempo(value: number, persistSong = true) {
-    const bpm = Math.max(20, Math.min(300, Math.round(Number.isFinite(value) ? value : 120)));
+    const bpm = Math.max(20, Math.min(300, Number.isFinite(value) ? value : effectBpmRef.current));
     setTempoSource('manual');
+    tempoSourceRef.current = 'manual';
     setEffectBpm(bpm);
     effectBpmRef.current = bpm;
-    if (persistSong) setShowFile(current => ({ ...current, songs: songsForShow(current).map(s => s.id === activeSongId ? { ...s, bpm } : s), timelineShows: current.timelineShows?.map(t => t.id === timelineShowId ? {...t,timeline:{...t.timeline,bpm}} : t) }));
+    if (persistSong) setShowFile(current => ({ ...current, creatorSections: current.creatorSections?.map(section => section.song === songsForShow(current).find(s => s.id === activeSongId)?.name ? { ...section, bpm } : section), timeline: !timelineShowId && current.timeline ? { ...current.timeline, bpm } : current.timeline, songs: songsForShow(current).map(s => s.id === activeSongId ? { ...s, bpm } : s), timelineShows: current.timelineShows?.map(t => t.id === timelineShowId ? {...t,timeline:{...t.timeline,bpm}} : t) }));
   }
 
   function tapTempo() {
@@ -1713,7 +1747,8 @@ export default function App() {
     if (activeCueId === id) setActiveCueId(null);
   }
 
-  function saveShowProject(status: 'template' | 'draft' | 'show' = 'show') {
+  async function saveShowProject(status: 'template' | 'draft' | 'show' = 'show') {
+    if (!libraryReady) { setMessage('Song Library is not ready to save.'); return; }
     const cleanName = showFile.name.trim() || 'Untitled Show';
     const existing = showLibrary.find((item) => item.name.toLowerCase() === cleanName.toLowerCase() && item.status === status);
     const snapshot: ShowProjectSnapshot = {
@@ -1730,11 +1765,37 @@ export default function App() {
       stageSettings: { ...stageSettings, dimensions: { ...stageSettings.dimensions } },
       looks: [...savedLooks]
     };
-    setShowLibrary((current) => [snapshot, ...current.filter((item) => item.id !== snapshot.id)].slice(0, 40));
+    const nextLibrary = [snapshot, ...showLibrary.filter(item => item.id !== snapshot.id)].slice(0, 40);
+    try {
+      await saveProgramState(showFileRef.current);
+      localStorage.setItem(SHOW_LIBRARY_STORAGE_KEY, JSON.stringify(nextLibrary));
+    } catch (error) { setSaveStatus('Save failed'); setMessage(`Show Save failed: ${String(error)}`); return; }
+    setShowLibrary(nextLibrary);
     setMessage(`${cleanName} saved to the show library as ${status === 'template' ? 'a template' : status === 'draft' ? 'a draft' : 'a service show'}.`);
   }
 
-  function loadShowProject(snapshot: ShowProjectSnapshot) {
+  async function checkpointShowChange(next: ShowFile): Promise<boolean> {
+    if (!libraryReady || transitionRef.current) { setMessage('Wait for the Song Library to finish saving before changing Shows.'); return false; }
+    transitionRef.current = true; setTransitionBusy(true);
+    const current = showFileRef.current;
+    ++saveSequence.current; setSaveStatus('Saving…');
+    try {
+      const saved = await saveProgramState(next, { recover: current, capture: 'none' });
+      if (showFileRef.current !== current) {
+        const latest = await saveProgramState(showFileRef.current);
+        setSongLibrary(latest.programs); setShowRecovery(latest.recovery);
+        setSaveStatus('Saved');
+        setMessage('The Show changed while saving. Your latest work is saved. Retry the Show change.');
+        return false;
+      }
+      setSongLibrary(saved.programs); setShowRecovery(saved.recovery); setSaveStatus('Saved');
+      return true;
+    } catch (error) { setSaveStatus('Save failed'); setMessage(`Show change cancelled: ${String(error)}`); return false; }
+    finally { transitionRef.current = false; setTransitionBusy(false); }
+  }
+  async function loadShowProject(snapshot: ShowProjectSnapshot) {
+    if (!await checkpointShowChange(sanitizeShow(snapshot.show))) return;
+    setActiveSongId(''); setTimelineShowId(''); setCueTimelineSong(null);
     clearShowAudio();
     stopFade();
     clearBusk(false);
@@ -1749,21 +1810,20 @@ export default function App() {
     setMessage(`${snapshot.name} loaded from the show library.`);
   }
 
-  function newShowProject() {
+  async function newShowProject() {
+    const usedNames = new Set(showLibrary.map(item => item.name.toLowerCase()));
+    let nextName = 'Untitled Show', count = 1;
+    while (usedNames.has(nextName.toLowerCase())) nextName = `Untitled Show ${++count}`;
+    const next: ShowFile = { ...structuredClone(EMPTY_SHOW), name: nextName };
+    if (!await checkpointShowChange(next)) return;
+    setActiveSongId(''); setTimelineShowId(''); setCueTimelineSong(null);
     clearShowAudio();
     stopFade();
     clearBusk(false);
     if (activeEffectRef.current || activeCustomEffectIdRef.current) stopEffect(false);
-    const usedNames = new Set(showLibrary.map((item) => item.name.toLowerCase()));
-    let showNumber = 1;
-    let nextName = 'Untitled Show';
-    while (usedNames.has(nextName.toLowerCase())) {
-      showNumber += 1;
-      nextName = `Untitled Show ${showNumber}`;
-    }
-    setShowFile({ ...EMPTY_SHOW, name: nextName, cues: [], groups: [], positionPalettes: [], recordings: [], externalTrack: { ...DEFAULT_EXTERNAL_TRACK_SYNC } });
+    setShowFile(next);
     setActiveCueId(null);
-    setMessage('New show started. Your fixture patch and stage remain available until you load another saved show.');
+    setMessage('New Show started. Your songs are saved in Song Library and the previous Show is available in Recovery.');
   }
 
   function deleteShowProject(id: string) {
@@ -2166,10 +2226,10 @@ export default function App() {
         );
         return snapshot.id;
       },
-      loadShow: (showId) => {
+      loadShow: async (showId) => {
         const snapshot = showLibrary.find((item) => item.id === showId);
         if (!snapshot) throw new Error('The linked LumaRig show is missing from this device.');
-        loadShowProject(snapshot);
+        await loadShowProject(snapshot);
       },
       goCue: (cueId) => {
         const cue = cueId ? showFile.cues.find((item) => item.id === cueId) : nextCue;
@@ -3398,17 +3458,41 @@ export default function App() {
     try { localStorage.setItem('lumarig-active-song:' + showFile.name, activeSongId); } catch { /* Working show still autosaves. */ }
   }, [activeSongId, showFile.name]);
   useEffect(() => {
-    if (restoredSong.current) return;
+    if (!libraryReady || restoredSong.current) return;
     restoredSong.current = true;
     const song = songsForShow(showFile).find(s => s.id === activeSongId);
     if (song) void selectBankSong(song, showMode === 'creator' ? 'creator' : 'timeline');
-  }, []);
+  }, [libraryReady]);
   function addBankSong(name: string) {
+    if (!libraryReady) { setMessage('Song Library is still opening.'); return; }
     if (songBank.length >= 100) { setMessage('Song limit reached.'); return; }
     if (songBank.some(song => song.name.toLowerCase() === name.toLowerCase())) { setMessage('That song is already in the bank.'); return; }
-    const song = { id: crypto.randomUUID(), name, bpm: masterTempoBpm };
+    const id = crypto.randomUUID();
+    const song = { id, libraryId: id, name, bpm: masterTempoBpm };
     setShowFile(current => ({ ...current, songs: [...songsForShow(current), song] }));
     setActiveSongId(song.id);
+  }
+  async function saveBankSong(song: SongRecord) {
+    if (!libraryReady) return;
+    setSaveStatus('Saving…');
+    try {
+      const saved = await saveProgramState(showFileRef.current, { forceId: programId(showFileRef.current, song) });
+      setSongLibrary(saved.programs); setSaveStatus('Saved'); setMessage(`${song.name} saved to Song Library.`);
+    } catch (error) { setSaveStatus('Save failed'); setMessage(String(error)); }
+  }
+  function useLibrarySong(program: SongProgram) {
+    try {
+      const result = insertSongProgram(showFileRef.current, program);
+      setShowFile(result.show); setActiveSongId(result.song.id);
+      setMessage(`${result.song.name} added to this Show with its sections, lighting, timeline and media.`);
+    } catch (error) { setMessage(String(error)); }
+  }
+  async function recoverShow(recovery: Recovery) {
+    if (!await checkpointShowChange(recovery.show)) return;
+    clearShowAudio(); stopTimeline(); stopFade(); clearBusk(false); stopEffect(false);
+    setActiveSongId(''); setTimelineShowId(''); setCueTimelineSong(null);
+    setShowFile(structuredClone(recovery.show)); setShowMode('songs');
+    setMessage(`${recovery.show.name} restored from Recovery.`);
   }
   function renameBankSong(id: string, name: string) {
     try { const next = renameSong(showFile, id, name); setShowFile(next); }
@@ -3911,6 +3995,7 @@ export default function App() {
 
   return (
     <main className={`console-app workspace-${workspace} ${dmxStatus.blackout ? 'blackout-is-active' : ''}`}>
+      {(libraryOpening || transitionBusy) && <div className="library-save-guard" role="alert" aria-busy="true">{libraryOpening ? 'Opening saved programming…' : 'Saving Show before switching…'}</div>}
       <header className="console-header">
         <div className="console-brand"><span className="brand-mark">◆</span><div className="brand-product"><b>LUMARIG</b><small>SHOW</small></div><div className="brand-show"><input aria-label="Current show name" value={showFile.name} onChange={(event) => setShowFile((current) => ({ ...current, name: event.target.value }))} /><small>LIVE SHOWFILE · R{sharedShowRevisionRef.current} · v{appVersion}</small></div></div>
         <nav className="console-workspace-tabs" aria-label="Workspace">{(['build', 'create', 'show', 'visualizer', 'live'] as Workspace[]).map((item) => <button key={item} className={workspace === item ? 'active' : ''} onClick={() => setWorkspace(item)}>{item.toUpperCase()}</button>)}</nav>
@@ -4287,7 +4372,7 @@ export default function App() {
           {programMode === 'presets' && <div className="create-focus-view"><header><div><span>PRESETS</span><h2>Position + look library</h2></div><button onClick={savePositionPalette}>＋ Save Position</button></header><section className="preset-bank-v3"><div><h3>POSITION PALETTES</h3>{showFile.positionPalettes?.length ? showFile.positionPalettes.map((palette) => <button key={palette.id} onClick={() => void runPositionPalette(palette)}><span>{palette.kind}</span><strong>{palette.name}</strong></button>) : <p>No position palettes saved.</p>}</div><div><h3>LOOK PRESETS</h3>{allLooks.map((look) => <button key={look.id} onClick={() => runLook(look)}><i style={{background:lookSwatch(look.values)}}/><strong>{look.name}</strong></button>)}</div></section></div>}
         </div>
 
-        {programMode !== 'fx' && <EffectsPanel title="FX / SELECTED TARGET" targetName={programEffectName} fixtures={programEffectFixtures} activeEffect={activeEffect} bpm={effectBpm} depth={effectDepth} disabled={false} onBpmChange={(value) => { setEffectBpm(value); effectBpmRef.current = value; setTempoSource('manual'); }} onDepthChange={(value) => { setEffectDepth(value); effectDepthRef.current = value; }} onStart={(effect) => toggleEffect(effect, programEffectFixtures.map((fixture) => fixture.id))} onPress={(effect) => startMomentaryEffect(effect, programEffectFixtures.map((fixture) => fixture.id))} onRelease={releaseMomentaryEffect} onStop={() => stopEffect()} />}
+        {programMode !== 'fx' && <EffectsPanel title="FX / SELECTED TARGET" targetName={programEffectName} fixtures={programEffectFixtures} activeEffect={activeEffect} bpm={effectBpm} depth={effectDepth} disabled={false} onBpmChange={setMasterTempo} onDepthChange={(value) => { setEffectDepth(value); effectDepthRef.current = value; }} onStart={(effect) => toggleEffect(effect, programEffectFixtures.map((fixture) => fixture.id))} onPress={(effect) => startMomentaryEffect(effect, programEffectFixtures.map((fixture) => fixture.id))} onRelease={releaseMomentaryEffect} onStop={() => stopEffect()} />}
       </ResizableWorkspace>}
 
 
@@ -4349,7 +4434,7 @@ export default function App() {
           ['songs','Song Bank'],['creator','Show Creator'],['cues','Cues'],['timeline','Timeline'],['tracks','Tracks'],['library','Show Library'],['sync','MIDI & Sync'],['recordings','Recordings']
         ] as Array<[ShowMode,string]>).map(([id,label]) => <button key={id} className={showMode === id ? 'active' : ''} onClick={() => setShowMode(id)}>{label}</button>)}</nav>
 
-        {showMode === 'songs' && <SongBank show={showFile} activeId={activeSongId} onAdd={addBankSong} onSelect={selectBankSong} onRename={renameBankSong} onMedia={attachBankMedia}/>}
+        {showMode === 'songs' && <SongBank library={songLibrary} ready={libraryReady} saveStatus={saveStatus} onSave={saveBankSong} onUse={useLibrarySong} show={showFile} activeId={activeSongId} onAdd={addBankSong} onSelect={selectBankSong} onRename={renameBankSong} onMedia={attachBankMedia}/>}
         {showMode === 'cues' && <div className={`show-cue-layout ${cueTimelineSong!==null ? 'cue-with-timeline' : ''}`}>
           <SongCueLibrary cues={showFile.cues} sections={showFile.rundownSections??[]} activeId={activeCueId} timelineNames={(showFile.timelineShows??[]).map(item=>item.name)} onRun={runCue} onDelete={deleteCue} onCapture={captureCue} onMove={(id,direction)=>setShowFile(current=>({...current,cues:moveCue(current.cues,id,direction)}))} onMoveSong={(sectionId,name,direction)=>setShowFile(current=>({...current,cues:moveRundownItemCues(current.cues,sectionId,name,direction)}))} onSectionsChange={(rundownSections)=>setShowFile(current=>({...current,rundownSections}))} onTimeline={openSongTimeline} onImport={importTimelineShow}/>
 
@@ -4374,8 +4459,8 @@ export default function App() {
         </div>}
 
         {showMode === 'library' && <div className="show-library-console show-library-v3">
-          <header><div><span>SHOW LIBRARY</span><h2>{showFile.name}</h2><small>Templates define the rig. Drafts and service shows inherit that structure with cues, tracks, looks and show-specific changes.</small></div><div><button onClick={newShowProject}>＋ New Show</button><button onClick={()=>saveShowProject('template')}>Save Template</button><button onClick={()=>saveShowProject('draft')}>Save Draft</button><button className="console-primary" onClick={()=>saveShowProject('show')}>Save Service Show</button></div></header>
-          <div className="show-library-grid">{showLibrary.length?showLibrary.map((item)=><article key={item.id}><div><span className={item.status}>{item.status.toUpperCase()}</span><strong>{item.name}</strong><small>{new Date(item.savedAt).toLocaleString()} · R{item.revision ?? 1} · {item.lastEditor ?? 'lumarig'} · {item.show.cues.length} cues · {item.patch.length} fixtures</small></div><div><button onClick={()=>loadShowProject(item)}>Load</button><button className="danger-button" onClick={()=>deleteShowProject(item.id)}>Delete</button></div></article>):<div className="empty-show-library"><strong>No saved shows yet</strong><span>Save the current show or a draft. Your working show continues to autosave separately.</span></div>}</div>
+          <header><div><span>SHOW LIBRARY</span><h2>{showFile.name}</h2><small>Templates define the rig. Drafts and service shows inherit that structure with cues, tracks, looks and show-specific changes.</small></div><div><button disabled={!libraryReady || transitionBusy} onClick={() => void newShowProject()}>＋ New Show</button><button onClick={()=>saveShowProject('template')}>Save Template</button><button onClick={()=>saveShowProject('draft')}>Save Draft</button><button className="console-primary" onClick={()=>saveShowProject('show')}>Save Service Show</button></div></header>
+          <div className="show-recovery"><span role="status">{saveStatus}</span>{showRecovery.length > 0 && <details><summary>Recovery · {showRecovery.length} previous Shows</summary>{showRecovery.map(item => <div key={item.id}><span>{item.show.name} · {new Date(item.savedAt).toLocaleString()}</span><button disabled={transitionBusy} onClick={() => void recoverShow(item)}>Restore Show</button></div>)}</details>}</div><div className="show-library-grid">{showLibrary.length?showLibrary.map((item)=><article key={item.id}><div><span className={item.status}>{item.status.toUpperCase()}</span><strong>{item.name}</strong><small>{new Date(item.savedAt).toLocaleString()} · R{item.revision ?? 1} · {item.lastEditor ?? 'lumarig'} · {item.show.cues.length} cues · {item.patch.length} fixtures</small></div><div><button onClick={()=>loadShowProject(item)}>Load</button><button className="danger-button" onClick={()=>deleteShowProject(item.id)}>Delete</button></div></article>):<div className="empty-show-library"><strong>No saved shows yet</strong><span>Save the current show or a draft. Your working Show and songs autosave together.</span></div>}</div>
         </div>}
 
         {showMode === 'sync' && <div className="show-sync-v3">
@@ -4459,7 +4544,7 @@ export default function App() {
           onBack={goPreviousCue}
           onBlackout={toggleBlackout}
           onMaster={applyGlobalMaster}
-          onFxSpeed={(value)=>{const bpm=Math.round(30+(value/100)*210);setTempoSource('manual');setEffectBpm(bpm);effectBpmRef.current=bpm;}}
+          onFxSpeed={(value)=>setMasterTempo(Math.round(30+(value/100)*210))}
           onFxDepth={(value)=>{setEffectDepth(value);effectDepthRef.current=value;}}
           onSelectFixtures={(fixtureIds,mode)=>void dispatchControl({type:'fixture.select',fixtureIds,mode},'surface')}
           onFixtureLevel={(fixtureId,value)=>{const fixture=patch.find((item)=>item.id===fixtureId);if(fixture)void setFixtureAttribute(fixture,'dimmer',percentToDmx(value),'surface');}}

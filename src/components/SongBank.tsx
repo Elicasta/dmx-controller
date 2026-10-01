@@ -1,7 +1,13 @@
 import { useState } from "react";
 import type { ShowFile } from "../lib/show";
 import { songsForShow, type SongRecord } from "../lib/song-bank";
+import type { SongProgram } from '../lib/song-library';
 type Props = {
+  library: SongProgram[];
+  ready: boolean;
+  saveStatus: string;
+  onSave: (song: SongRecord) => Promise<void>;
+  onUse: (song: SongProgram) => void;
   show: ShowFile;
   activeId: string;
   onAdd: (name: string) => void;
@@ -38,7 +44,7 @@ export default function SongBank(p: Props) {
             its timeline.
           </p>
         </div>
-        <b>{songs.length} songs</b>
+        <div><b>{songs.length} songs in this Show</b><p role="status">{p.saveStatus}</p></div>
       </header>
       <form
         onSubmit={(e) => {
@@ -58,7 +64,7 @@ export default function SongBank(p: Props) {
         />
         <button
           className="console-primary"
-          disabled={!name.trim() || songs.length >= 100}
+          disabled={!p.ready || !name.trim() || songs.length >= 100}
         >
           Add song
         </button>
@@ -128,6 +134,7 @@ export default function SongBank(p: Props) {
                       }}
                     />
                   </label>
+                  <button disabled={!p.ready} onClick={() => void p.onSave(song)}>Save Song</button>
                   <button onClick={() => p.onSelect(song, "creator")}>
                     Build song
                   </button>
@@ -139,6 +146,18 @@ export default function SongBank(p: Props) {
             );
           })}
       </div>
+      <section className="reusable-song-library" aria-label="Song Library">
+        <header><h3>Song Library</h3><p>Saved programming stays here when you create a new Show. Add an editable copy to any Show.</p></header>
+        <div className="song-bank-list">
+          {p.library.filter(item => item.show.name.toLowerCase().includes(query.toLowerCase())).map(item => (
+            <article key={item.id}>
+              <div><strong>{item.show.name}</strong><small>{item.show.songs?.[0]?.bpm} BPM · {item.show.creatorSections?.length ?? 0} sections · {item.show.cues.length} cues · R{item.revision}</small><span>{item.show.songs?.[0]?.mediaName ?? 'No linked media'}</span></div>
+              <button disabled={!p.ready} onClick={() => p.onUse(item)}>Add to Show</button>
+            </article>
+          ))}
+        </div>
+        {p.ready && !p.library.length && <p>New songs and programming save here automatically.</p>}
+      </section>
       {!songs.length && (
         <div className="song-bank-empty">
           <strong>Add your first song above.</strong>

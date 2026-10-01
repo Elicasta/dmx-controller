@@ -13,3 +13,15 @@ Selecting a song changes the runtime master tempo to its saved tempo. Manual mas
 Live uses one full-width workspace column for the controller. Faders, MA and Busk retain their existing controls and assignments, with sizing that fits the available window. Programmer gives Stage, attribute panels and look presets separate grid rows; panels scroll within their area. The dedicated Build → Stage workspace remains large, and Stage can open in its own window.
 
 Validation includes song migration, export/import validation, rename consistency, isolated builds, duplicate prevention, deleted-section cleanup, preserving manual arrangement, per-song media import/switch/reload, master tempo, Live fit and Programmer panel operations. Native macOS media persistence and hardware/DAW behavior still require testing in the packaged app.
+
+## Independent Song Library and Recovery (0.2.3)
+
+Song Bank now separates **songs in this Show** from the independent **Song Library**. Songs and changes to their sections, cues, tempo and timeline are checkpointed automatically. **Save Song** explicitly updates that song's library master. **Add to Show** copies the saved program, remapping section/cue/clip/group identities and retaining its media link and arrangement. Each Show keeps its own editable copy; saved Shows do not change when another Show is edited. The library holds the latest saved programming for a song, not a full version history.
+
+**New Show**, **Load**, and **Restore Show** first commit the outgoing programming and a Recovery entry. If saving fails, the transition is cancelled and the current Show stays open. **Show Library → Recovery** exposes the ten most recent outgoing Shows. Recovery restores Show programming; patch, stage and look snapshots continue to belong to explicit Show Library saves.
+
+The authoritative working Show, reusable programs and Recovery entries are committed together in one IndexedDB transaction with strict durability requested. A failed or aborted transaction leaves the previous committed record intact. On startup, this checkpoint takes precedence over the compatibility localStorage copy. Existing working drafts and saved Shows seed the library without replacing an existing library master. Corrupt checkpoints are left intact and reported instead of overwritten.
+
+BPM fields retain incomplete typing, accept decimals, increment by one with arrow keys (0.1 with Shift), and cannot change from scrolling the mouse wheel. Invalid or empty values revert on blur. Manual song tempo updates its sections and timeline; song switching retains saved tempo. Shared external-source arbitration and a dedicated tempo-lock control remain part of the transport pass.
+
+Media remains local to this application installation. This pass does not create the managed native filesystem folder, bundle media in show exports, remap a song to a different fixture rig, or add synchronized video output. Back up exported Shows and source media separately. Crowd now starts OFF. The Creator recipe list has a bounded scrolling area; unifying factory/custom recipe libraries remains open.
