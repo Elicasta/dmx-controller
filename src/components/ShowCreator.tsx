@@ -563,7 +563,7 @@ export default function ShowCreator({
               onChange={(e) => setQuery(e.target.value)}
             />
             <div className="recipe-filters">
-              {["All", "Intensity", "Rows", "Movement", "Color"].map((c) => (
+              {["All", "Scene", "Intensity", "Rows", "Movement", "Color"].map((c) => (
                 <button
                   key={c}
                   className={category === c ? "active" : ""}
