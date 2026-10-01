@@ -302,3 +302,6 @@
 .timeline-workspace > .show-bar-timeline {
   grid-template-rows: auto auto minmax(250px, 1fr) auto;
 }
+.desk-surface-label{color:#dfe8ee}
+.desk-surface-label strong{color:#dfe8ee}
+.desk-surface-label small{color:#94a6b0}

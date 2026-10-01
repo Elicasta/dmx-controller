@@ -719,7 +719,7 @@ export default function App() {
   const remoteEffectLeaseRef = useRef<Map<string, number>>(new Map());
   if (!remoteRelayRef.current) remoteRelayRef.current = new RemoteRelay();
   const [message, setMessage] = useState('Control station ready. Connect DMX when you want physical output.');
-  const [appVersion, setAppVersion] = useState('0.2.1');
+  const [appVersion, setAppVersion] = useState('0.2.2');
   const [updateStatus, setUpdateStatus] = useState<UpdateStatus>('idle');
   const [updateInfo, setUpdateInfo] = useState<UpdateMetadata | null>(null);
   const [updateError, setUpdateError] = useState('');
