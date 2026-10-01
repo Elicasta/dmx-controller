@@ -62,6 +62,38 @@ export function estimateTempoFromSamples(
   if (noveltyEnergy <= 1e-8) return null;
 
   const secondsPerFrame = hop / sampleRate;
+
+  const maxNovelty = novelty.reduce((max, value) => Math.max(max, value), 0);
+  const peakThreshold = maxNovelty * .22;
+  const peakFrames: number[] = [];
+  const minimumPeakGap = Math.max(2, Math.round((60 / maxBpm) / secondsPerFrame * .55));
+  let lastPeak = -minimumPeakGap;
+  for (let frame = 2; frame < frameCount - 2; frame += 1) {
+    const value = novelty[frame];
+    if (value < peakThreshold) continue;
+    if (value < novelty[frame - 1] || value < novelty[frame + 1] || value < novelty[frame - 2] || value < novelty[frame + 2]) continue;
+    if (frame - lastPeak < minimumPeakGap) {
+      if (peakFrames.length && value > novelty[peakFrames[peakFrames.length - 1]]) {
+        peakFrames[peakFrames.length - 1] = frame;
+        lastPeak = frame;
+      }
+      continue;
+    }
+    peakFrames.push(frame);
+    lastPeak = frame;
+  }
+
+  const intervals = peakFrames
+    .slice(1)
+    .map((frame, index) => (frame - peakFrames[index]) * secondsPerFrame)
+    .filter((seconds) => seconds >= .18 && seconds <= 1.5);
+  let preferredBpm: number | null = null;
+  if (intervals.length >= 3) {
+    preferredBpm = 60 / median(intervals);
+    while (preferredBpm < 80) preferredBpm *= 2;
+    while (preferredBpm > 180) preferredBpm /= 2;
+  }
+
   const candidates: Array<{ bpm: number; lag: number; score: number }> = [];
   for (let bpm = Math.ceil(minBpm); bpm <= Math.floor(maxBpm); bpm += 1) {
     const lag = Math.max(1, Math.round((60 / bpm) / secondsPerFrame));
@@ -91,29 +123,37 @@ export function estimateTempoFromSamples(
       }
       halfScore /= Math.sqrt(Math.max(1e-12, halfLeft * halfRight));
     }
-    candidates.push({ bpm, lag, score: normalized + halfScore * .16 });
+    const preferredBoost = preferredBpm === null
+      ? 0
+      : Math.exp(-Math.pow((bpm - preferredBpm) / 5, 2)) * .34;
+    const tempoPrior = Math.exp(-Math.pow((bpm - 120) / 75, 2)) * .025;
+    candidates.push({ bpm, lag, score: normalized + halfScore * .08 + preferredBoost + tempoPrior });
   }
 
   if (!candidates.length) return null;
   candidates.sort((a, b) => b.score - a.score);
   let best = candidates[0];
 
-  // Prefer the musical double-time interpretation when it is nearly as strong.
-  const double = candidates.find((candidate) => Math.abs(candidate.bpm - best.bpm * 2) <= 1);
-  if (best.bpm < 82 && double && double.score >= best.score * .88) best = double;
-  const half = candidates.find((candidate) => Math.abs(candidate.bpm - best.bpm / 2) <= 1);
-  if (best.bpm > 176 && half && half.score >= best.score * .92) best = half;
+  if (preferredBpm !== null) {
+    const preferred = candidates
+      .filter((candidate) => Math.abs(candidate.bpm - preferredBpm!) <= 3)
+      .sort((a, b) => b.score - a.score)[0];
+    if (preferred && preferred.score >= best.score * .82) best = preferred;
+  }
 
   const phaseScores = Array.from({ length: best.lag }, () => 0);
-  for (let phase = 0; phase < best.lag; phase += 1) {
-    let score = 0;
-    for (let frame = phase; frame < frameCount; frame += best.lag) {
-      const center = novelty[frame];
-      const before = frame > 0 ? novelty[frame - 1] : 0;
-      const after = frame + 1 < frameCount ? novelty[frame + 1] : 0;
-      score += center + Math.max(before, after) * .35;
+  if (peakFrames.length) {
+    for (const frame of peakFrames) {
+      const phase = frame % best.lag;
+      const weight = novelty[frame];
+      phaseScores[phase] += weight;
+      phaseScores[(phase + 1) % best.lag] += weight * .2;
+      phaseScores[(phase - 1 + best.lag) % best.lag] += weight * .2;
     }
-    phaseScores[phase] = score;
+  } else {
+    for (let phase = 0; phase < best.lag; phase += 1) {
+      for (let frame = phase; frame < frameCount; frame += best.lag) phaseScores[phase] += novelty[frame];
+    }
   }
   const bestPhase = phaseScores.reduce((winner, score, index) => score > phaseScores[winner] ? index : winner, 0);
 
