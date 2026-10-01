@@ -3268,13 +3268,12 @@ body,#root { min-width:0; width:100%; overflow:hidden; }
     flex: 1;
   }
   .lane-label {
-    width: 74px;
-    flex-basis: 74px;
-    padding: 14px 7px;
+    width: 100px;
+    flex-basis: 100px;
+    padding: 14px 8px;
     font-size: 8px;
   }
-  .timeline-playhead { left: 74px; }
-  .add-timeline-lane { margin-left: 84px; }
+  .add-timeline-lane { margin-left: 110px; }
   .visualizer-workspace-header {
     display: grid;
   }
