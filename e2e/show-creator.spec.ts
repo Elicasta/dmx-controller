@@ -555,7 +555,7 @@ test('song bank stores separate media and restores songs after restart', async (
  await expect(page.locator('.timeline-clip')).toHaveCount(8);
  await expect(page.locator('.timeline-audio-block')).toContainText('First Song.wav');
  await page.getByLabel('Audio starts at bar',{exact:true}).fill('3');
- await page.getByRole('button',{name:'Song Bank',exact:true}).click();
+ await page.locator('.show-subtabs').getByRole('button',{name:'Song Bank',exact:true}).click();
  await page.locator('.song-bank-list article').filter({has:page.getByLabel('Song name Second Song')}).getByRole('button',{name:'Timeline',exact:true}).click();
  await expect(page.locator('.timeline-clip')).toHaveCount(0);
  await expect(page.getByLabel('Master BPM')).toHaveValue('120');
@@ -570,7 +570,7 @@ test('song bank stores separate media and restores songs after restart', async (
  await expect(page.locator('.timeline-clip')).toHaveCount(8);
  await expect(page.locator('.timeline-audio-block')).toContainText('First Song.wav');
  await expect.poll(()=>page.locator('audio').evaluate((audio:HTMLAudioElement)=>audio.readyState)).toBeGreaterThan(0);
- await page.getByRole('button',{name:'Song Bank',exact:true}).click();
+ await page.locator('.show-subtabs').getByRole('button',{name:'Song Bank',exact:true}).click();
  await page.getByLabel('Song name First Song').fill('Renamed Song');
  await page.getByLabel('Search song bank').click();
  await expect(page.getByLabel('Song name Renamed Song')).toBeVisible();
@@ -586,7 +586,7 @@ test('Song Library survives New Show, reuse, restart, and Recovery', async ({pag
   const errors: string[]=[]; page.on('pageerror',e=>errors.push(e.message));
   await seed(page); await page.goto('/');
   await page.getByRole('button',{name:'SHOW',exact:true}).click();
-  await page.getByRole('button',{name:'Song Bank',exact:true}).click();
+  await page.locator('.show-subtabs').getByRole('button',{name:'Song Bank',exact:true}).click();
   await expect(page.getByRole('status')).toHaveText('Saved');
   await page.getByLabel('New song name').fill('Hineh Ma Tov');
   await page.getByRole('button',{name:'Add song',exact:true}).click();
@@ -609,7 +609,7 @@ test('Song Library survives New Show, reuse, restart, and Recovery', async ({pag
   await page.getByRole('button',{name:'Show Library',exact:true}).click();
   await page.getByRole('button',{name:'＋ New Show',exact:true}).click();
   await expect.poll(async()=>((await readShow(page)).cues??[]).length).toBe(0);
-  await page.getByRole('button',{name:'Song Bank',exact:true}).click();
+  await page.locator('.show-subtabs').getByRole('button',{name:'Song Bank',exact:true}).click();
   const saved=page.getByRole('region',{name:'Song Library'}).locator('article').filter({hasText:'Hineh Ma Tov'});
   await expect(saved).toContainText('8 cues'); await expect(saved).toContainText('hineh.wav');
   await saved.getByRole('button',{name:'Add to Show',exact:true}).click();
@@ -618,11 +618,11 @@ test('Song Library survives New Show, reuse, restart, and Recovery', async ({pag
   await row.getByRole('button',{name:'Timeline',exact:true}).click();
   await expect(page.locator('.timeline-audio-block')).toContainText('hineh.wav');
   await expect(page.getByLabel('Master BPM')).toHaveValue('130.5');
-  await page.getByRole('button',{name:'Song Bank',exact:true}).click();
+  await page.locator('.show-subtabs').getByRole('button',{name:'Song Bank',exact:true}).click();
   await expect(page.getByRole('status')).toHaveText('Saved');
   await page.reload();
   await page.getByRole('button',{name:'SHOW',exact:true}).click();
-  await page.getByRole('button',{name:'Song Bank',exact:true}).click();
+  await page.locator('.show-subtabs').getByRole('button',{name:'Song Bank',exact:true}).click();
   await expect(page.getByRole('status')).toHaveText('Saved');
   expect((await readShow(page)).cues).toHaveLength(8);
   await page.screenshot({path:info.outputPath('reusable-song-library.png')});
@@ -636,7 +636,7 @@ test('Song Library survives New Show, reuse, restart, and Recovery', async ({pag
 test('New Show cancels if its atomic checkpoint fails', async ({page}) => {
   await seed(page); await page.goto('/');
   await page.getByRole('button',{name:'SHOW',exact:true}).click();
-  await page.getByRole('button',{name:'Song Bank',exact:true}).click();
+  await page.locator('.show-subtabs').getByRole('button',{name:'Song Bank',exact:true}).click();
   await expect(page.getByRole('status')).toHaveText('Saved');
   await page.getByLabel('New song name').fill('Protected Song');
   await page.getByRole('button',{name:'Add song',exact:true}).click();
@@ -655,7 +655,7 @@ test('New Show cancels if its atomic checkpoint fails', async ({page}) => {
   expect(await readShow(page)).toEqual(before);
   await page.reload();
   await page.getByRole('button',{name:'SHOW',exact:true}).click();
-  await page.getByRole('button',{name:'Song Bank',exact:true}).click();
+  await page.locator('.show-subtabs').getByRole('button',{name:'Song Bank',exact:true}).click();
   await expect(page.getByRole('status')).toHaveText('Saved');
   await expect(page.getByLabel('Song name Protected Song')).toBeVisible();
 });
@@ -784,7 +784,7 @@ test('zero trim height saves, and a corrupt workspace checkpoint is preserved',a
     open.onerror=()=>reject(open.error);
   }));
   await page.goto('/'); await page.getByRole('button',{name:'SHOW',exact:true}).click();
-  await page.getByRole('button',{name:'Song Bank',exact:true}).click();
+  await page.locator('.show-subtabs').getByRole('button',{name:'Song Bank',exact:true}).click();
   await expect(page.getByRole('status')).toHaveText('Saved');
   expect((await readCheckpoint()).workspace.stageSettings.dimensions.trimHeight).toBe(0);
   await page.reload(); await expect(page.getByRole('status')).toHaveText('Saved');
@@ -878,7 +878,7 @@ test('section layers keep independent settings, priority and Song library saves'
   await expect(page.locator('.recipe-list article')).toHaveCount(1);
   await page.getByRole('button',{name:'Save to Song Library',exact:true}).click();
   await expect.poll(async()=> (await readShow(page)).cues?.length).toBe(8);
-  await page.getByRole('button',{name:'Song Bank',exact:true}).click();
+  await page.locator('.show-subtabs').getByRole('button',{name:'Song Bank',exact:true}).click();
   await expect(page.locator('.reusable-song-library article')).toHaveCount(1);
   await page.reload();
   await page.getByRole('button',{name:'SHOW',exact:true}).click();
