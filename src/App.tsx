@@ -3401,16 +3401,17 @@ export default function App() {
     const recipe=FX_RECIPES.find(r=>r.id===recipeId);if(!recipe)return;
     if(showFile.cues.length>=200||editingTimeline.clips.length>=1000){setMessage('Cue or timeline clip limit reached.');return;}
     try {
-      const section={...createSection(recipe.name,cueTimelineSong??'Timeline FX',selectedGroup?.id??'',editingTimeline.bpm),recipeId,fadeMs:0,energy:100,intensity:100};
+      const targetGroupId=recipe.scope==='scene'?'':selectedGroup?.id??'';
+      const section={...createSection(recipe.name,cueTimelineSong??'Timeline FX',targetGroupId,editingTimeline.bpm),recipeId,fadeMs:0,energy:100,intensity:100};
       const built=buildSectionCues([section],patchRef.current,showFile.groups??[])[0];
       const cue={...built,name:recipe.name,sourceSectionId:undefined,changes:[] as DmxUpdate[],universe:undefined};
-      const clip={id:crypto.randomUUID(),cueId:cue.id,startBar,lengthBars:8,lane,enabled:true};
+      const clip={id:crypto.randomUUID(),cueId:cue.id,startBar,lengthBars:recipe.defaultBars??8,lane,enabled:true};
       setShowFile(current=>{
         const next={...current,cues:renumberCues([...current.cues,cue])};
         if(timelineShowId)return {...next,timelineShows:(current.timelineShows??[]).map(item=>item.id===timelineShowId?{...item,timeline:{...item.timeline,clips:[...item.timeline.clips,clip]}}:item)};
         return {...next,timeline:{...(current.timeline??EMPTY_TIMELINE),clips:[...(current.timeline?.clips??[]),clip]}};
       });
-      setMessage(recipe.name+' added to FX lane '+(lane+1)+'.');
+      setMessage(recipe.name+' added to FX lane '+(lane+1)+(recipe.scope==='scene'?' · full scene.':'.'));
     }catch(error){setMessage(String(error));}
   }
   function updateEditingTimeline(timeline: typeof EMPTY_TIMELINE) {
