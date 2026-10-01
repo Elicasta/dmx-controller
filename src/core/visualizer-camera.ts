@@ -4,9 +4,10 @@ export type VisualizerCamera = {
   position: Vec3;
   target: Vec3;
   fovDegrees: number;
+  orthographicScale?: number;
 };
 
-export type VisualizerCameraPreset = 'foh' | 'stage-left' | 'stage-right' | 'top' | 'close';
+export type VisualizerCameraPreset = 'foh' | 'stage-left' | 'stage-right' | 'top' | 'front' | 'side' | 'close';
 
 export type CameraBasis = {
   forward: Vec3;
@@ -112,8 +113,11 @@ export function projectVisualizerPoint(
   const vertical = dot(relative, basis.up);
   const fov = Math.max(20, Math.min(100, camera.fovDegrees)) * Math.PI / 180;
   const focal = safeHeight / (2 * Math.tan(fov / 2));
-  const x = safeWidth / 2 + horizontal * focal / depth;
-  const y = safeHeight / 2 - vertical * focal / depth;
+  const orthoScale = camera.orthographicScale && camera.orthographicScale > 0
+    ? Math.min(safeWidth, safeHeight) / camera.orthographicScale
+    : 0;
+  const x = orthoScale ? safeWidth / 2 + horizontal * orthoScale : safeWidth / 2 + horizontal * focal / depth;
+  const y = orthoScale ? safeHeight / 2 - vertical * orthoScale : safeHeight / 2 - vertical * focal / depth;
   const margin = Math.max(safeWidth, safeHeight) * .25;
 
   return {
@@ -146,9 +150,28 @@ export function visualizerCameraPreset(preset: VisualizerCameraPreset, dimension
 
   if (preset === 'top') {
     return {
-      position: { x: 0, y: Math.max(dimensions.roomHeight * 1.75, dimensions.height * 2.5), z: dimensions.depth * .6 },
+      position: { x: 0, y: Math.max(dimensions.roomHeight * 2.5, dimensions.height * 4), z: dimensions.depth * .6 },
       target: { x: 0, y: 0, z: dimensions.depth * .55 },
-      fovDegrees: 48
+      fovDegrees: 48,
+      orthographicScale: Math.max(dimensions.roomWidth, dimensions.roomDepth) * 1.15
+    };
+  }
+
+  if (preset === 'front') {
+    return {
+      position: { x: 0, y: dimensions.height * .42, z: Math.max(dimensions.roomDepth * 2.5, dimensions.depth * 4) },
+      target: { x: 0, y: dimensions.height * .42, z: dimensions.depth * .42 },
+      fovDegrees: 45,
+      orthographicScale: Math.max(dimensions.roomWidth, dimensions.roomHeight * 1.6) * 1.08
+    };
+  }
+
+  if (preset === 'side') {
+    return {
+      position: { x: dimensions.roomWidth * 2.5, y: dimensions.height * .42, z: dimensions.depth * .55 },
+      target: { x: 0, y: dimensions.height * .42, z: dimensions.depth * .55 },
+      fovDegrees: 45,
+      orthographicScale: Math.max(dimensions.roomDepth, dimensions.roomHeight * 1.6) * 1.08
     };
   }
 
@@ -210,7 +233,10 @@ export function interpolateVisualizerCamera(a: VisualizerCamera, b: VisualizerCa
   return {
     position: lerpVec3(a.position, b.position, t),
     target: lerpVec3(a.target, b.target, t),
-    fovDegrees: lerp(a.fovDegrees, b.fovDegrees, t)
+    fovDegrees: lerp(a.fovDegrees, b.fovDegrees, t),
+    orthographicScale: a.orthographicScale && b.orthographicScale
+      ? lerp(a.orthographicScale, b.orthographicScale, t)
+      : undefined
   };
 }
 
