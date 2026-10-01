@@ -35,7 +35,17 @@ describe('StudioBridgeDispatcher', () => {
     const target = actions();
     const dispatcher = new StudioBridgeDispatcher(target);
     await dispatcher.dispatch('c', { type: 'transport', playing: true, positionMs: 12500, bpm: 72 });
-    expect(target.syncTransport).toHaveBeenCalledWith(true, 12500, 72);
+    expect(target.syncTransport).toHaveBeenCalledWith(true, 12500, 72, undefined);
+  });
+
+  it('passes route identity and rejects invalid transport without dispatching', async () => {
+    const target = actions();
+    const dispatcher = new StudioBridgeDispatcher(target);
+    await dispatcher.dispatch('route', {type:'transport',playing:true,positionMs:500,bpm:130,source:'ableton'});
+    expect(target.syncTransport).toHaveBeenCalledWith(true,500,130,'ableton');
+    const result = await dispatcher.dispatch('invalid',{type:'transport',playing:true,positionMs:-1,bpm:130});
+    expect(result.ok).toBe(false);
+    expect(target.syncTransport).toHaveBeenCalledTimes(1);
   });
 
   it('rejects incompatible bridge protocol', async () => {

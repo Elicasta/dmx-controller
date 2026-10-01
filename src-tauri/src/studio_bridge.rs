@@ -149,5 +149,6 @@ fn handle_client(stream: TcpStream, requests: Sender<BridgeRequest>, clients: Ar
             }
         }
     }
-    *clients.lock().unwrap() = clients.lock().unwrap().saturating_sub(1);
+    let mut count = clients.lock().unwrap();
+    *count = count.saturating_sub(1);
 }

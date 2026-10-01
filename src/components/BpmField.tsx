@@ -1,4 +1,4 @@
-import { useEffect, useState, type KeyboardEvent, type WheelEvent } from 'react';
+import { useEffect, useRef, useState, type KeyboardEvent, type WheelEvent } from 'react';
 
 function clampBpm(value: number, min: number, max: number) {
   if (!Number.isFinite(value)) return min;
@@ -30,8 +30,11 @@ export default function BpmField({
     setDraft(String(value));
   }, [value]);
 
+  const cancelBlur = useRef(false);
+
   function commit() {
-    const parsed = Number(draft);
+    if (cancelBlur.current) { cancelBlur.current = false; return; }
+    const parsed = draft.trim() ? Number(draft) : value;
     const next = clampBpm(Number.isFinite(parsed) ? parsed : value, min, max);
     const rounded = Math.round(next * 10) / 10;
     setDraft(String(rounded));
@@ -45,7 +48,16 @@ export default function BpmField({
       event.currentTarget.blur();
       return;
     }
+    if (event.key === 'ArrowUp' || event.key === 'ArrowDown') {
+      event.preventDefault();
+      const next = Math.round(clampBpm(value + (event.key === 'ArrowUp' ? step : -step), min, max) * 10) / 10;
+      setDraft(String(next));
+      if (next !== value) onCommit(next);
+      return;
+    }
     if (event.key === 'Escape') {
+      event.preventDefault();
+      cancelBlur.current = true;
       setDraft(String(value));
       event.currentTarget.blur();
     }

@@ -52,7 +52,7 @@ export async function openMediaOutputWindow(assetId: string): Promise<boolean> {
 export default function MediaOutputWindow() {
   const params = new URLSearchParams(window.location.search);
   const requestedAssetId = params.get('media-output') ?? '';
-  const [assetId, setAssetId] = useState(requestedAssetId);
+  const assetId = requestedAssetId;
   const [url, setUrl] = useState('');
   const [status, setStatus] = useState('Loading media…');
   const [transport, setTransport] = useState<TransportSnapshot | null>(null);
@@ -62,7 +62,7 @@ export default function MediaOutputWindow() {
     const channel = new BroadcastChannel(CHANNEL);
     channel.onmessage = (event) => {
       if (event.data?.type !== 'frame') return;
-      if (typeof event.data.assetId === 'string' && event.data.assetId) setAssetId(event.data.assetId);
+      if (event.data.assetId !== requestedAssetId) return;
       if (event.data.transport) setTransport(event.data.transport as TransportSnapshot);
     };
     channel.postMessage({ type: 'ready' });
@@ -107,9 +107,9 @@ export default function MediaOutputWindow() {
     }
   }, [transport?.positionMs, transport?.playing, url]);
 
-  return <main className="media-output-window">
+  return <main className="media-output-window" title="Double-click for fullscreen" onDoubleClick={()=>{if(document.fullscreenElement)void document.exitFullscreen();else void document.documentElement.requestFullscreen();}}>
     {url
-      ? <video ref={videoRef} src={url} playsInline preload="auto" />
+      ? <video ref={videoRef} src={url} muted playsInline preload="auto" onLoadedMetadata={()=>{const video=videoRef.current;if(video&&transport){video.currentTime=Math.max(0,transport.positionMs/1000);if(transport.playing)void video.play().catch(()=>{});}}} />
       : <div className="media-output-status">{status}</div>}
   </main>;
 }

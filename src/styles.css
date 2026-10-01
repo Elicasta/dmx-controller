@@ -4192,3 +4192,18 @@ body,#root { min-width:0; width:100%; overflow:hidden; }
 
 /* Keep lane coordinates stable when selecting a clip reveals its inspector. */
 .show-bar-timeline { overflow-anchor: none; }
+
+/* Compact panels are recoverable drawers, not permanently hidden controls. */
+.resizable-workspace.workspace-compact { position: relative; }
+.resizable-workspace.workspace-compact:not(.left-collapsed) > .console-browser,
+.resizable-workspace.workspace-compact:not(.left-collapsed) > .song-cue-library,
+.resizable-workspace.workspace-compact:not(.right-collapsed) > .effects-inspector,
+.resizable-workspace.workspace-compact:not(.right-collapsed) > .cue-inspector-console {
+  display: block !important; position: absolute; inset: 36px 0 0; z-index: 25;
+  width: 100%; max-width: 100%; max-height: none; overflow: auto;
+  background: var(--surface-primary, #0c1217); margin: 0;
+}
+.timeline-audio-block strong { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; pointer-events: none; }
+.timeline-audio-block svg { pointer-events: none; }
+.timeline-step-editor { min-width: 0; max-width: 100%; }
+.step-editor-grid { overflow-x: auto; }

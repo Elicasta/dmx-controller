@@ -168,8 +168,9 @@ test("solo creator builds an editable audio-aligned show and preserves the draft
   await page.getByRole("button", { name: "Timeline", exact: true }).click();
   await expect(page.locator(".timeline-clip")).toHaveCount(8);
   await expect(page.locator(".timeline-audio-block")).toContainText(
-    "relink audio",
+    "test-song.wav",
   );
+  await expect(page.locator(".timeline-audio-block")).not.toHaveClass(/missing/);
   expect((await readShow(page)).timeline.audioOffsetBars).toBe(1);
   expect((await readShow(page)).cues[0].effectStack).toHaveLength(2);
   await page.getByRole("button", { name: "Show Creator", exact: true }).click();

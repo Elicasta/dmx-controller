@@ -14,7 +14,7 @@ export type StudioBridgeActions = {
   playRecording: (recordingId: string, offsetMs: number) => Promise<void> | void;
   stopRecordingPlayback: () => Promise<void> | void;
   setBlackout: (enabled: boolean) => Promise<void> | void;
-  syncTransport: (playing: boolean, positionMs: number, bpm: number) => Promise<void> | void;
+  syncTransport: (playing: boolean, positionMs: number, bpm: number, source?: 'lumalive' | 'ableton') => Promise<void> | void;
 };
 
 export class StudioBridgeDispatcher {
@@ -49,7 +49,13 @@ export class StudioBridgeDispatcher {
         case 'record.play': await this.actions.playRecording(command.recordingId, command.offsetMs ?? 0); break;
         case 'record.stopPlayback': await this.actions.stopRecordingPlayback(); break;
         case 'blackout': await this.actions.setBlackout(command.enabled); break;
-        case 'transport': await this.actions.syncTransport(command.playing, command.positionMs, command.bpm); break;
+        case 'transport':
+          if (typeof command.playing !== 'boolean' || !Number.isFinite(command.positionMs) || command.positionMs < 0 || !Number.isFinite(command.bpm) || command.bpm < 20 || command.bpm > 300 || (command.source !== undefined && command.source !== 'lumalive' && command.source !== 'ableton')) {
+            throw new Error('Invalid transport: expected a non-negative position and BPM between 20 and 300.');
+          }
+          await this.actions.syncTransport(command.playing, command.positionMs, command.bpm, command.source);
+          break;
+        default: throw new Error('Unknown Studio bridge command.');
       }
       return { id, ok: true };
     } catch (error) {

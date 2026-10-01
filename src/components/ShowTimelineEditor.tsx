@@ -1,5 +1,6 @@
 import {
   useEffect,
+  useMemo,
   useRef,
   useState,
   type RefObject,
@@ -7,6 +8,8 @@ import {
 } from "react";
 import type { ShowCue } from "../lib/show";
 import BpmField from "./BpmField";
+import { timelineMediaRange, waveformPeaks, tempoSamples } from "../core/timeline-media";
+import { mediaKindForFile } from "../lib/media-library";
 import { beatSnapStep, estimateTempoFromSamples, type TempoEstimate } from "../core/audio-tempo";
 import {
   FX_RECIPES,
@@ -144,8 +147,7 @@ export default function ShowTimelineEditor(props: Props) {
     const p = latest.current,
       audio = p.audioRef.current;
     if (!audio || !p.audioUrl) return;
-    const sourceTrimIn = Math.max(0, p.timeline.trimInMs ?? 0);
-    const sourceTrimOut = Math.max(sourceTrimIn, p.timeline.trimOutMs ?? (Number.isFinite(audio.duration) ? audio.duration * 1000 : Number.MAX_SAFE_INTEGER));
+    const { trimInMs: sourceTrimIn, trimOutMs: sourceTrimOut } = timelineMediaRange(p.timeline, audio.duration * 1000);
     const local = positionMs - p.timeline.audioOffsetBars * barMs(p.timeline);
     const sourceMs = sourceTrimIn + local;
     if (local < 0 || sourceMs >= sourceTrimOut) {
@@ -202,13 +204,13 @@ export default function ShowTimelineEditor(props: Props) {
       const p = latest.current;
       const audio = p.audioRef.current;
       const offset = p.timeline.audioOffsetBars;
+      const range = timelineMediaRange(p.timeline, audio ? audio.duration * 1000 : p.audioDurationMs);
       // Media owns the clock during audio playback, including buffering.
       // Repeated currentTime corrections cause audible seek artifacts.
-      if (p.audioUrl && audio && cursorRef.current >= offset && !audio.ended &&
+      if (p.audioUrl && audio && cursorRef.current >= offset && cursorRef.current * barMs(p.timeline) < range.endMs && !audio.ended &&
           (!Number.isFinite(audio.duration) || audio.currentTime < audio.duration)) {
         syncAudio(cursorRef.current * barMs(p.timeline));
-        const sourceTrimIn = Math.max(0, p.timeline.trimInMs ?? 0);
-        const sourceTrimOut = Math.max(sourceTrimIn, p.timeline.trimOutMs ?? (Number.isFinite(audio.duration) ? audio.duration * 1000 : Number.MAX_SAFE_INTEGER));
+        const { trimInMs: sourceTrimIn, trimOutMs: sourceTrimOut } = range;
         if (audio.currentTime * 1000 >= sourceTrimOut) {
           audio.pause();
           cursorRef.current = offset + Math.max(0, sourceTrimOut - sourceTrimIn) / barMs(p.timeline);
@@ -257,6 +259,7 @@ export default function ShowTimelineEditor(props: Props) {
     let cancelled = false;
     setPeaks([]);
     setTempoEstimate(null);
+    setAudioError("");
     if (!audioUrl) return;
     const context = new AudioContext();
     void fetch(audioUrl)
@@ -265,28 +268,8 @@ export default function ShowTimelineEditor(props: Props) {
       .then((buffer) => {
         if (cancelled) return;
         const channels = Array.from({ length: buffer.numberOfChannels }, (_, channel) => buffer.getChannelData(channel));
-        const bins = 1400;
-        const stride = Math.max(1, Math.floor(buffer.length / bins));
-        const next = Array.from({ length: bins }, (_, i) => {
-          let peak = 0;
-          let sumSquares = 0;
-          let count = 0;
-          const start = i * stride;
-          const end = Math.min(buffer.length, (i + 1) * stride);
-          const sampleStep = Math.max(1, Math.floor(stride / 160));
-          for (let j = start; j < end; j += sampleStep) {
-            let value = 0;
-            for (const channel of channels) value += Math.abs(channel[j] ?? 0);
-            value /= Math.max(1, channels.length);
-            peak = Math.max(peak, value);
-            sumSquares += value * value;
-            count += 1;
-          }
-          const rms = Math.sqrt(sumSquares / Math.max(1, count));
-          return Math.min(1, peak * .78 + rms * .42);
-        });
-        setPeaks(next);
-        setTempoEstimate(estimateTempoFromSamples(channels[0], buffer.sampleRate));
+        setPeaks(waveformPeaks(channels));
+        setTempoEstimate(estimateTempoFromSamples(tempoSamples(channels), buffer.sampleRate));
       })
       .catch(() => {
         if (!cancelled)
@@ -373,6 +356,11 @@ export default function ShowTimelineEditor(props: Props) {
     drag.current = null;
     if (e.currentTarget.hasPointerCapture(e.pointerId))
       e.currentTarget.releasePointerCapture(e.pointerId);
+    if (d.kind === "audio" && Math.abs(e.clientX - d.x) < 3) {
+      const rect = e.currentTarget.parentElement!.getBoundingClientRect();
+      seek(snapBar((e.clientX - rect.left) / zoom, snap));
+      return;
+    }
     if (d.kind === "move" && d.nextLane !== d.lane)
       changeClip(d.id, { lane: d.nextLane }, false);
     checkpoint(d.before);
@@ -389,9 +377,31 @@ export default function ShowTimelineEditor(props: Props) {
     const rect = e.currentTarget.getBoundingClientRect();
     addClip(cueId, (e.clientX - rect.left) / zoom, lane);
   }
-  const wavePath = peaks
+  const wavePath = useMemo(() => peaks
     .map((p, i) => `M ${i} ${24 - p * 22} L ${i} ${24 + p * 22}`)
-    .join(" ");
+    .join(" "), [peaks]);
+  const waveformStart = audioDurationMs > 0 ? trimInMs / audioDurationMs * peaks.length : 0;
+  const waveformWidth = audioDurationMs > 0 ? trimmedDurationMs / audioDurationMs * peaks.length : peaks.length;
+
+  const transportKeys = useRef({ play, stop });
+  transportKeys.current = { play, stop };
+  useEffect(() => {
+    const handleKey = (event: KeyboardEvent) => {
+      if (event.defaultPrevented || event.repeat || event.altKey || event.ctrlKey || event.metaKey) return;
+      const target = event.target as HTMLElement | null;
+      if (target?.closest('input,textarea,select,button,summary,[contenteditable="true"],[role="dialog"]')) return;
+      if (event.code === 'Space') {
+        event.preventDefault();
+        const p = latest.current;
+        if (playingRef.current || p.timeline.clips.length || p.audioUrl) transportKeys.current.play();
+      } else if (event.key === 'Home') {
+        event.preventDefault();
+        transportKeys.current.stop();
+      }
+    };
+    window.addEventListener('keydown', handleKey);
+    return () => window.removeEventListener('keydown', handleKey);
+  }, []);
 
   function seekFromLane(e: import("react").MouseEvent<HTMLElement>) {
     if ((e.target as HTMLElement).closest('.timeline-clip,.timeline-audio-block,button,input,select')) return;
@@ -408,9 +418,10 @@ export default function ShowTimelineEditor(props: Props) {
     if (alignBeatGrid && audioUrl) {
       const beatMs = 60000 / nextBpm;
       const currentStartMs = timeline.audioOffsetBars * nextBarMs;
-      const absoluteDetectedBeat = currentStartMs + tempoEstimate.firstBeatMs;
+      const phaseFromTrim = tempoEstimate.firstBeatMs - trimInMs;
+      const absoluteDetectedBeat = currentStartMs + phaseFromTrim;
       const alignedBeatMs = Math.max(0, Math.round(absoluteDetectedBeat / beatMs) * beatMs);
-      let nextStartMs = alignedBeatMs - tempoEstimate.firstBeatMs;
+      let nextStartMs = alignedBeatMs - phaseFromTrim;
       while (nextStartMs < 0) nextStartMs += beatMs;
       audioOffsetBars = nextStartMs / nextBarMs;
     }
@@ -421,8 +432,8 @@ export default function ShowTimelineEditor(props: Props) {
     const audio = audioRef.current;
     if (!audio || !audioUrl) return;
     pause();
-    const audioBars = (audio.currentTime * 1000) / msPerBar;
-    const targetBar = Math.max(1, Math.ceil(audioBars - 1e-6));
+    const audioBars = Math.max(0, audio.currentTime * 1000 - trimInMs) / msPerBar;
+    const targetBar = Math.max(Math.ceil(audioBars), Math.round(timeline.audioOffsetBars + audioBars));
     edit({
       ...timeline,
       audioOffsetBars: Math.max(0, targetBar - audioBars),
@@ -449,9 +460,9 @@ export default function ShowTimelineEditor(props: Props) {
         const file = e.dataTransfer.files?.[0];
         if (!file) return;
         e.preventDefault();
-        if (file.type.startsWith("audio/") || /\.(wav|mp3|m4a|aac|aif|aiff|ogg|flac)$/i.test(file.name)) {
+        if (["audio", "video"].includes(mediaKindForFile(file) ?? "")) {
           pause(); onLoadAudio(file);
-        } else setAudioError("Choose an audio file: WAV, MP3, M4A, AIFF, OGG or FLAC.");
+        } else setAudioError("Choose an audio or video file: WAV, MP3, M4A, MP4, MOV or WebM.");
       }}>
       <header className="creator-command">
         <div>
@@ -484,11 +495,12 @@ export default function ShowTimelineEditor(props: Props) {
         <button
           className="console-primary"
           disabled={!timeline.clips.length && !audioUrl}
+          title="Space to play or pause"
           onClick={play}
         >
           {playing ? "Pause" : "Play Show"}
         </button>
-        <button onClick={stop}>Stop / Rewind</button>
+        <button title="Home to rewind" onClick={stop}>Stop / Rewind</button>
         <output>BAR {cursorBar + 1} · BEAT {cursorBeat}</output>
         <label>
           BPM
@@ -496,7 +508,7 @@ export default function ShowTimelineEditor(props: Props) {
             value={timeline.bpm}
             disabled={playing}
             ariaLabel="Timeline BPM"
-            onCommit={(value) => edit({ ...timeline, bpm: value })}
+            onCommit={(value) => edit({ ...timeline, bpm: value, tempoLocked: true })}
           />
         </label>
         <label>
@@ -679,7 +691,7 @@ export default function ShowTimelineEditor(props: Props) {
                       style={{
                         left: timeline.audioOffsetBars * zoom,
                         width: Math.max(
-                          180,
+                          2,
                           (trimmedDurationMs / msPerBar) * zoom,
                         ),
                       }}
@@ -719,7 +731,7 @@ export default function ShowTimelineEditor(props: Props) {
                         {audioName || timeline.audioName}{" "}
                         {!audioUrl && "· relink audio"}
                       </strong>
-                      <svg viewBox={`0 0 ${Math.max(1,peaks.length)} 48`} preserveAspectRatio="none" aria-label="Audio waveform">
+                      <svg viewBox={`${waveformStart} 0 ${Math.max(.001,waveformWidth)} 48`} preserveAspectRatio="none" aria-label="Audio waveform">
                         <path d={wavePath} />
                       </svg>
                       <span className="audio-trim-handle trim-in" aria-label="Trim media in" onPointerDown={(e)=>{e.stopPropagation();pause();e.currentTarget.setPointerCapture(e.pointerId);drag.current={kind:"trim-in",id:"audio",x:e.clientX,start:trimInMs,length:trimOutMs,lane:0,nextLane:0,before:structuredClone(timeline)};}} onPointerMove={movePointer} onPointerUp={endPointer} onPointerCancel={endPointer}/>
@@ -917,8 +929,9 @@ export default function ShowTimelineEditor(props: Props) {
                   Enabled
                 </label>
                 <section className="timeline-step-editor">
+                  <label className="inline-check"><input type="checkbox" aria-label="Enable step pattern" checked={Boolean(selected.stepPattern?.length)} disabled={playing} onChange={(e)=>changeClip(selected.id,e.target.checked?{stepDivision:selected.stepDivision??8,stepPattern:Array.from({length:selected.stepDivision??8},()=>true)}:{stepDivision:undefined,stepPattern:undefined})}/>Step pattern</label>
                   <header><span>STEP EDIT</span><strong>{selected.stepDivision ?? 8} steps / bar</strong></header>
-                  <label>Grid<select aria-label="Step edit division" value={selected.stepDivision ?? 8} onChange={(e)=>{
+                  <label>Grid<select aria-label="Step edit division" disabled={playing} value={selected.stepDivision ?? 8} onChange={(e)=>{
                     const division=Number(e.target.value) as 4|8|16;
                     const existing=selected.stepPattern??[];
                     changeClip(selected.id,{stepDivision:division,stepPattern:Array.from({length:division},(_,index)=>existing[index]??(index%2===0))});
@@ -927,7 +940,7 @@ export default function ShowTimelineEditor(props: Props) {
                     {Array.from({length:selected.stepDivision??8},(_,index)=>{
                       const pattern=selected.stepPattern??Array.from({length:selected.stepDivision??8},(_,step)=>step%2===0);
                       const active=pattern[index]??false;
-                      return <button key={index} className={active?'active':''} aria-label={`Step ${index+1}`} onClick={()=>{
+                      return <button key={index} className={selected.stepPattern?.length&&active?'active':''} aria-label={`Step ${index+1}`} aria-pressed={Boolean(selected.stepPattern?.length) && active} disabled={playing} onClick={()=>{
                         const next=[...pattern];next[index]=!active;changeClip(selected.id,{stepDivision:selected.stepDivision??8,stepPattern:next});
                       }}><small>{index+1}</small><b>{active?'●':'·'}</b></button>;
                     })}

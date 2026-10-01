@@ -32,12 +32,14 @@ function transaction<T>(mode: IDBTransactionMode, action: (store: IDBObjectStore
   return openDb().then((db) => new Promise<T>((resolve, reject) => {
     const tx = db.transaction(STORE, mode);
     const store = tx.objectStore(STORE);
-    tx.oncomplete = () => db.close();
+    let result: T;
+    tx.oncomplete = () => { db.close(); resolve(result); };
+    tx.onabort = () => { db.close(); reject(tx.error ?? new Error('Media save was aborted.')); };
     tx.onerror = () => {
       db.close();
       reject(tx.error ?? new Error('Media library transaction failed.'));
     };
-    action(store, resolve, reject);
+    action(store, (value) => { result = value; }, reject);
   }));
 }
 

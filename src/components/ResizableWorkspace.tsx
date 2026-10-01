@@ -44,6 +44,8 @@ export default function ResizableWorkspace({
   const [hideLeft, setHideLeft] = useState(initial.hideLeft);
   const [hideRight, setHideRight] = useState(initial.hideRight);
   const [compact, setCompact] = useState(false);
+  const [compactPanel, setCompactPanel] = useState<"left" | "right" | null>(null);
+  const [availableWidth, setAvailableWidth] = useState(1000);
   const drag = useRef<'left' | 'right' | null>(null);
   const hasRight = Children.toArray(children).length > 2;
 
@@ -56,6 +58,7 @@ export default function ResizableWorkspace({
     if (!node || !('ResizeObserver' in window)) return;
     const observer = new ResizeObserver(([entry]) => {
       setCompact(entry.contentRect.width < 760);
+      setAvailableWidth(entry.contentRect.width);
     });
     observer.observe(node);
     return () => observer.disconnect();
@@ -118,9 +121,12 @@ export default function ResizableWorkspace({
     />;
   }
 
-  const effectiveHideLeft = compact ? true : hideLeft;
-  const effectiveHideRight = compact && hasRight ? true : hideRight;
-  const columns = (effectiveHideLeft ? '' : left + 'px ') + 'minmax(0,1fr)' + (hasRight && !effectiveHideRight ? ' ' + right + 'px' : '');
+  const effectiveHideLeft = compact ? compactPanel !== 'left' : hideLeft;
+  const effectiveHideRight = compact ? compactPanel !== 'right' : hideRight;
+  const panelMax = Math.max(150, (availableWidth - 330) / (hasRight ? 2 : 1));
+  const visibleLeft = Math.min(left, panelMax);
+  const visibleRight = Math.min(right, panelMax);
+  const columns = compact ? 'minmax(0,1fr)' : (effectiveHideLeft ? '' : visibleLeft + 'px ') + 'minmax(0,1fr)' + (hasRight && !effectiveHideRight ? ' ' + visibleRight + 'px' : '');
 
   return <section
     ref={ref}
@@ -128,17 +134,17 @@ export default function ResizableWorkspace({
     style={{ '--workspace-columns': columns } as CSSProperties}
   >
     <div className="workspace-panel-tools">
-      <button title={(effectiveHideLeft ? 'Show ' : 'Collapse ') + leftLabel} onClick={() => setHideLeft(!hideLeft)}>
+      <button title={(effectiveHideLeft ? 'Show ' : 'Collapse ') + leftLabel} aria-label={(effectiveHideLeft ? 'Show ' : 'Collapse ') + leftLabel} aria-expanded={!effectiveHideLeft} onClick={() => compact ? setCompactPanel(effectiveHideLeft ? 'left' : null) : setHideLeft(!hideLeft)}>
         <span className="workspace-tool-full">{effectiveHideLeft ? 'Show' : 'Collapse'} {leftLabel}</span>
         <span className="workspace-tool-icon">{effectiveHideLeft ? '›' : '‹'}</span>
       </button>
-      {hasRight && <button title={(effectiveHideRight ? 'Show ' : 'Collapse ') + rightLabel} onClick={() => setHideRight(!hideRight)}>
+      {hasRight && <button title={(effectiveHideRight ? 'Show ' : 'Collapse ') + rightLabel} aria-label={(effectiveHideRight ? 'Show ' : 'Collapse ') + rightLabel} aria-expanded={!effectiveHideRight} onClick={() => compact ? setCompactPanel(effectiveHideRight ? 'right' : null) : setHideRight(!hideRight)}>
         <span className="workspace-tool-full">{effectiveHideRight ? 'Show' : 'Collapse'} {rightLabel}</span>
         <span className="workspace-tool-icon">{effectiveHideRight ? '‹' : '›'}</span>
       </button>}
     </div>
     {children}
-    {!effectiveHideLeft && divider('left', left)}
-    {hasRight && !effectiveHideRight && divider('right', right)}
+    {!compact && !effectiveHideLeft && divider('left', visibleLeft)}
+    {!compact && hasRight && !effectiveHideRight && divider('right', visibleRight)}
   </section>;
 }

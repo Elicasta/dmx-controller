@@ -193,3 +193,6 @@
 
 /* Match the flash button to its compact grid row; global buttons are taller. */
 .desk-faders-body .desk-surface-flash { height: 28px; min-height: 0; padding: 0 4px; }
+
+.desk-surface-label { color: var(--text-primary, #e7eef4); }
+.desk-surface-label small { color: var(--text-secondary, #a2b3bf); }

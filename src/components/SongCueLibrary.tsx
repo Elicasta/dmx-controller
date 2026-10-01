@@ -103,7 +103,8 @@ export default function SongCueLibrary(p: Props) {
 
     <div className="rundown-section-list">
       {sectionViews.map((section, sectionIndex) => {
-        const sectionCues = p.cues.filter((cue) => sectionIdForCue(cue) === section.id && matches(cue));
+        const sectionMatches = section.name.toLowerCase().includes(query.toLowerCase());
+        const sectionCues = p.cues.filter((cue) => sectionIdForCue(cue) === section.id && (sectionMatches || matches(cue)));
         const itemMap = new Map<string, { name: string; kind: 'song' | 'media'; cues: ShowCue[] }>();
         for (const cue of sectionCues) {
           const name = cueItemName(cue);

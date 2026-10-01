@@ -1,4 +1,4 @@
-import type { ShowFile, ShowCue } from './show';
+import { renumberCues, type ShowFile, type ShowCue } from './show';
 import type { ShowSection, ShowTimeline, TimelineClip } from './show-design';
 
 export type SongMediaReference = {
@@ -64,7 +64,15 @@ export function deriveSongProgram(
         clips: sourceTimeline.clips.filter((clip) => cueIds.has(clip.cueId)).map(clone)
       }
     : undefined;
-  const bpm = sections[0]?.bpm ?? timeline?.bpm ?? 120;
+  // A shared service timeline cannot silently assign one song's media to every song.
+  if (timeline && !namedTimeline && showSongNames(show).length > 1) {
+    delete timeline.mediaAssetId;
+    delete timeline.mediaKind;
+    delete timeline.audioName;
+    delete timeline.trimInMs;
+    delete timeline.trimOutMs;
+  }
+  const bpm = timeline?.bpm ?? sections[0]?.bpm ?? 120;
   const timelineMedia: SongMediaReference | undefined = timeline?.mediaAssetId
     ? {
         assetId: timeline.mediaAssetId,
@@ -121,6 +129,13 @@ export function instantiateSongProgram(program: SongProgram): {
     ? {
         ...clone(program.timeline),
         bpm: program.bpm,
+        ...(program.media ? {
+          mediaAssetId: program.media.assetId,
+          audioName: program.media.name,
+          mediaKind: program.media.kind,
+          trimInMs: program.media.trimInMs,
+          trimOutMs: program.media.trimOutMs
+        } : {}),
         clips: program.timeline.clips
           .map((clip): TimelineClip | null => {
             const cueId = cueIdMap.get(clip.cueId);
@@ -161,7 +176,11 @@ export function mergeSongProgramIntoShow(show: ShowFile, program: SongProgram): 
   return {
     ...show,
     creatorSections,
-    cues,
+    cues: renumberCues(cues),
+    timeline: show.timeline ? {
+      ...show.timeline,
+      clips: show.timeline.clips.filter((clip) => !existingCueIds.has(clip.cueId))
+    } : undefined,
     timelineShows
   };
 }
