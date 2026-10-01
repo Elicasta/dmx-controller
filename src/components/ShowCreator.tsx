@@ -1,3 +1,5 @@
+import ResizableWorkspace from './ResizableWorkspace';
+import TempoInput from './TempoInput';
 import { useEffect, useMemo, useState, type Dispatch, type SetStateAction } from "react";
 import type { PatchedFixture } from "../lib/fixtures";
 import type { FixtureGroup } from "../lib/show";
@@ -7,12 +9,13 @@ import {
   FX_RECIPES,
   SHOW_COLORS,
   SONG_TEMPLATES,
-  isShowSection,
   type ShowSection,
 } from "../lib/show-design";
 type Props = {
   songName?: string;
   onRenameSong?: (name: string) => void;
+  presets: ShowSection[];
+  onPresetsChange: (presets:ShowSection[]) => void;
   onSongBank?: () => void;
   sections: ShowSection[];
   setSections: Dispatch<SetStateAction<ShowSection[]>>;
@@ -23,21 +26,15 @@ type Props = {
   onStop: () => void;
   onTimeline: () => void;
   onEditFx: (effect: CustomEffect) => void;
+  tempoLocked: boolean;
+  onTempoLockChange: (locked: boolean) => void;
   masterBpm: number;
   onMasterBpmChange: (bpm: number) => void;
 };
-const PRESETS = "lumarig-section-presets-v1";
-function loadPresets() {
-  try {
-    const v = JSON.parse(localStorage.getItem(PRESETS) ?? "[]");
-    return Array.isArray(v) ? v.filter(isShowSection).slice(0, 64) : [];
-  } catch {
-    return [];
-  }
-}
 export default function ShowCreator({
   songName,
   onRenameSong,
+  presets, onPresetsChange,
   onSongBank,
   sections,
   setSections,
@@ -50,6 +47,7 @@ export default function ShowCreator({
   onEditFx,
   masterBpm,
   onMasterBpmChange,
+  tempoLocked, onTempoLockChange,
 }: Props) {
   const [song, setSong] = useState(songName ?? sections[0]?.song ?? "New Song");
   const [bpm, setBpm] = useState(sections[0]?.bpm ?? masterBpm);
@@ -63,7 +61,6 @@ export default function ShowCreator({
   const [songFilter,setSongFilter]=useState("");
   const [sectionSearch,setSectionSearch]=useState("");
   const [category, setCategory] = useState("All");
-  const [presets, setPresets] = useState<ShowSection[]>(loadPresets);
   const selected = sections.find((s) => s.id === selectedId) ?? sections[0];
   const songStats = useMemo(() => [...new Set(sections.map((section) => section.song))].map((name) => {
     const items = sections.filter((section) => section.song === name);
@@ -166,13 +163,14 @@ export default function ShowCreator({
           </button>
         </div>
       </header>
-      <div className="creator-columns">
+      <ResizableWorkspace className="creator-columns" storageKey="lumarig.creator-columns.v1" compactMode="stack" leftEnabled={false} rightEnabled rightLabel="FX Library" rightDefault={310} centerMinimum={480}>
         <main className="creator-main">
           <section className="creator-card">
             <header>
               <span>YOUR SONG</span>
               <small>{fixtures.length} patched fixtures</small>
             </header>
+            <button className="tempo-lock" aria-pressed={tempoLocked} onClick={() => onTempoLockChange(!tempoLocked)}>{tempoLocked ? "Tempo Locked" : "Lock Tempo"}</button>
             <div className="creator-fields">
               <label>
                 Song name
@@ -180,13 +178,7 @@ export default function ShowCreator({
               </label>
               <label>
                 Master tempo
-                <input
-                  type="number"
-                  min={20}
-                  max={300}
-                  value={bpm}
-                  onChange={(e) => setMasterTempo(Number(e.target.value))}
-                />
+                <TempoInput label="Master tempo" value={bpm} onChange={setMasterTempo} />
               </label>
               <label>
                 Starting target
@@ -346,7 +338,8 @@ export default function ShowCreator({
                   <button disabled={!previewingId} onClick={stopPreview}>■ Stop</button>
                 </div>
               </header>
-              <div className="creator-fields">
+              <button className="tempo-lock" aria-pressed={tempoLocked} onClick={() => onTempoLockChange(!tempoLocked)}>{tempoLocked ? "Tempo Locked" : "Lock Tempo"}</button>
+            <div className="creator-fields">
                 <label>
                   Section name
                   <input
@@ -442,7 +435,8 @@ export default function ShowCreator({
                   onChange={(e) => update({ color: e.target.value })}
                 />
               </div>
-              <div className="creator-fields">
+              <button className="tempo-lock" aria-pressed={tempoLocked} onClick={() => onTempoLockChange(!tempoLocked)}>{tempoLocked ? "Tempo Locked" : "Lock Tempo"}</button>
+            <div className="creator-fields">
                 <label>
                   Intensity · {selected.intensity}%
                   <input
@@ -556,8 +550,7 @@ export default function ShowCreator({
                       { ...structuredClone(selected), id: crypto.randomUUID() },
                       ...presets,
                     ].slice(0, 64);
-                    setPresets(next);
-                    localStorage.setItem(PRESETS, JSON.stringify(next));
+                    onPresetsChange(next);
                   }}
                 >
                   Save Section Preset
@@ -663,8 +656,7 @@ export default function ShowCreator({
                     aria-label={`Delete preset ${p.name}`}
                     onClick={() => {
                       const next = presets.filter((x) => x.id !== p.id);
-                      setPresets(next);
-                      localStorage.setItem(PRESETS, JSON.stringify(next));
+                      onPresetsChange(next);
                     }}
                   >
                     ×
@@ -676,7 +668,7 @@ export default function ShowCreator({
             )}
           </section>
         </aside>
-      </div>
+      </ResizableWorkspace>
     </div>
   );
 }

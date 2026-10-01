@@ -304,4 +304,43 @@
 }
 .desk-surface-label{color:#dfe8ee}
 .desk-surface-label strong{color:#dfe8ee}
-.desk-surface-label small{color:#94a6b0}
+.desk-surface-label small{color:var(--text-secondary)}
+.reusable-song-library { margin-top:24px; border-top:1px solid #33424c; padding-top:16px; }
+.reusable-song-library h3 { margin:0; font-size:16px; }
+.reusable-song-library .song-bank-list { max-height:420px; overflow:auto; }
+.song-bank-list article > div { min-width:0; }
+.song-bank-list strong { overflow-wrap:anywhere; }
+.song-bank > header > div:last-child { flex-shrink:0; text-align:right; }
+.song-bank > header [role="status"] { color:#a4b8c2; }
+.show-recovery { padding:12px; color:#dfe8ee; }
+.show-recovery details > div { display:flex; justify-content:space-between; flex-wrap:wrap; gap:8px; padding:8px 0; }
+.show-recovery summary { cursor:pointer; padding:8px 0; }
+.library-save-guard { position:fixed; inset:0; z-index:10000; display:grid; place-items:center; background:rgba(8,15,20,.9); color:#dfe8ee; font-size:14px; cursor:progress; }
+.creator-library .recipe-list { max-height: min(52vh, 520px); overflow:auto; min-height:0; }
+.recipe-list article { min-width:0; }
+/* The rendered stage stays usable; the center scrolls when all panels cannot fit vertically. */
+.programmer-v3 { grid-template-rows:auto minmax(340px,42vh) 280px 90px!important; overflow-y:auto!important; }
+.programmer-stage { min-height:340px!important; }
+.programmer-stage > .visualizer-3d { min-height:340px!important; }
+.programmer-stage > .visualizer-3d .visualizer-3d-canvas { min-height:180px!important; flex:1; }
+.programmer-stage > .physical-stage { min-height:300px!important; }
+.program-subtabs { flex-wrap:wrap; height:auto; flex-shrink:0; }
+.program-subtabs button { min-height:32px; }
+.workspace-panel-tools button:disabled { opacity:1; color:var(--text-secondary); background:#111b22; }
+.workspace-divider { border-radius:3px; }
+/* One column-resizing contract across programming workspaces. */
+.resizable-workspace { position:relative; min-width:0; }
+.creator-columns.resizable-workspace, .fx-editor-layout.resizable-workspace, .timeline-edit-layout.resizable-workspace { display:grid; grid-template-columns:var(--workspace-columns)!important; grid-template-rows:auto minmax(0,1fr); gap:8px; }
+.show-cue-layout.resizable-workspace { grid-template-columns:var(--workspace-columns)!important; grid-template-rows:28px minmax(0,1fr) 86px!important; }
+.resizable-workspace.left-collapsed > .timeline-cue-library, .resizable-workspace.left-collapsed > .cue-list-console,
+.resizable-workspace.right-collapsed > .creator-library, .resizable-workspace.right-collapsed > .fx-editor-controls, .resizable-workspace.right-collapsed > .cue-inspector-console { display:none!important; }
+.resizable-workspace > .workspace-panel-tools { min-width:0; flex-wrap:wrap; }
+.resizable-workspace > .workspace-panel-tools button { min-width:0; }
+.creator-columns.resizable-workspace > .creator-library { order:0; }
+.timeline-edit-layout.resizable-workspace > .timeline-cue-library { min-width:0; }
+.cue-with-timeline.resizable-workspace > .cue-inspector-console { display:none!important; }
+.fx-editor-layout.resizable-workspace > .fx-editor-controls { min-width:0; }
+.panels-stacked > .workspace-panel-tools, .panels-stacked > main, .panels-stacked > aside, .panels-stacked > section { grid-column:1/-1; }
+.panels-stacked > .timeline-cue-library { max-height:150px; overflow:auto; }
+.panels-stacked.timeline-edit-layout { grid-template-rows:auto auto minmax(250px,1fr); }
+.panels-stacked .fx-editor-controls { max-height:none; }

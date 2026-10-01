@@ -1,3 +1,5 @@
+import ResizableWorkspace from './ResizableWorkspace';
+import TempoInput from './TempoInput';
 import {
   useEffect,
   useRef,
@@ -29,6 +31,8 @@ type Props = {
   onFrame: (elapsedMs: number) => void;
   onStop: () => void;
   onCreator: () => void;
+  tempoLocked: boolean;
+  onTempoLockChange: (locked: boolean) => void;
   masterBpm: number;
   onMasterBpmChange: (bpm: number) => void;
 };
@@ -59,6 +63,7 @@ export default function ShowTimelineEditor(props: Props) {
     onCreator,
     masterBpm,
     onMasterBpmChange,
+  tempoLocked, onTempoLockChange,
   } = props;
   const audioStarting = useRef(false);
   const [libraryMode,setLibraryMode]=useState<"cues"|"fx">("cues");
@@ -409,20 +414,11 @@ export default function ShowTimelineEditor(props: Props) {
         <output>BAR {(cursor + 1).toFixed(2)}</output>
         <label>
           Master BPM
-          <input
-            aria-label="Master BPM"
-            type="number"
-            min={20}
-            max={300}
-            value={masterBpm}
-            disabled={playing}
-            onChange={(e) => {
-              const next = clamp(Number(e.target.value), 20, 300);
-              edit({ ...timeline, bpm: next });
-              onMasterBpmChange(next);
-            }}
-          />
+          <TempoInput label="Master BPM" value={masterBpm} disabled={playing} onChange={next => {
+            edit({ ...timeline, bpm: next }); onMasterBpmChange(next);
+          }} />
         </label>
+        <button className="tempo-lock" aria-pressed={tempoLocked} onClick={() => onTempoLockChange(!tempoLocked)}>{tempoLocked ? "Tempo Locked" : "Lock Tempo"}</button>
         <label>
           Beats / bar
           <input
@@ -481,7 +477,7 @@ export default function ShowTimelineEditor(props: Props) {
           />
         </label>
       </div>
-      <div className="timeline-edit-layout">
+      <ResizableWorkspace className="timeline-edit-layout" storageKey="lumarig.timeline-columns.v1" compactMode="stack" leftLabel="Cue / FX Library" rightEnabled={false} leftDefault={220} centerMinimum={480}>
         <aside className="timeline-cue-library">
           <div className="timeline-library-tabs"><button aria-label="Cue library" aria-pressed={libraryMode==="cues"} onClick={()=>setLibraryMode("cues")}>Cues</button><button aria-pressed={libraryMode==="fx"} onClick={()=>setLibraryMode("fx")}>FX recipes</button></div>
           <header>
@@ -838,11 +834,11 @@ export default function ShowTimelineEditor(props: Props) {
           </div>
           <p className="creator-hint">
             FX lanes mix from top to bottom. Lower lanes win when two clips
-            write the same channel. Audio is relinked when reopening a show.{" "}
+            write the same channel. Linked song media restores automatically on this computer.{" "}
             {audioError}
           </p>
         </main>
-      </div>
+      </ResizableWorkspace>
     </div>
   );
 }

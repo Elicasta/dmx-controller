@@ -706,7 +706,7 @@ export default function Visualizer3D({
   const [cameraSelection, setCameraSelection] = useState<CameraSelection>('foh');
   const [orbit, setOrbit] = useState(() => cameraOrbitFromPose(visualizerCameraPreset('foh', snapshot.dimensions)));
   const [haze, setHaze] = useState(.68);
-  const [showCrowd, setShowCrowd] = useState(true);
+  const [showCrowd, setShowCrowd] = useState(false);
   const [quality, setQuality] = useState<VisualizerQuality>('quality');
   const [playingFlyby, setPlayingFlyby] = useState(false);
   const [mediaRevision, setMediaRevision] = useState(0);

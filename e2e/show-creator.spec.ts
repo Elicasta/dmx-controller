@@ -113,7 +113,7 @@ test("solo creator builds an editable audio-aligned show and preserves the draft
   await page.getByRole("button", { name: "Delete Clip", exact: true }).click();
   await expect(page.locator(".timeline-clip")).toHaveCount(8);
   const clip = page.locator(".timeline-clip").first();
-  await clip.scrollIntoViewIfNeeded();
+  await clip.evaluate(e=>e.scrollIntoView({block:'center',inline:'nearest'}));
   let box = (await clip.boundingBox())!;
   const lane = (await page.locator('[data-lane="1"]').boundingBox())!;
   await page.mouse.move(box.x + 30, box.y + 20);
@@ -207,8 +207,13 @@ for (const width of [820, 1024, 1280])
       .locator(".create-console-v3>.effects-inspector")
       .boundingBox())!;
     expect(browser.x + browser.width).toBeLessThanOrEqual(center.x + 1);
-    expect(center.x + center.width).toBeLessThanOrEqual(fx.x + 1);
-    expect(fx.x + fx.width).toBeLessThanOrEqual(width);
+    if (fx) {
+      expect(center.x + center.width).toBeLessThanOrEqual(fx.x + 1);
+      expect(fx.x + fx.width).toBeLessThanOrEqual(width);
+    } else {
+      await expect(page.getByRole('button',{name:'Show FX',exact:true})).toBeVisible();
+      expect(center.width).toBeGreaterThanOrEqual(480);
+    }
     expect(
       await page
         .locator(".programmer-attribute-deck-v4")
@@ -228,6 +233,7 @@ for (const width of [820, 1024, 1280])
     const presets = (await page.locator(".programmer-v3>.looks-strip").boundingBox());
     expect(presets).not.toBeNull();
     expect(deck.y + deck.height).toBeLessThanOrEqual(presets!.y + 1);
+    expect((await page.locator('.programmer-stage canvas.visualizer-3d-canvas').boundingBox())!.height).toBeGreaterThanOrEqual(180);
     await page.screenshot({ path: info.outputPath(`programmer-${width}.png`) });
     await page.getByRole("button", { name: "FX", exact: true }).click();
     await page.getByRole("button", { name: /Ocean Color Wave/ }).click();
@@ -256,8 +262,8 @@ test('programmer panels reorder, resize, collapse into a shelf and stay docked',
  const color=page.locator('[data-panel-id="color"]');
  const intensity=page.locator('[data-panel-id="intensity"]');
  const colorHandle=page.locator('[data-panel-id="color"] .draggable-programmer-panel-handle');
- const intensityBox=(await intensity.boundingBox())!;
- await colorHandle.dragTo(intensity,{targetPosition:{x:4,y:Math.max(4,intensityBox.height/2)}});
+ await intensity.scrollIntoViewIfNeeded();
+ await colorHandle.dragTo(intensity,{targetPosition:{x:4,y:4}});
  await expect(page.locator('.draggable-programmer-panel').first()).toHaveAttribute('data-panel-id','color');
  const before=(await color.boundingBox())!;
  const resize=page.getByRole('button',{name:'Resize COLOR panel'});
@@ -301,7 +307,7 @@ test('color input, compact panels and detached stage follow actual output', asyn
  await page.getByRole('button',{name:'Collapse Fixtures',exact:true}).click();
  expect((await page.locator('.program-center').boundingBox())!.width).toBeGreaterThan(before.width);
  await page.getByRole('button',{name:'Show Fixtures',exact:true}).click();
- const separator=page.getByRole('separator',{name:'Resize left panel'});
+ const separator=page.getByRole('separator',{name:'Resize Fixtures panel'});
  await separator.focus();await page.keyboard.press('ArrowRight');
  await expect(separator).toHaveAttribute('aria-valuenow','190');
  await page.getByRole('button',{name:'SHOW',exact:true}).click();
@@ -574,4 +580,223 @@ test('song bank stores separate media and restores songs after restart', async (
  expect(show.songs.find((s:any)=>s.name==='Renamed Song').mediaName).toBe('First Song.wav');
  expect(show.songs.find((s:any)=>s.name==='Renamed Song').bpm).toBe(132);
  expect(show.songs.find((s:any)=>s.name==='Second Song').bpm).toBe(120);
+});
+
+test('Song Library survives New Show, reuse, restart, and Recovery', async ({page}, info) => {
+  const errors: string[]=[]; page.on('pageerror',e=>errors.push(e.message));
+  await seed(page); await page.goto('/');
+  await page.getByRole('button',{name:'SHOW',exact:true}).click();
+  await page.getByRole('button',{name:'Song Bank',exact:true}).click();
+  await expect(page.getByRole('status')).toHaveText('Saved');
+  await page.getByLabel('New song name').fill('Hineh Ma Tov');
+  await page.getByRole('button',{name:'Add song',exact:true}).click();
+  let row=page.locator('.song-bank > .song-bank-list article').filter({has:page.getByLabel('Song name Hineh Ma Tov')});
+  await row.getByLabel('Link media for Hineh Ma Tov').setInputFiles({name:'hineh.wav',mimeType:'audio/wav',buffer:wav()});
+  await row.getByRole('button',{name:'Build song',exact:true}).click();
+  const tempo=page.getByLabel('Master tempo');
+  await tempo.fill(''); await tempo.pressSequentially('130.5'); await tempo.press('Tab');
+  await expect(page.locator('.tempo-pill strong')).toHaveText('130.5 BPM');
+  await expect(page.getByRole('button',{name:'Tempo Locked',exact:true})).toHaveAttribute('aria-pressed','true');
+  await tempo.press('ArrowUp'); await expect(tempo).toHaveValue('131.5');
+  await tempo.press('ArrowDown'); await expect(tempo).toHaveValue('130.5');
+  await tempo.fill('999'); await tempo.press('Tab'); await expect(tempo).toHaveValue('130.5');
+  await tempo.hover(); await page.mouse.wheel(0,500);
+  await expect(page.locator('.tempo-pill strong')).toHaveText('130.5 BPM');
+  await page.getByRole('button',{name:/Worship Song/}).click();
+  await page.getByRole('button',{name:'Build / Update 8 Sections',exact:true}).click();
+  await expect.poll(async()=>((await readShow(page)).cues??[]).length).toBe(8);
+  const original=await readShow(page);
+  await page.getByRole('button',{name:'Show Library',exact:true}).click();
+  await page.getByRole('button',{name:'＋ New Show',exact:true}).click();
+  await expect.poll(async()=>((await readShow(page)).cues??[]).length).toBe(0);
+  await page.getByRole('button',{name:'Song Bank',exact:true}).click();
+  const saved=page.getByRole('region',{name:'Song Library'}).locator('article').filter({hasText:'Hineh Ma Tov'});
+  await expect(saved).toContainText('8 cues'); await expect(saved).toContainText('hineh.wav');
+  await saved.getByRole('button',{name:'Add to Show',exact:true}).click();
+  await expect.poll(async()=>((await readShow(page)).cues??[]).length).toBe(8);
+  row=page.locator('.song-bank > .song-bank-list article').first();
+  await row.getByRole('button',{name:'Timeline',exact:true}).click();
+  await expect(page.locator('.timeline-audio-block')).toContainText('hineh.wav');
+  await expect(page.getByLabel('Master BPM')).toHaveValue('130.5');
+  await page.getByRole('button',{name:'Song Bank',exact:true}).click();
+  await expect(page.getByRole('status')).toHaveText('Saved');
+  await page.reload();
+  await page.getByRole('button',{name:'SHOW',exact:true}).click();
+  await page.getByRole('button',{name:'Song Bank',exact:true}).click();
+  await expect(page.getByRole('status')).toHaveText('Saved');
+  expect((await readShow(page)).cues).toHaveLength(8);
+  await page.screenshot({path:info.outputPath('reusable-song-library.png')});
+  await page.getByRole('button',{name:'Show Library',exact:true}).click();
+  await page.locator('.show-recovery summary').click();
+  await page.getByRole('button',{name:'Restore Show',exact:true}).first().click();
+  await expect.poll(async()=>((await readShow(page)).cues??[]).map((c:any)=>c.id)).toEqual(original.cues.map((c:any)=>c.id));
+  expect(errors).toEqual([]);
+});
+
+test('New Show cancels if its atomic checkpoint fails', async ({page}) => {
+  await seed(page); await page.goto('/');
+  await page.getByRole('button',{name:'SHOW',exact:true}).click();
+  await page.getByRole('button',{name:'Song Bank',exact:true}).click();
+  await expect(page.getByRole('status')).toHaveText('Saved');
+  await page.getByLabel('New song name').fill('Protected Song');
+  await page.getByRole('button',{name:'Add song',exact:true}).click();
+  await expect(page.getByRole('status')).toHaveText('Saved');
+  const before=await readShow(page);
+  await page.evaluate(()=>{
+    const original=IDBDatabase.prototype.transaction;
+    IDBDatabase.prototype.transaction=function(...args:Parameters<typeof original>){
+      if(this.name==='lumarig-program-library') throw new DOMException('Simulated disk full','QuotaExceededError');
+      return original.apply(this,args);
+    };
+  });
+  await page.getByRole('button',{name:'Show Library',exact:true}).click();
+  await page.getByRole('button',{name:'＋ New Show',exact:true}).click();
+  await expect(page.locator('.show-recovery [role="status"]')).toHaveText('Save failed');
+  expect(await readShow(page)).toEqual(before);
+  await page.reload();
+  await page.getByRole('button',{name:'SHOW',exact:true}).click();
+  await page.getByRole('button',{name:'Song Bank',exact:true}).click();
+  await expect(page.getByRole('status')).toHaveText('Saved');
+  await expect(page.getByLabel('Song name Protected Song')).toBeVisible();
+});
+
+
+test('Programmer splitters persist, reset, and protect the Stage on narrow windows', async ({page}, info) => {
+ await seed(page); await page.goto('/');
+ await page.getByRole('button',{name:'CREATE',exact:true}).click();
+ const left=page.getByRole('separator',{name:'Resize Fixtures panel'});
+ await expect(left).toBeVisible();
+ await left.focus(); await left.press('ArrowRight');
+ await expect(left).toHaveAttribute('aria-valuenow','190');
+ await page.reload();
+ await page.getByRole('button',{name:'CREATE',exact:true}).click();
+ await expect(left).toHaveAttribute('aria-valuenow','190');
+ await left.dblclick();
+ await expect(left).toHaveAttribute('aria-valuenow','180');
+ await page.setViewportSize({width:820,height:650});
+ await expect(page.getByRole('button',{name:'Show FX',exact:true})).toBeVisible();
+ const canvas=page.locator('.programmer-stage canvas.visualizer-3d-canvas');
+ expect((await canvas.boundingBox())!.height).toBeGreaterThanOrEqual(180);
+ expect(await page.locator('.program-center').evaluate(e=>e.scrollWidth<=e.clientWidth+1)).toBe(true);
+ await page.screenshot({path:info.outputPath('programmer-stage-narrow.png')});
+ await page.getByRole('button',{name:'Collapse Fixtures',exact:true}).click();
+ await expect(page.locator('.effects-inspector')).toBeVisible();
+});
+
+for (const width of [650,820]) test(`P0 workspaces stay bounded at ${width}px`, async ({page},info) => {
+  await seed(page); await page.setViewportSize({width,height:760}); await page.goto('/');
+  await page.getByRole('button',{name:'LIVE',exact:true}).click();
+  for(const name of ['Fixtures','Groups','Masters','Shortcuts','System']) {
+    await page.locator('.live-view-tabs').getByRole('button',{name,exact:true}).click();
+    await expect(page.locator('.live-detail-view')).toBeVisible();
+    const box=(await page.locator('.live-detail-view').boundingBox())!;
+    expect(box.x+box.width).toBeLessThanOrEqual(width+1);
+    expect(await page.locator('.live-detail-view').evaluate(e=>e.scrollWidth<=e.clientWidth+1)).toBe(true);
+    expect(await page.locator('.live-command-bar').evaluate(e=>e.scrollWidth<=e.clientWidth+1)).toBe(true);
+    expect(await page.locator('.live-back').evaluate(e=>e.scrollWidth<=e.clientWidth+1)).toBe(true);
+    await page.screenshot({path:info.outputPath(`live-${name}-${width}.png`)});
+  }
+  await page.getByRole('button',{name:'SHOW',exact:true}).click();
+  for(const name of ['Show Creator','Cues','Timeline','Song Bank','Show Library']) {
+    await page.getByRole('button',{name,exact:true}).click();
+    expect(await page.locator('.show-console-v3').evaluate(e=>e.scrollWidth<=e.clientWidth+1), name).toBe(true);
+    if(name==='Show Creator') {
+      const contrast=await page.locator('.show-creator').evaluate(root=>{
+        const luminance=(rgb:number[])=>rgb.slice(0,3).map(v=>v/255).map(v=>v<=.04045?v/12.92:((v+.055)/1.055)**2.4).reduce((sum,v,i)=>sum+v*[.2126,.7152,.0722][i],0);
+        return [...root.querySelectorAll('input[type=text],button:disabled')].map(e=>{
+          const style=getComputedStyle(e), fg=luminance(style.color.match(/[\d.]+/g)!.map(Number)), bg=luminance(style.backgroundColor.match(/[\d.]+/g)!.map(Number));
+          return (Math.max(fg,bg)+.05)/(Math.min(fg,bg)+.05);
+        });
+      });
+      expect(contrast.length).toBeGreaterThan(0);
+      expect(Math.min(...contrast)).toBeGreaterThanOrEqual(4.5);
+    }
+    expect(await page.locator('.show-console-v3 > .workspace-subtabs').evaluate(e=>e.scrollWidth<=e.clientWidth+1)).toBe(true);
+    expect(await page.locator('.show-console-v3 > .workspace-subtabs button').evaluateAll(items=>items.every(e=>e.scrollWidth<=e.clientWidth+1))).toBe(true);
+    await page.screenshot({path:info.outputPath(`show-${name.replaceAll(' ','-')}-${width}.png`)});
+  }
+});
+
+test('fixture banks page without expanding the Live surface', async({page})=>{
+  await page.addInitScript(()=>localStorage.setItem('dmx-controller.patch.v1',JSON.stringify(Array.from({length:24},(_,i)=>({id:`f${i}`,name:`Fixture ${i+1}`,profileId:'adj-mega-par-profile-plus',modeId:'ch05',address:1+i*6,group:'Wash',selected:true,collapsed:false})))));
+  await page.setViewportSize({width:820,height:760}); await page.goto('/');
+  await page.getByRole('button',{name:'LIVE',exact:true}).click();
+  await page.locator('.live-view-tabs').getByRole('button',{name:'Fixtures',exact:true}).click();
+  const bank=page.locator('.fixture-bank-surface');
+  await expect(bank.locator('nav > output')).toContainText('Bank 1 /');
+  await expect(bank).toContainText('Fixture 1');
+  expect(await bank.locator('.override-fader-bank > *').count()).toBeLessThanOrEqual(8);
+  await bank.getByRole('button',{name:'Next',exact:true}).click();
+  await expect(bank.locator('nav > output')).toContainText('Bank 2 /');
+  await expect(bank.getByLabel('Fixture 1 brightness',{exact:true})).toHaveCount(0);
+  expect(await bank.evaluate(e=>e.scrollWidth<=e.clientWidth+1)).toBe(true);
+});
+
+test('Creator, Cues and Timeline splitters resize and reset',async({page})=>{
+  await seed(page); await page.setViewportSize({width:1400,height:900}); await page.goto('/');
+  await page.getByRole('button',{name:'SHOW',exact:true}).click();
+  for(const [mode,name,initial] of [['Show Creator','FX Library',310],['Cues','Rundown',250],['Timeline','Cue / FX Library',220]] as const) {
+    await page.getByRole('button',{name:mode,exact:true}).click();
+    const divider=page.getByRole('separator',{name:`Resize ${name} panel`});
+    await expect(divider).toBeVisible();
+    const before=Number(await divider.getAttribute('aria-valuenow'));
+    await divider.focus(); await divider.press(name==='FX Library'?'ArrowLeft':'ArrowRight');
+    expect(Number(await divider.getAttribute('aria-valuenow'))).toBe(before+10);
+    await divider.dblclick(); await expect(divider).toHaveAttribute('aria-valuenow',String(initial));
+  }
+});
+
+test('working songs and rig restart when compatibility storage is full or stale',async({page})=>{
+  await seed(page); await page.goto('/');
+  await page.getByRole('button',{name:'SHOW',exact:true}).click();
+  await page.locator('.show-console-v3 > .workspace-subtabs').getByRole('button',{name:'Song Bank',exact:true}).click();
+  await expect(page.getByRole('status')).toHaveText('Saved');
+  await page.evaluate(()=>{Storage.prototype.setItem=function(){throw new DOMException('Simulated localStorage full','QuotaExceededError');};});
+  await page.getByLabel('New song name').fill('Quota Song');
+  await page.getByRole('button',{name:'Add song',exact:true}).click();
+  await expect(page.getByLabel('Song name Quota Song')).toBeVisible();
+  await page.locator('.song-bank > .song-bank-list article').filter({has:page.getByLabel('Song name Quota Song')}).getByRole('button',{name:'Build song',exact:true}).click();
+  await page.getByRole('button',{name:/Worship Song/}).click();
+  await page.getByRole('button',{name:'Save Section Preset',exact:true}).click();
+  await page.locator('.show-console-v3 > .workspace-subtabs').getByRole('button',{name:'Song Bank',exact:true}).click();
+  await expect(page.getByRole('status')).toHaveText('Saved');
+  await page.reload();
+  await page.getByRole('button',{name:'SHOW',exact:true}).click();
+  await page.locator('.show-console-v3 > .workspace-subtabs').getByRole('button',{name:'Song Bank',exact:true}).click();
+  await expect(page.getByLabel('Song name Quota Song')).toBeVisible();
+  await expect(page.getByRole('status')).toHaveText('Saved');
+  await page.getByRole('button',{name:'Show Creator',exact:true}).click();
+  await expect(page.locator('.saved-section')).toHaveCount(1);
+  await page.evaluate(()=>localStorage.setItem('dmx-controller.patch.v1','[]'));
+  await page.reload();
+  await page.getByRole('button',{name:'CREATE',exact:true}).click();
+  await expect(page.locator('.console-browser')).toContainText('Wash 1');
+});
+
+test('zero trim height saves, and a corrupt workspace checkpoint is preserved',async({page})=>{
+  await seed(page);
+  await page.addInitScript(()=>{
+    if(!localStorage.getItem('dmx-controller.stage-settings.v2')) localStorage.setItem('dmx-controller.stage-settings.v2',JSON.stringify({schemaVersion:2,unit:'meters',dimensions:{width:14,depth:9,height:6,trimHeight:0,roomWidth:20,roomDepth:20,roomHeight:8}}));
+  });
+  const readCheckpoint=()=>page.evaluate(()=>new Promise<any>((resolve,reject)=>{
+    const open=indexedDB.open('lumarig-program-library',1);
+    open.onsuccess=()=>{const db=open.result,request=db.transaction('state').objectStore('state').get('current');request.onsuccess=()=>{db.close();resolve(request.result);};request.onerror=()=>{db.close();reject(request.error);};};
+    open.onerror=()=>reject(open.error);
+  }));
+  await page.goto('/'); await page.getByRole('button',{name:'SHOW',exact:true}).click();
+  await page.getByRole('button',{name:'Song Bank',exact:true}).click();
+  await expect(page.getByRole('status')).toHaveText('Saved');
+  expect((await readCheckpoint()).workspace.stageSettings.dimensions.trimHeight).toBe(0);
+  await page.reload(); await expect(page.getByRole('status')).toHaveText('Saved');
+  expect((await readCheckpoint()).workspace.stageSettings.dimensions.trimHeight).toBe(0);
+  await page.evaluate(()=>new Promise<void>((resolve,reject)=>{
+    const open=indexedDB.open('lumarig-program-library',1);
+    open.onsuccess=()=>{const db=open.result,tx=db.transaction('state','readwrite'),store=tx.objectStore('state'),request=store.get('current');request.onsuccess=()=>{const state=request.result;state.workspace.stageSettings.dimensions.trimHeight=-1;store.put(state,'current');};tx.oncomplete=()=>{db.close();resolve();};tx.onabort=()=>{db.close();reject(tx.error);};};
+    open.onerror=()=>reject(open.error);
+  }));
+  const damaged=await readCheckpoint();
+  await page.reload(); await page.getByRole('button',{name:'Show Library',exact:true}).click();
+  await expect(page.locator('.show-recovery [role="status"]')).toHaveText('Save unavailable');
+  await expect(page.getByRole('button',{name:'＋ New Show',exact:true})).toBeDisabled();
+  expect(await readCheckpoint()).toEqual(damaged);
 });
