@@ -427,16 +427,11 @@ export default function ShowTimelineEditor(props: Props) {
         <output>BAR {cursorBar + 1} · BEAT {cursorBeat}</output>
         <label>
           BPM
-          <input
-            aria-label="Timeline BPM"
-            type="number"
-            min={20}
-            max={300}
+          <BpmField
             value={timeline.bpm}
             disabled={playing}
-            onChange={(e) =>
-              edit({ ...timeline, bpm: clamp(Number(e.target.value), 20, 300) })
-            }
+            ariaLabel="Timeline BPM"
+            onCommit={(value) => edit({ ...timeline, bpm: value })}
           />
         </label>
         <label>
