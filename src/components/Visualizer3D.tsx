@@ -710,6 +710,7 @@ export default function Visualizer3D({
   const [quality, setQuality] = useState<VisualizerQuality>('quality');
   const [playingFlyby, setPlayingFlyby] = useState(false);
   const [mediaRevision, setMediaRevision] = useState(0);
+  const selectedElement = snapshot.elements.find((element) => element.id === selectedElementId);
 
   const target = useMemo(() => ({
     x: 0,
@@ -942,6 +943,7 @@ export default function Visualizer3D({
         )}
       </div>
       <div className="visualizer-playback-tools">
+        <button onClick={() => selectCamera('foh')}>Reset View</button>
         <button className={playingFlyby ? 'active' : ''} onClick={toggleFlyby}>{playingFlyby ? 'Stop Flyby' : '▶ Flyby'}</button>
         <button onClick={() => setShowCrowd((value) => !value)} aria-pressed={showCrowd}>Crowd {showCrowd ? 'On' : 'Off'}</button>
         <button onClick={() => setQuality((value) => value === 'quality' ? 'fast' : 'quality')}>Render {quality === 'quality' ? 'Quality' : 'Fast'}</button>
@@ -965,7 +967,8 @@ export default function Visualizer3D({
       onPointerUp={endOrbit}
       onPointerCancel={endOrbit}
       onWheel={zoom}
+      onDoubleClick={() => selectCamera('foh')}
     />
-    {!compact && <div className="visualizer-3d-help">Drag to orbit · scroll to zoom · Flyby previews the room automatically</div>}
+    {!compact && <div className="visualizer-3d-help"><span>Drag to orbit · scroll to zoom · double-click to reset</span><strong>{selectedElement ? `Selected · ${selectedElement.label}` : cameraLabel(cameraSelection)}</strong></div>}
   </section>;
 }
