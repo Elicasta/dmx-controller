@@ -32,7 +32,7 @@ type Props = {
   onCreator: () => void;
 };
 type Drag = {
-  kind: "move" | "resize" | "audio";
+  kind: "move" | "resize" | "audio" | "trim-in" | "trim-out";
   id: string;
   x: number;
   start: number;
@@ -57,6 +57,7 @@ export default function ShowTimelineEditor(props: Props) {
   } = props;
   const audioStarting = useRef(false);
   const [libraryMode,setLibraryMode]=useState<"cues"|"fx">("cues");
+  const [fxSearch,setFxSearch]=useState("");
   const [selectedId, setSelectedId] = useState("");
   const [cursor, setCursor] = useState(props.initialBar ?? 0);
   const [playing, setPlaying] = useState(false);
@@ -84,7 +85,10 @@ export default function ShowTimelineEditor(props: Props) {
     0,
     ...timeline.clips.map((c) => c.startBar + c.lengthBars),
   );
-  const audioEnd = timeline.audioOffsetBars + audioDurationMs / msPerBar;
+  const trimInMs = clamp(timeline.trimInMs ?? 0, 0, Math.max(0, audioDurationMs));
+  const trimOutMs = clamp(timeline.trimOutMs ?? audioDurationMs, trimInMs, Math.max(trimInMs, audioDurationMs));
+  const trimmedDurationMs = Math.max(0, trimOutMs - trimInMs);
+  const audioEnd = timeline.audioOffsetBars + trimmedDurationMs / msPerBar;
   const endBar = Math.max(16, clipEnd, audioEnd);
   const totalBars = Math.max(32, Math.ceil(endBar + 8));
   const laneCount = Math.max(lanes, ...timeline.clips.map((c) => c.lane + 1));
@@ -137,14 +141,17 @@ export default function ShowTimelineEditor(props: Props) {
     const p = latest.current,
       audio = p.audioRef.current;
     if (!audio || !p.audioUrl) return;
+    const sourceTrimIn = Math.max(0, p.timeline.trimInMs ?? 0);
+    const sourceTrimOut = Math.max(sourceTrimIn, p.timeline.trimOutMs ?? (Number.isFinite(audio.duration) ? audio.duration * 1000 : Number.MAX_SAFE_INTEGER));
     const local = positionMs - p.timeline.audioOffsetBars * barMs(p.timeline);
-    if (local < 0 || local >= audio.duration * 1000) {
+    const sourceMs = sourceTrimIn + local;
+    if (local < 0 || sourceMs >= sourceTrimOut) {
       audio.pause();
-      if (local < 0 && audio.currentTime !== 0) audio.currentTime = 0;
+      if (local < 0 && Math.abs(audio.currentTime * 1000 - sourceTrimIn) > 10) audio.currentTime = sourceTrimIn / 1000;
       return;
     }
     if (force)
-      audio.currentTime = Math.max(0, local / 1000);
+      audio.currentTime = Math.max(0, sourceMs / 1000);
     if (playingRef.current && audio.paused && !audioStarting.current) {
       audioStarting.current = true;
       void audio.play().then(()=>{if(!playingRef.current)audio.pause();}).catch(() => {
@@ -166,7 +173,7 @@ export default function ShowTimelineEditor(props: Props) {
     pause();
     cursorRef.current = 0;
     setCursor(0);
-    if (audioRef.current) audioRef.current.currentTime = 0;
+    if (audioRef.current) audioRef.current.currentTime = Math.max(0, (latest.current.timeline.trimInMs ?? 0) / 1000);
     latest.current.onStop();
   }
   function seek(bar: number) {
@@ -197,7 +204,14 @@ export default function ShowTimelineEditor(props: Props) {
       if (p.audioUrl && audio && cursorRef.current >= offset && !audio.ended &&
           (!Number.isFinite(audio.duration) || audio.currentTime < audio.duration)) {
         syncAudio(cursorRef.current * barMs(p.timeline));
-        cursorRef.current = offset + audio.currentTime * 1000 / barMs(p.timeline);
+        const sourceTrimIn = Math.max(0, p.timeline.trimInMs ?? 0);
+        const sourceTrimOut = Math.max(sourceTrimIn, p.timeline.trimOutMs ?? (Number.isFinite(audio.duration) ? audio.duration * 1000 : Number.MAX_SAFE_INTEGER));
+        if (audio.currentTime * 1000 >= sourceTrimOut) {
+          audio.pause();
+          cursorRef.current = offset + Math.max(0, sourceTrimOut - sourceTrimIn) / barMs(p.timeline);
+        } else {
+          cursorRef.current = offset + Math.max(0, audio.currentTime * 1000 - sourceTrimIn) / barMs(p.timeline);
+        }
       } else {
         cursorRef.current += (now - previous) / barMs(p.timeline);
       }
@@ -211,7 +225,7 @@ export default function ShowTimelineEditor(props: Props) {
       const end = Math.max(
         1,
         ...p.timeline.clips.map((c) => c.startBar + c.lengthBars),
-        p.timeline.audioOffsetBars + p.audioDurationMs / barMs(p.timeline),
+        p.timeline.audioOffsetBars + Math.max(0, (p.timeline.trimOutMs ?? p.audioDurationMs) - (p.timeline.trimInMs ?? 0)) / barMs(p.timeline),
       );
       if (cursorRef.current >= end) {
         pause();
@@ -247,17 +261,26 @@ export default function ShowTimelineEditor(props: Props) {
       .then((b) => context.decodeAudioData(b))
       .then((buffer) => {
         if (cancelled) return;
-        const samples = buffer.getChannelData(0),
-          stride = Math.max(1, Math.floor(samples.length / 320));
-        const next = Array.from({ length: 320 }, (_, i) => {
+        const channels = Array.from({ length: buffer.numberOfChannels }, (_, channel) => buffer.getChannelData(channel));
+        const bins = 1400;
+        const stride = Math.max(1, Math.floor(buffer.length / bins));
+        const next = Array.from({ length: bins }, (_, i) => {
           let peak = 0;
-          for (
-            let j = i * stride;
-            j < Math.min(samples.length, (i + 1) * stride);
-            j += Math.max(1, Math.floor(stride / 80))
-          )
-            peak = Math.max(peak, Math.abs(samples[j]));
-          return peak;
+          let sumSquares = 0;
+          let count = 0;
+          const start = i * stride;
+          const end = Math.min(buffer.length, (i + 1) * stride);
+          const sampleStep = Math.max(1, Math.floor(stride / 160));
+          for (let j = start; j < end; j += sampleStep) {
+            let value = 0;
+            for (const channel of channels) value += Math.abs(channel[j] ?? 0);
+            value /= Math.max(1, channels.length);
+            peak = Math.max(peak, value);
+            sumSquares += value * value;
+            count += 1;
+          }
+          const rms = Math.sqrt(sumSquares / Math.max(1, count));
+          return Math.min(1, peak * .78 + rms * .42);
         });
         setPeaks(next);
         setTempoEstimate(estimateTempoFromSamples(samples, buffer.sampleRate));
@@ -305,6 +328,24 @@ export default function ShowTimelineEditor(props: Props) {
       });
       return;
     }
+    if (d.kind === "trim-in") {
+      const deltaMs = delta * msPerBar;
+      onChange({
+        ...latest.current.timeline,
+        trimInMs: clamp(d.start + deltaMs, 0, Math.max(0, d.length - 100)),
+        trimOutMs: d.length,
+      });
+      return;
+    }
+    if (d.kind === "trim-out") {
+      const deltaMs = delta * msPerBar;
+      onChange({
+        ...latest.current.timeline,
+        trimInMs: d.start,
+        trimOutMs: clamp(d.length + deltaMs, d.start + 100, Math.max(d.start + 100, audioDurationMs)),
+      });
+      return;
+    }
     if (d.kind === "resize")
       changeClip(
         d.id,
@@ -348,6 +389,13 @@ export default function ShowTimelineEditor(props: Props) {
   const wavePath = peaks
     .map((p, i) => `M ${i} ${24 - p * 22} L ${i} ${24 + p * 22}`)
     .join(" ");
+
+  function seekFromLane(e: import("react").MouseEvent<HTMLElement>) {
+    if ((e.target as HTMLElement).closest('.timeline-clip,.timeline-audio-block,button,input,select')) return;
+    const rect = e.currentTarget.getBoundingClientRect();
+    pause();
+    seek(snapBar((e.clientX - rect.left) / zoom, snap));
+  }
 
   function applyTempoEstimate(alignBeatGrid: boolean) {
     if (!tempoEstimate) return;
