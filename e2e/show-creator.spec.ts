@@ -452,6 +452,9 @@ test('integrated visualizer keeps venue presets isolated and opens the renderer'
  await expect(page.locator('.visualizer-workspace')).toBeVisible();
  await expect(page.locator('.visualizer-workspace canvas.visualizer-3d-canvas')).toBeVisible();
  await expect(page.getByRole('button',{name:'▶ Flyby',exact:true}).first()).toBeVisible();
+ await expect(page.locator('.visualizer-workspace-sidebar')).toHaveCount(0);
+ await page.getByRole('button',{name:'Scene Tools',exact:true}).click();
+ await expect(page.locator('.visualizer-workspace-sidebar')).toBeVisible();
 
  const initialObjectCount=await page.evaluate(()=>{
    const doc=JSON.parse(localStorage.getItem('dmx-controller.stage-elements.v1')??'{"elements":[]}');
