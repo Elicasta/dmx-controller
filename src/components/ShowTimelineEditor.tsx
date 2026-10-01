@@ -6,6 +6,7 @@ import {
   type PointerEvent,
 } from "react";
 import type { ShowCue } from "../lib/show";
+import BpmField from "./BpmField";
 import { beatSnapStep, estimateTempoFromSamples, type TempoEstimate } from "../core/audio-tempo";
 import {
   FX_RECIPES,
