@@ -52,6 +52,8 @@ export type TimelineClip = {
   lengthBars: number;
   lane: number;
   enabled: boolean;
+  stepDivision?: 4 | 8 | 16;
+  stepPattern?: boolean[];
 };
 export type ShowTimeline = {
   bpm: number;
@@ -562,6 +564,23 @@ export function barMs(timeline: Pick<ShowTimeline, "bpm" | "beatsPerBar">) {
 export function snapBar(value: number, step = 1) {
   return Math.max(0, Math.round(value / step) * step);
 }
+
+export function timelineStepState(
+  clip: TimelineClip,
+  timeline: Pick<ShowTimeline, "bpm" | "beatsPerBar">,
+  positionBars: number
+): { active: boolean; localMs: number } {
+  if (!clip.stepDivision || !clip.stepPattern?.length) {
+    return { active: true, localMs: Math.max(0, positionBars - clip.startBar) * barMs(timeline) };
+  }
+  const division = clip.stepDivision;
+  const relativeBars = Math.max(0, positionBars - clip.startBar);
+  const stepFloat = relativeBars * division;
+  const stepIndex = Math.floor(stepFloat) % division;
+  const active = Boolean(clip.stepPattern[stepIndex]);
+  const localStepBars = (stepFloat - Math.floor(stepFloat)) / division;
+  return { active, localMs: localStepBars * barMs(timeline) };
+}
 export function activeTimelineCueId(
   timeline: ShowTimeline,
   cues: readonly ShowCue[],
@@ -575,7 +594,8 @@ export function activeTimelineCueId(
         clip.enabled &&
         validCueIds.has(clip.cueId) &&
         position >= clip.startBar &&
-        position < clip.startBar + clip.lengthBars,
+        position < clip.startBar + clip.lengthBars &&
+        timelineStepState(clip, timeline, position).active,
     )
     .sort(
       (a, b) =>
@@ -600,7 +620,8 @@ export function renderShowTimeline(
       (c) =>
         c.enabled &&
         position >= c.startBar &&
-        position < c.startBar + c.lengthBars,
+        position < c.startBar + c.lengthBars &&
+        timelineStepState(c, timeline, position).active,
     )
     .sort(
       (a, b) =>
@@ -609,7 +630,10 @@ export function renderShowTimeline(
   for (const clip of active) {
     const cue = cues.find((c) => c.id === clip.cueId);
     if (!cue) continue;
-    const local = elapsedMs - clip.startBar * duration;
+    const stepState = timelineStepState(clip, timeline, position);
+    const local = clip.stepDivision && clip.stepPattern?.length
+      ? stepState.localMs
+      : elapsedMs - clip.startBar * duration;
     const fade = cue.fadeMs ? Math.min(1, local / cue.fadeMs) : 1;
     const changes =
       cue.changes ?? cue.universe?.map((v, i) => [i + 1, v] as DmxUpdate) ?? [];
@@ -814,7 +838,13 @@ export function isShowTimeline(value: unknown): value is ShowTimeline {
         finite(c.lengthBars, 0.25, 100000) &&
         finite(c.lane, 0, 7) &&
         Number.isInteger(c.lane) &&
-        typeof c.enabled === "boolean",
+        typeof c.enabled === "boolean" &&
+        (c.stepDivision === undefined || c.stepDivision === 4 || c.stepDivision === 8 || c.stepDivision === 16) &&
+        (c.stepPattern === undefined || (
+          Array.isArray(c.stepPattern) &&
+          c.stepPattern.length <= 16 &&
+          c.stepPattern.every((step) => typeof step === "boolean")
+        )),
     )
   );
 }
