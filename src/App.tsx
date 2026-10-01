@@ -4237,8 +4237,15 @@ export default function App() {
             <label><span>UI Scale</span><input type="range" min="10" max="100" value={selectedStageElement.size} onChange={(event) => updateStageElement(selectedStageElement.id, { size: Number(event.target.value) })} /></label>
             <label><span>Color</span><input className="inspector-color" type="color" value={selectedStageElement.color} onChange={(event) => updateStageElement(selectedStageElement.id, { color: event.target.value })} /></label>
             {selectedStageElement.type === 'led-screen' && <section className="screen-source-inspector">
-              <header><span>SCREEN SOURCE</span><strong>ProPresenter / NDI</strong></header>
-              <label><span>Source</span><select value={selectedStageElement.mediaSource?.kind ?? 'none'} onChange={(event) => updateStageElement(selectedStageElement.id, { mediaSource: event.target.value === 'ndi' ? { kind: 'ndi', sourceName: 'ProPresenter', fit: 'contain' } : { kind: 'none' } })}><option value="none">Static color</option><option value="ndi">NDI / video input</option></select></label>
+              <header><span>SCREEN SOURCE</span><strong>NDI + Media</strong></header>
+              <label><span>Source</span><select value={selectedStageElement.mediaSource?.kind ?? 'none'} onChange={(event) => {
+                const kind=event.target.value;
+                if(kind==='ndi') updateStageElement(selectedStageElement.id,{mediaSource:{kind:'ndi',sourceName:'ProPresenter',fit:'contain'}});
+                else if(kind==='media') {
+                  const asset=mediaAssets.find((item)=>item.kind==='video'||item.kind==='image');
+                  updateStageElement(selectedStageElement.id,{mediaSource:asset?{kind:'media',assetId:asset.id,sourceName:asset.name,mediaKind:asset.kind as 'video'|'image',fit:'contain',muted:true,loop:true}:{kind:'none'}});
+                } else updateStageElement(selectedStageElement.id,{mediaSource:{kind:'none'}});
+              }}><option value="none">Static color</option><option value="ndi">NDI / video input</option><option value="media">Media Library</option></select></label>
               {selectedStageElement.mediaSource?.kind === 'ndi' && <>
                 <label><span>Input</span><select value={selectedStageElement.mediaSource.deviceId ?? ''} onChange={(event) => {
                   const input = stageVideoInputs.find((item) => item.deviceId === event.target.value);
@@ -4247,8 +4254,15 @@ export default function App() {
                 <label><span>Fit</span><select value={selectedStageElement.mediaSource.fit ?? 'contain'} onChange={(event) => updateStageElement(selectedStageElement.id, { mediaSource: { ...selectedStageElement.mediaSource!, kind: 'ndi', fit: event.target.value as 'contain' | 'cover' } })}><option value="contain">Contain</option><option value="cover">Fill / crop</option></select></label>
                 <button onClick={() => void scanStageVideoInputs()}>Scan NDI / Video Inputs</button>
                 {stageVideoInputError && <small className="stage-source-error">{stageVideoInputError}</small>}
-                <small>Use ProPresenter NDI output through an NDI virtual video input. The selected feed is rendered on this screen in the stage view and pop-out monitor.</small>
               </>}
+              {selectedStageElement.mediaSource?.kind === 'media' && <>
+                <label><span>Media</span><select value={selectedStageElement.mediaSource.assetId} onChange={(event)=>routeMediaAssetToScreen(event.target.value,selectedStageElement.id)}>{mediaAssets.filter((item)=>item.kind==='video'||item.kind==='image').map((asset)=><option key={asset.id} value={asset.id}>{asset.name}</option>)}</select></label>
+                <label><span>Fit</span><select value={selectedStageElement.mediaSource.fit ?? 'contain'} onChange={(event)=>updateStageElement(selectedStageElement.id,{mediaSource:{...selectedStageElement.mediaSource!,kind:'media',fit:event.target.value as 'contain'|'cover'}})}><option value="contain">Contain</option><option value="cover">Fill / crop</option></select></label>
+                {selectedStageElement.mediaSource.mediaKind==='video' && <div className="inspector-pair"><label><span>Audio</span><select value={selectedStageElement.mediaSource.muted===false?'on':'off'} onChange={(event)=>updateStageElement(selectedStageElement.id,{mediaSource:{...selectedStageElement.mediaSource!,kind:'media',muted:event.target.value!=='on'}})}><option value="off">Muted</option><option value="on">On</option></select></label><label><span>Playback</span><select value={selectedStageElement.mediaSource.loop===false?'once':'loop'} onChange={(event)=>updateStageElement(selectedStageElement.id,{mediaSource:{...selectedStageElement.mediaSource!,kind:'media',loop:event.target.value==='loop'}})}><option value="loop">Loop</option><option value="once">Once</option></select></label></div>}
+              </>}
+              <label className="file-button stage-media-import"><input type="file" accept="video/mp4,video/*,image/*" onChange={(event)=>{const mediaFile=event.target.files?.[0];if(mediaFile)void importScreenMedia(mediaFile,selectedStageElement.id);event.currentTarget.value='';}}/>Import MP4 / Image</label>
+              {mediaLibraryError && <small className="stage-source-error">{mediaLibraryError}</small>}
+              <small>MP4 and images are stored in the LumaRig Media Library. NDI remains available for ProPresenter/live feeds.</small>
             </section>}
             <button className="danger-button stage-delete-button" onClick={() => removeStageElement(selectedStageElement.id)}>Delete Stage Object</button>
           </> : inspectedFixture ? <>
@@ -4534,8 +4548,15 @@ export default function App() {
               </div>
               <label><span>Color</span><input className="inspector-color" type="color" value={selectedStageElement.color} onChange={(event) => updateStageElement(selectedStageElement.id, { color: event.target.value })}/></label>
               {selectedStageElement.type === 'led-screen' && <div className="visualizer-screen-route">
-                <label><span>Screen Source</span><select value={selectedStageElement.mediaSource?.kind ?? 'none'} onChange={(event) => updateStageElement(selectedStageElement.id, { mediaSource: event.target.value === 'ndi' ? { kind: 'ndi', sourceName: 'ProPresenter', fit: 'contain' } : { kind: 'none' } })}><option value="none">Static</option><option value="ndi">NDI / Video Input</option></select></label>
+                <label><span>Screen Source</span><select value={selectedStageElement.mediaSource?.kind ?? 'none'} onChange={(event) => {
+                  const kind=event.target.value;
+                  if(kind==='ndi') updateStageElement(selectedStageElement.id,{mediaSource:{kind:'ndi',sourceName:'ProPresenter',fit:'contain'}});
+                  else if(kind==='media') { const asset=mediaAssets.find((item)=>item.kind==='video'||item.kind==='image'); if(asset) routeMediaAssetToScreen(asset.id,selectedStageElement.id); }
+                  else updateStageElement(selectedStageElement.id,{mediaSource:{kind:'none'}});
+                }}><option value="none">Static</option><option value="ndi">NDI / Video Input</option><option value="media">Media Library</option></select></label>
                 {selectedStageElement.mediaSource?.kind === 'ndi' && <label><span>Input</span><select value={selectedStageElement.mediaSource.deviceId ?? ''} onChange={(event) => { const input=stageVideoInputs.find((item)=>item.deviceId===event.target.value); updateStageElement(selectedStageElement.id,{mediaSource:{kind:'ndi',deviceId:event.target.value||undefined,sourceName:input?.label||'ProPresenter',fit:selectedStageElement.mediaSource?.kind==='ndi'?selectedStageElement.mediaSource.fit??'contain':'contain'}}); }}><option value="">Select input</option>{stageVideoInputs.map((input)=><option key={input.deviceId} value={input.deviceId}>{input.label}</option>)}</select></label>}
+                {selectedStageElement.mediaSource?.kind === 'media' && <label><span>Media</span><select value={selectedStageElement.mediaSource.assetId} onChange={(event)=>routeMediaAssetToScreen(event.target.value,selectedStageElement.id)}>{mediaAssets.filter((item)=>item.kind==='video'||item.kind==='image').map((asset)=><option key={asset.id} value={asset.id}>{asset.name}</option>)}</select></label>}
+                <label className="file-button compact-media-import"><input type="file" accept="video/mp4,video/*,image/*" onChange={(event)=>{const mediaFile=event.target.files?.[0];if(mediaFile)void importScreenMedia(mediaFile,selectedStageElement.id);event.currentTarget.value='';}}/>＋ Media</label>
               </div>}
               <div className="visualizer-object-actions"><button onClick={() => duplicateStageElement(selectedStageElement.id)}>Duplicate</button><button className="danger-button" onClick={() => removeStageElement(selectedStageElement.id)}>Delete</button></div>
             </section>}
