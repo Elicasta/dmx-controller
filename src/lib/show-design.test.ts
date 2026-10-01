@@ -16,6 +16,7 @@ import {
   createSection,
   buildSectionCues,
   sectionStack,
+  timelineStepState,
   renderEffectStack,
   renderShowTimeline,
   activeTimelineCueId,
@@ -393,4 +394,21 @@ describe("editable color phasers", () => {
     expect(value(start, fixtures[0], "red")).toBe(10);
     expect(value(mid, fixtures[0], "red")).toBe(5);
   });
+  it("gates timeline clips on musical step subdivisions", () => {
+    const timeline = { ...EMPTY_TIMELINE, bpm: 120, beatsPerBar: 4 };
+    const clip = {
+      id: "step-clip",
+      cueId: "cue",
+      startBar: 0,
+      lengthBars: 4,
+      lane: 0,
+      enabled: true,
+      stepDivision: 8 as const,
+      stepPattern: [true, false, true, false, true, false, true, false],
+    };
+    expect(timelineStepState(clip, timeline, 0).active).toBe(true);
+    expect(timelineStepState(clip, timeline, .125).active).toBe(false);
+    expect(timelineStepState(clip, timeline, .25).active).toBe(true);
+  });
+
 });
