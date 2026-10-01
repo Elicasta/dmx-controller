@@ -3,6 +3,7 @@ import { fixtureGeometryState } from '../core/fixture-geometry';
 import { cameraBasis, cameraOrbitFromPose, intersectVisualizerRayWithYPlane, orbitVisualizerCamera, projectVisualizerPoint, screenRayFromVisualizerPoint, visualizerCameraPreset, visualizerFlybyCamera, type VisualizerCamera, type VisualizerCameraPreset } from '../core/visualizer-camera';
 import { pointAlongRay, type EulerDegrees, type StageDimensions, type Vec3 } from '../core/geometry';
 import { findMode, readFixtureParameter, type PatchedFixture } from '../lib/fixtures';
+import { mediaObjectUrl } from '../lib/media-library';
 import { stageElementPosition, type StageElement } from '../lib/stage';
 
 export type VisualizerSnapshot = {
@@ -18,9 +19,10 @@ type VisualizerTransformMode = 'navigate' | 'move' | 'rotate';
 type CameraSelection = VisualizerCameraPreset | 'custom';
 
 type MediaEntry = {
-  deviceId: string;
-  video: HTMLVideoElement;
-  stream: MediaStream;
+  sourceKey: string;
+  element: HTMLVideoElement | HTMLImageElement;
+  stream?: MediaStream;
+  objectUrl?: string;
 };
 
 type Projected = ReturnType<typeof projectVisualizerPoint>;
@@ -594,8 +596,14 @@ function drawFaces(
 
     if (face.screenElement) {
       const entry = media.get(face.screenElement.id);
-      if (entry?.video.readyState && entry.video.videoWidth > 0) {
-        drawImageQuad(ctx, entry.video, face.points);
+      const source = entry?.element;
+      const ready = source instanceof HTMLVideoElement
+        ? source.readyState >= 2 && source.videoWidth > 0
+        : source instanceof HTMLImageElement
+          ? source.complete && source.naturalWidth > 0
+          : false;
+      if (source && ready) {
+        drawImageQuad(ctx, source, face.points);
         polygon(ctx, face.points);
         ctx.strokeStyle = 'rgba(228,239,244,.58)';
         ctx.stroke();
@@ -898,51 +906,81 @@ export default function Visualizer3D({
   ]);
 
   useEffect(() => {
-    const desired = new Map<string, string>();
+    const desired = new Map<string, { key: string; kind: 'ndi' | 'video' | 'image'; id: string; muted?: boolean; loop?: boolean }>();
     for (const element of snapshot.elements) {
       const source = element.mediaSource;
-      if (element.type === 'led-screen' && source?.kind === 'ndi' && source.deviceId) {
-        desired.set(element.id, source.deviceId);
+      if (element.type !== 'led-screen' || !source || source.kind === 'none') continue;
+      if (source.kind === 'ndi' && source.deviceId) {
+        desired.set(element.id, { key: `ndi:${source.deviceId}`, kind: 'ndi', id: source.deviceId });
+      }
+      if (source.kind === 'media' && source.assetId) {
+        desired.set(element.id, {
+          key: `media:${source.assetId}:${source.mediaKind}`,
+          kind: source.mediaKind,
+          id: source.assetId,
+          muted: source.muted,
+          loop: source.loop
+        });
       }
     }
 
     for (const [id, entry] of mediaRef.current) {
-      if (desired.get(id) === entry.deviceId) continue;
-      entry.stream.getTracks().forEach((track) => track.stop());
-      entry.video.srcObject = null;
+      if (desired.get(id)?.key === entry.sourceKey) continue;
+      entry.stream?.getTracks().forEach((track) => track.stop());
+      if (entry.element instanceof HTMLVideoElement) entry.element.srcObject = null;
+      if (entry.objectUrl) URL.revokeObjectURL(entry.objectUrl);
       mediaRef.current.delete(id);
     }
 
-    if (!navigator.mediaDevices?.getUserMedia) return;
-
-    for (const [id, deviceId] of desired) {
+    for (const [id, source] of desired) {
       if (mediaRef.current.has(id)) continue;
-      void navigator.mediaDevices.getUserMedia({
-        video: { deviceId: { exact: deviceId } },
-        audio: false
-      }).then(async (stream) => {
-        const video = document.createElement('video');
-        video.autoplay = true;
-        video.muted = true;
-        video.playsInline = true;
-        video.srcObject = stream;
-        try { await video.play(); } catch { /* redraw will show the screen fallback */ }
-        mediaRef.current.set(id, { deviceId, video, stream });
-        setMediaRevision((value) => value + 1);
-      }).catch(() => {
-        setMediaRevision((value) => value + 1);
-      });
-    }
 
-    return () => {
-      // Inputs stay alive across ordinary scene updates and are closed on unmount below.
-    };
+      if (source.kind === 'ndi') {
+        if (!navigator.mediaDevices?.getUserMedia) continue;
+        void navigator.mediaDevices.getUserMedia({
+          video: { deviceId: { exact: source.id } },
+          audio: false
+        }).then(async (stream) => {
+          const video = document.createElement('video');
+          video.autoplay = true;
+          video.muted = true;
+          video.playsInline = true;
+          video.srcObject = stream;
+          try { await video.play(); } catch { /* screen fallback remains visible */ }
+          mediaRef.current.set(id, { sourceKey: source.key, element: video, stream });
+          setMediaRevision((value) => value + 1);
+        }).catch(() => setMediaRevision((value) => value + 1));
+        continue;
+      }
+
+      void mediaObjectUrl(source.id).then(async (objectUrl) => {
+        if (source.kind === 'image') {
+          const image = new Image();
+          image.src = objectUrl;
+          await image.decode().catch(() => {});
+          mediaRef.current.set(id, { sourceKey: source.key, element: image, objectUrl });
+          setMediaRevision((value) => value + 1);
+          return;
+        }
+
+        const video = document.createElement('video');
+        video.src = objectUrl;
+        video.autoplay = true;
+        video.loop = source.loop ?? true;
+        video.muted = source.muted ?? true;
+        video.playsInline = true;
+        try { await video.play(); } catch { /* user gesture may be needed for audio */ }
+        mediaRef.current.set(id, { sourceKey: source.key, element: video, objectUrl });
+        setMediaRevision((value) => value + 1);
+      }).catch(() => setMediaRevision((value) => value + 1));
+    }
   }, [snapshot.elements]);
 
   useEffect(() => () => {
     for (const entry of mediaRef.current.values()) {
-      entry.stream.getTracks().forEach((track) => track.stop());
-      entry.video.srcObject = null;
+      entry.stream?.getTracks().forEach((track) => track.stop());
+      if (entry.element instanceof HTMLVideoElement) entry.element.srcObject = null;
+      if (entry.objectUrl) URL.revokeObjectURL(entry.objectUrl);
     }
     mediaRef.current.clear();
   }, []);
