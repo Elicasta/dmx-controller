@@ -44,6 +44,8 @@ type Drag = {
 };
 const clamp = (n: number, min: number, max: number) =>
   Math.max(min, Math.min(max, Number.isFinite(n) ? n : min));
+const runtimeBarMs = (props: Pick<Props, "timeline" | "masterBpm">) =>
+  barMs({ ...props.timeline, bpm: clamp(props.masterBpm, 20, 300) });
 export default function ShowTimelineEditor(props: Props) {
   const {
     timeline,
@@ -83,11 +85,7 @@ export default function ShowTimelineEditor(props: Props) {
   latest.current = props;
   zoomRef.current = zoom;
   followPlayheadRef.current = followPlayhead;
-  useEffect(() => {
-    const next = clamp(masterBpm, 20, 300);
-    if (!playingRef.current && latest.current.timeline.bpm !== next) latest.current.onChange({ ...latest.current.timeline, bpm: next });
-  }, [masterBpm]);
-  const msPerBar = barMs(timeline);
+  const msPerBar = runtimeBarMs(props);
   const clipEnd = Math.max(
     0,
     ...timeline.clips.map((c) => c.startBar + c.lengthBars),
@@ -145,7 +143,7 @@ export default function ShowTimelineEditor(props: Props) {
     const p = latest.current,
       audio = p.audioRef.current;
     if (!audio || !p.audioUrl) return;
-    const local = positionMs - p.timeline.audioOffsetBars * barMs(p.timeline);
+    const local = positionMs - p.timeline.audioOffsetBars * runtimeBarMs(p);
     if (local < 0 || local >= audio.duration * 1000) {
       audio.pause();
       if (local < 0 && audio.currentTime !== 0) audio.currentTime = 0;
@@ -181,8 +179,8 @@ export default function ShowTimelineEditor(props: Props) {
     const next = Math.max(0, bar);
     cursorRef.current = next;
     setCursor(next);
-    latest.current.onFrame(next * barMs(latest.current.timeline));
-    syncAudio(next * barMs(latest.current.timeline), true);
+    latest.current.onFrame(next * runtimeBarMs(latest.current));
+    syncAudio(next * runtimeBarMs(latest.current), true);
   }
   function play() {
     if (playingRef.current) {
@@ -194,7 +192,7 @@ export default function ShowTimelineEditor(props: Props) {
     setPlaying(true);
     let previous = performance.now(),
       lastPaint = previous - 40;
-    syncAudio(cursorRef.current * barMs(latest.current.timeline), true);
+    syncAudio(cursorRef.current * runtimeBarMs(latest.current), true);
     const tick = (now: number) => {
       if (!playingRef.current) return;
       const p = latest.current;
@@ -204,16 +202,16 @@ export default function ShowTimelineEditor(props: Props) {
       // Repeated currentTime corrections cause audible seek artifacts.
       if (p.audioUrl && audio && cursorRef.current >= offset && !audio.ended &&
           (!Number.isFinite(audio.duration) || audio.currentTime < audio.duration)) {
-        syncAudio(cursorRef.current * barMs(p.timeline));
-        cursorRef.current = offset + audio.currentTime * 1000 / barMs(p.timeline);
+        syncAudio(cursorRef.current * runtimeBarMs(p));
+        cursorRef.current = offset + audio.currentTime * 1000 / runtimeBarMs(p);
       } else {
-        cursorRef.current += (now - previous) / barMs(p.timeline);
+        cursorRef.current += (now - previous) / runtimeBarMs(p);
       }
       previous = now;
       if (now - lastPaint >= 25) {
         setCursor(cursorRef.current);
-        p.onFrame(cursorRef.current * barMs(p.timeline));
-        syncAudio(cursorRef.current * barMs(p.timeline));
+        p.onFrame(cursorRef.current * runtimeBarMs(p));
+        syncAudio(cursorRef.current * runtimeBarMs(p));
         if (followPlayheadRef.current && scrollRef.current) {
           const scroller = scrollRef.current;
           const x = 100 + cursorRef.current * zoomRef.current;
@@ -226,7 +224,7 @@ export default function ShowTimelineEditor(props: Props) {
       const end = Math.max(
         1,
         ...p.timeline.clips.map((c) => c.startBar + c.lengthBars),
-        p.timeline.audioOffsetBars + p.audioDurationMs / barMs(p.timeline),
+        p.timeline.audioOffsetBars + p.audioDurationMs / runtimeBarMs(p),
       );
       if (cursorRef.current >= end) {
         pause();
@@ -418,7 +416,11 @@ export default function ShowTimelineEditor(props: Props) {
             max={300}
             value={masterBpm}
             disabled={playing}
-            onChange={(e) => onMasterBpmChange(clamp(Number(e.target.value), 20, 300))}
+            onChange={(e) => {
+              const next = clamp(Number(e.target.value), 20, 300);
+              edit({ ...timeline, bpm: next });
+              onMasterBpmChange(next);
+            }}
           />
         </label>
         <label>
