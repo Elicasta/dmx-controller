@@ -9,7 +9,7 @@ import Visualizer3D from './components/Visualizer3D';
 import { StageMediaSurface, requestStageVideoInputs, type StageVideoInputOption } from './components/StageMediaSurface';
 import SongCueLibrary from './components/SongCueLibrary';
 import { moveRundownItemCues } from './lib/show';
-import { activeTimelineCueId, createSection, EMPTY_TIMELINE, FX_RECIPES, SHOW_COLORS, buildSectionCues, renderEffectStack, renderShowTimeline, isEffectRecipe, type EffectStackLayer, type ShowSection } from './lib/show-design';
+import { activeTimelineCueId, createSection, EMPTY_TIMELINE, FX_RECIPES, SHOW_COLORS, buildSectionCues, renderEffectStack, renderShowTimeline, isEffectRecipe, isShowSection, type EffectStackLayer, type ShowSection } from './lib/show-design';
 import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState, type ChangeEvent, type PointerEvent as ReactPointerEvent } from 'react';
 import { lumaVizDirectStatus, pollLumaVizDirectMessages, semanticFrameFromResolvedOutput, sendLumaVizDirectFrame, sendLumaVizDirectMessage, startLumaVizDirect, type LumaVizDirectStatus, type SharedShowPatchMutation } from './core/lumaviz-direct';
 import type { SharedLocationPreset } from './core/shared-locations';
@@ -95,6 +95,7 @@ import {
 import { DesktopLiveController } from './components/DesktopLiveController';
 import './desktop-live-controller.css';
 import FixtureFaderBank from './components/FixtureFaderBank';
+import { loadSectionPresets } from './lib/section-presets';
 import {
   STAGE_WAREHOUSE,
   clampStageElement,
@@ -443,11 +444,13 @@ type AppWorkspaceCheckpoint = {
   looks: FixtureLook[]; customEffects: CustomEffect[]; projects: ShowProjectSnapshot[];
   midiMappings: MidiMapping[]; settings: AppSettings;
   tempo?: { bpm:number; locked:boolean };
+  sectionPresets?: ShowSection[];
 };
 function isAppWorkspaceCheckpoint(value: unknown): value is AppWorkspaceCheckpoint {
   if (!value || typeof value !== 'object') return false;
   const c = value as AppWorkspaceCheckpoint;
   return (c.tempo === undefined || (c.tempo && Number.isFinite(c.tempo.bpm) && c.tempo.bpm >= 20 && c.tempo.bpm <= 300 && typeof c.tempo.locked === 'boolean'))
+    && (c.sectionPresets === undefined || (Array.isArray(c.sectionPresets) && c.sectionPresets.every(isShowSection)))
     && Array.isArray(c.patch) && c.patch.every(isPatchedFixture)
     && Array.isArray(c.stageElements) && c.stageElements.every(isStageElement) && isStageSettings(c.stageSettings)
     && Array.isArray(c.looks) && c.looks.every(isFixtureLook)
@@ -629,6 +632,7 @@ export default function App() {
   const outputUniverseRef = useRef<number[]>(makeUniverse());
   const [patch, setPatch] = useState<PatchedFixture[]>(loadPatch);
   const patchRef = useRef(patch);
+  const [sectionPresets, setSectionPresets] = useState(loadSectionPresets);
   const [savedLooks, setSavedLooks] = useState<FixtureLook[]>(loadSavedLooks);
   const [showFile, setShowFile] = useState<ShowFile>(loadShowFile);
   const [songLibrary, setSongLibrary] = useState<SongProgram[]>([]);
@@ -1068,12 +1072,13 @@ export default function App() {
   useEffect(() => writeCompatibilityStorage(LOOKS_STORAGE_KEY, JSON.stringify(savedLooks)), [savedLooks]);
   useEffect(() => writeCompatibilityStorage(CUSTOM_FX_STORAGE_KEY, JSON.stringify(customEffects)), [customEffects]);
   const workspaceCheckpointRef = useRef<Record<string, unknown>>({});
-  workspaceCheckpointRef.current = { patch, stageElements, stageSettings, looks:savedLooks, customEffects, projects:showLibrary, midiMappings, settings, tempo:{bpm:effectBpm,locked:tempoLocked} };
+  workspaceCheckpointRef.current = { patch, stageElements, stageSettings, looks:savedLooks, customEffects, projects:showLibrary, midiMappings, settings, sectionPresets, tempo:{bpm:effectBpm,locked:tempoLocked} };
   function currentWorkspaceCheckpoint(): Record<string, unknown> { return workspaceCheckpointRef.current; }
   function applyWorkspaceCheckpoint(value: Record<string, unknown>) {
     if (!isAppWorkspaceCheckpoint(value)) throw Error('Saved workspace is invalid. Existing data is preserved.');
     setPatch(value.patch); setStageElements(value.stageElements); setStageSettings(value.stageSettings);
     setSavedLooks(value.looks); setCustomEffects(value.customEffects); setShowLibrary(value.projects);
+    if (value.sectionPresets) setSectionPresets(value.sectionPresets);
     setMidiMappings(value.midiMappings); setSettings(value.settings);
     if (value.tempo) { setEffectBpm(value.tempo.bpm); effectBpmRef.current=value.tempo.bpm; setTempoLocked(value.tempo.locked); tempoLockedRef.current=value.tempo.locked; }
   }
@@ -1104,7 +1109,7 @@ export default function App() {
     });
     // Compatibility copy. The transactional checkpoint is authoritative on restart.
     try { writeCompatibilityStorage(SHOW_STORAGE_KEY, JSON.stringify(showFile)); } catch { /* checkpoint reports its own failures */ }
-  }, [showFile, libraryReady, patch, stageElements, stageSettings, savedLooks, customEffects, showLibrary, midiMappings, settings, effectBpm, tempoLocked]);
+  }, [showFile, libraryReady, patch, stageElements, stageSettings, savedLooks, customEffects, showLibrary, midiMappings, settings, effectBpm, tempoLocked, sectionPresets]);
   useEffect(() => {
     try { writeCompatibilityStorage(SHOW_LIBRARY_STORAGE_KEY, JSON.stringify(showLibrary)); }
     catch { setMessage('Show library storage is full. Delete an older saved show or large recording.'); }
@@ -4049,7 +4054,7 @@ export default function App() {
         <nav className="console-workspace-tabs" aria-label="Workspace">{(['build', 'create', 'show', 'visualizer', 'live'] as Workspace[]).map((item) => <button key={item} className={workspace === item ? 'active' : ''} onClick={() => setWorkspace(item)}>{item.toUpperCase()}</button>)}</nav>
         <div className="console-header-status">
           <button className="tempo-pill" onClick={tapTempo}><strong>{masterTempoBpm} BPM</strong><small>{tempoSource === 'midi' ? 'MIDI CLOCK' : 'TAP'}</small></button>
-          <button className={`connection-pill ${dmxStatus.connected ? 'online' : ''}`} onClick={() => { setWorkspace('build'); setSetupView('settings'); }}><i /><span><strong>DMX</strong><small>{dmxStatus.connected ? 'CONNECTED' : 'VIRTUAL'}</small></span></button>
+          <button aria-label="Connections" title="Connections and DMX status" className={`connection-pill ${dmxStatus.connected ? 'online' : ''}`} onClick={() => { setWorkspace('build'); setSetupView('settings'); }}><i /><span><strong>DMX</strong><small>{dmxStatus.connected ? 'CONNECTED' : 'VIRTUAL'}</small></span></button>
           <button className={`console-blackout ${dmxStatus.blackout ? 'active' : ''}`} onClick={toggleBlackout}>{dmxStatus.blackout ? 'RELEASE BLACKOUT' : 'BLACKOUT'}</button>
         </div>
       </header>
@@ -4493,7 +4498,7 @@ export default function App() {
           <div className="cue-transport-console"><button onClick={goPreviousCue} disabled={!showFile.cues.length}>BACK</button><span><small>CURRENT</small><strong>{activeCue?.name ?? 'Ready'}</strong></span><button className="giant-go" onClick={goNextCue} disabled={!nextCue}>GO<small>{nextCue?.name ?? 'End'}</small></button><span><small>NEXT</small><strong>{nextCue?.name ?? 'End of show'}</strong></span><button onClick={goNextCue} disabled={!nextCue}>NEXT</button></div>
         </ResizableWorkspace>}
 
-        {showMode === 'creator' && <Suspense fallback={<p>Loading Show Creator…</p>}><ShowCreator key={creatorSong?.id ?? 'all'} songName={creatorSong?.name} onRenameSong={name => { if (creatorSong) renameBankSong(creatorSong.id, name); }} onSongBank={() => setShowMode('songs')} sections={(showFile.creatorSections ?? []).filter(section => !creatorSong || section.song === creatorSong.name)} setSections={(action) => setShowFile(current => {
+        {showMode === 'creator' && <Suspense fallback={<p>Loading Show Creator…</p>}><ShowCreator presets={sectionPresets} onPresetsChange={setSectionPresets} key={creatorSong?.id ?? 'all'} songName={creatorSong?.name} onRenameSong={name => { if (creatorSong) renameBankSong(creatorSong.id, name); }} onSongBank={() => setShowMode('songs')} sections={(showFile.creatorSections ?? []).filter(section => !creatorSong || section.song === creatorSong.name)} setSections={(action) => setShowFile(current => {
           const all = current.creatorSections ?? [];
           const editing = all.filter(section => !creatorSong || section.song === creatorSong.name);
           const next = typeof action === 'function' ? action(editing) : action;

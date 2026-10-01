@@ -113,7 +113,7 @@ test("solo creator builds an editable audio-aligned show and preserves the draft
   await page.getByRole("button", { name: "Delete Clip", exact: true }).click();
   await expect(page.locator(".timeline-clip")).toHaveCount(8);
   const clip = page.locator(".timeline-clip").first();
-  await clip.scrollIntoViewIfNeeded();
+  await clip.evaluate(e=>e.scrollIntoView({block:'center',inline:'nearest'}));
   let box = (await clip.boundingBox())!;
   const lane = (await page.locator('[data-lane="1"]').boundingBox())!;
   await page.mouse.move(box.x + 30, box.y + 20);
@@ -698,7 +698,7 @@ for (const width of [650,820]) test(`P0 workspaces stay bounded at ${width}px`, 
   await page.getByRole('button',{name:'SHOW',exact:true}).click();
   for(const name of ['Show Creator','Cues','Timeline','Song Bank','Show Library']) {
     await page.getByRole('button',{name,exact:true}).click();
-    expect(await page.locator('.show-console-v3').evaluate(e=>e.scrollWidth<=e.clientWidth+1)).toBe(true);
+    expect(await page.locator('.show-console-v3').evaluate(e=>e.scrollWidth<=e.clientWidth+1), name).toBe(true);
     expect(await page.locator('.show-console-v3 > .workspace-subtabs').evaluate(e=>e.scrollWidth<=e.clientWidth+1)).toBe(true);
     await page.screenshot({path:info.outputPath(`show-${name.replaceAll(' ','-')}-${width}.png`)});
   }
@@ -710,12 +710,12 @@ test('fixture banks page without expanding the Live surface', async({page})=>{
   await page.getByRole('button',{name:'LIVE',exact:true}).click();
   await page.locator('.live-view-tabs').getByRole('button',{name:'Fixtures',exact:true}).click();
   const bank=page.locator('.fixture-bank-surface');
-  await expect(bank.locator('output')).toContainText('Bank 1 /');
+  await expect(bank.locator('nav > output')).toContainText('Bank 1 /');
   await expect(bank).toContainText('Fixture 1');
   expect(await bank.locator('.override-fader-bank > *').count()).toBeLessThanOrEqual(8);
   await bank.getByRole('button',{name:'Next',exact:true}).click();
-  await expect(bank.locator('output')).toContainText('Bank 2 /');
-  await expect(bank).not.toContainText('Fixture 1\n');
+  await expect(bank.locator('nav > output')).toContainText('Bank 2 /');
+  await expect(bank.getByLabel('Fixture 1 brightness',{exact:true})).toHaveCount(0);
   expect(await bank.evaluate(e=>e.scrollWidth<=e.clientWidth+1)).toBe(true);
 });
 
@@ -742,12 +742,18 @@ test('working songs and rig restart when compatibility storage is full or stale'
   await page.getByLabel('New song name').fill('Quota Song');
   await page.getByRole('button',{name:'Add song',exact:true}).click();
   await expect(page.getByLabel('Song name Quota Song')).toBeVisible();
+  await page.locator('.song-bank > .song-bank-list article').filter({has:page.getByLabel('Song name Quota Song')}).getByRole('button',{name:'Build song',exact:true}).click();
+  await page.getByRole('button',{name:/Worship Song/}).click();
+  await page.getByRole('button',{name:'Save Section Preset',exact:true}).click();
+  await page.getByRole('button',{name:'Song Bank',exact:true}).click();
   await expect(page.getByRole('status')).toHaveText('Saved');
   await page.reload();
   await page.getByRole('button',{name:'SHOW',exact:true}).click();
   await page.getByRole('button',{name:'Song Bank',exact:true}).click();
   await expect(page.getByLabel('Song name Quota Song')).toBeVisible();
   await expect(page.getByRole('status')).toHaveText('Saved');
+  await page.getByRole('button',{name:'Show Creator',exact:true}).click();
+  await expect(page.locator('.saved-section')).toHaveCount(1);
   await page.evaluate(()=>localStorage.setItem('dmx-controller.patch.v1','[]'));
   await page.reload();
   await page.getByRole('button',{name:'CREATE',exact:true}).click();

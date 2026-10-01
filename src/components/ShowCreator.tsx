@@ -9,12 +9,13 @@ import {
   FX_RECIPES,
   SHOW_COLORS,
   SONG_TEMPLATES,
-  isShowSection,
   type ShowSection,
 } from "../lib/show-design";
 type Props = {
   songName?: string;
   onRenameSong?: (name: string) => void;
+  presets: ShowSection[];
+  onPresetsChange: (presets:ShowSection[]) => void;
   onSongBank?: () => void;
   sections: ShowSection[];
   setSections: Dispatch<SetStateAction<ShowSection[]>>;
@@ -30,18 +31,10 @@ type Props = {
   masterBpm: number;
   onMasterBpmChange: (bpm: number) => void;
 };
-const PRESETS = "lumarig-section-presets-v1";
-function loadPresets() {
-  try {
-    const v = JSON.parse(localStorage.getItem(PRESETS) ?? "[]");
-    return Array.isArray(v) ? v.filter(isShowSection).slice(0, 64) : [];
-  } catch {
-    return [];
-  }
-}
 export default function ShowCreator({
   songName,
   onRenameSong,
+  presets, onPresetsChange,
   onSongBank,
   sections,
   setSections,
@@ -68,7 +61,6 @@ export default function ShowCreator({
   const [songFilter,setSongFilter]=useState("");
   const [sectionSearch,setSectionSearch]=useState("");
   const [category, setCategory] = useState("All");
-  const [presets, setPresets] = useState<ShowSection[]>(loadPresets);
   const selected = sections.find((s) => s.id === selectedId) ?? sections[0];
   const songStats = useMemo(() => [...new Set(sections.map((section) => section.song))].map((name) => {
     const items = sections.filter((section) => section.song === name);
@@ -558,8 +550,7 @@ export default function ShowCreator({
                       { ...structuredClone(selected), id: crypto.randomUUID() },
                       ...presets,
                     ].slice(0, 64);
-                    setPresets(next);
-                    localStorage.setItem(PRESETS, JSON.stringify(next));
+                    onPresetsChange(next);
                   }}
                 >
                   Save Section Preset
@@ -665,8 +656,7 @@ export default function ShowCreator({
                     aria-label={`Delete preset ${p.name}`}
                     onClick={() => {
                       const next = presets.filter((x) => x.id !== p.id);
-                      setPresets(next);
-                      localStorage.setItem(PRESETS, JSON.stringify(next));
+                      onPresetsChange(next);
                     }}
                   >
                     ×
