@@ -477,3 +477,48 @@ test('integrated visualizer keeps venue presets isolated and opens the renderer'
    return (doc.elements??[]).length;
  })).toBe(initialObjectCount+1);
 });
+
+
+test('master tempo stays consistent from Creator through Timeline and LIVE',async({page})=>{
+ await seed(page);
+ await page.setViewportSize({width:1280,height:800});
+ await page.goto('/');
+ await page.getByRole('button',{name:'SHOW',exact:true}).click();
+ await page.getByRole('button',{name:'Show Creator',exact:true}).click();
+ await page.getByLabel('Master tempo').fill('132');
+ await expect(page.locator('.tempo-pill strong')).toHaveText('132 BPM');
+ await page.getByRole('button',{name:/Worship Song/}).click();
+ await page.getByRole('button',{name:'Build / Update 8 Sections',exact:true}).click();
+ await page.getByRole('button',{name:'Timeline',exact:true}).click();
+ await expect(page.getByLabel('Master BPM')).toHaveValue('132');
+ await expect.poll(async()=>((await readShow(page)).timeline??{}).bpm).toBe(132);
+ await page.getByRole('button',{name:'LIVE',exact:true}).click();
+ await expect(page.locator('.desk-surface-status b')).toContainText('132');
+});
+
+test('Stage stays full-size in Build and Programmer',async({page})=>{
+ await seed(page);
+ await page.setViewportSize({width:1280,height:800});
+ await page.goto('/');
+ await page.getByRole('button',{name:'BUILD',exact:true}).click();
+ await page.getByRole('button',{name:'Stage',exact:true}).click();
+
+ await expect(page.getByRole('button',{name:'3D VISUALIZER',exact:true})).toBeVisible();
+ const buildStage=page.locator('.dominant-stage');
+ const buildBox=(await buildStage.boundingBox())!;
+ expect(buildBox.height).toBeGreaterThanOrEqual(390);
+ await expect(buildStage.locator('canvas.visualizer-3d-canvas')).toBeVisible();
+
+ await page.getByRole('button',{name:'PLOT EDITOR',exact:true}).click();
+ await expect(buildStage.locator('.physical-stage')).toBeVisible();
+ const plotBox=(await buildStage.locator('.physical-stage').boundingBox())!;
+ expect(plotBox.height).toBeGreaterThanOrEqual(360);
+
+ await page.getByRole('button',{name:'CREATE',exact:true}).click();
+ await page.getByRole('button',{name:'Programmer',exact:true}).click();
+ await page.getByRole('button',{name:'3D',exact:true}).click();
+ const programmerStage=page.locator('.programmer-stage');
+ const programmerBox=(await programmerStage.boundingBox())!;
+ expect(programmerBox.height).toBeGreaterThanOrEqual(300);
+ await expect(programmerStage.locator('canvas.visualizer-3d-canvas')).toBeVisible();
+});
