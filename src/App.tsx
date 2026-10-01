@@ -124,6 +124,7 @@ import {
   metersToDisplay,
   pointAlongRay,
   type CalibrationObservation,
+  type EulerDegrees,
   type StageDimensions,
   type StageUnit,
   type Vec3
@@ -3045,6 +3046,21 @@ export default function App() {
     }));
   }
 
+  function updateStageElementTransform(id: string, update: { position?: Vec3; rotation?: EulerDegrees }) {
+    setActiveStagePresetId(null);
+    setStageElements((current) => current.map((element) => {
+      if (element.id !== id) return element;
+      const migrated = migrateStageElement(element, stageSettings.dimensions);
+      return {
+        ...migrated,
+        transform: {
+          position: update.position ? { ...update.position } : { ...migrated.transform!.position },
+          rotation: update.rotation ? { ...update.rotation } : { ...migrated.transform!.rotation }
+        }
+      };
+    }));
+  }
+
   function updateStageElementDimension(id: string, axis: 'x' | 'y' | 'z', value: number) {
     setActiveStagePresetId(null);
     const safeValue = Math.max(.03, Math.min(100, Number.isFinite(value) ? value : .03));
@@ -4227,7 +4243,7 @@ export default function App() {
           </div>
         </header>
         <div className="visualizer-workspace-layout">
-          <div className="visualizer-workspace-canvas"><Visualizer3D snapshot={stageSnapshot} selectedElementId={selectedStageElementId} onSelectElement={(id) => { setSelectedStageElementId(id); clearFixtureSelection(); }}/></div>
+          <div className="visualizer-workspace-canvas"><Visualizer3D snapshot={stageSnapshot} selectedElementId={selectedStageElementId} onSelectElement={(id) => { setSelectedStageElementId(id); clearFixtureSelection(); }} onTransformElement={updateStageElementTransform}/></div>
           <aside className="visualizer-workspace-sidebar">
             <section className="visualizer-scene-tree">
               <span>SCENE</span>
