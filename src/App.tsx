@@ -578,6 +578,7 @@ export default function App() {
   const [setupView, setSetupView] = useState<SetupView>(() => initialConsoleValue('setup', ['fixtures', 'groups', 'stage', 'settings'], 'stage'));
   const [programMode, setProgramMode] = useState<ProgramMode>(() => initialConsoleValue('program', ['stage', 'looks', 'fx', 'colors', 'media', 'presets'], 'stage'));
   const [programStageView, setProgramStageView] = useState<'visualizer' | 'plot'>('visualizer');
+  const [visualizerToolsOpen, setVisualizerToolsOpen] = useState(false);
   const [showMode, setShowMode] = useState<ShowMode>(() => initialConsoleValue('show', ['creator', 'cues', 'timeline', 'tracks', 'library', 'sync', 'recordings'], 'cues'));
   const [liveView, setLiveView] = useState<LiveView>(() => initialConsoleValue('live', ['performance', 'overrides', 'groups', 'masters', 'shortcuts', 'settings'], 'performance'));
   const [fixtureSearch, setFixtureSearch] = useState('');
@@ -4238,13 +4239,14 @@ export default function App() {
           <div><span>INTEGRATED VISUALIZER</span><h2>{STAGE_PRESETS.find((preset) => preset.id === activeStagePresetId)?.name ?? 'Current Show'}</h2><p>Live LumaRig output, stage geometry, screens, crowd, haze and camera flybys in one scene.</p></div>
           <div className="visualizer-workspace-actions">
             <button onClick={() => { setWorkspace('build'); setSetupView('stage'); }}>Edit Stage</button>
+            <button className={visualizerToolsOpen ? 'active' : ''} aria-pressed={visualizerToolsOpen} onClick={() => setVisualizerToolsOpen((open) => !open)}>{visualizerToolsOpen ? 'Hide Scene Tools' : 'Scene Tools'}</button>
             <button onClick={() => void scanStageVideoInputs()}>Scan NDI / Video</button>
             <button className="console-primary" onClick={() => void openStageWindow()}>Pop Out ↗</button>
           </div>
         </header>
-        <div className="visualizer-workspace-layout">
+        <div className={`visualizer-workspace-layout ${visualizerToolsOpen ? 'tools-open' : 'focus'}`}>
           <div className="visualizer-workspace-canvas"><Visualizer3D snapshot={stageSnapshot} selectedElementId={selectedStageElementId} onSelectElement={(id) => { setSelectedStageElementId(id); clearFixtureSelection(); }}/></div>
-          <aside className="visualizer-workspace-sidebar">
+          {visualizerToolsOpen && <aside className="visualizer-workspace-sidebar">
             <section className="visualizer-scene-tree">
               <span>SCENE</span>
               <strong>{stageElements.length} objects</strong>
@@ -4281,7 +4283,7 @@ export default function App() {
 
             <section className="visualizer-input-panel"><span>SCREEN INPUTS</span><strong>{stageVideoInputs.length ? `${stageVideoInputs.length} available` : 'Not scanned'}</strong><small>{stageElements.filter((element) => element.type === 'led-screen' && element.mediaSource?.kind === 'ndi' && element.mediaSource.deviceId).length} screens assigned to live inputs</small>{stageVideoInputError && <small className="stage-source-error">{stageVideoInputError}</small>}{stageVideoInputs.length > 0 && <div>{stageVideoInputs.map((input) => <button key={input.deviceId} onClick={() => routeVideoInputToAllScreens(input.deviceId)}><strong>{input.label}</strong><small>Route to all screens</small></button>)}</div>}</section>
             <section className="visualizer-preset-picker"><span>VENUE PRESETS</span>{STAGE_PRESETS.map((preset) => <button key={preset.id} className={activeStagePresetId === preset.id ? 'active' : ''} onClick={() => loadStagePreset(preset.id)}><strong>{preset.name}</strong><small>{preset.description}</small></button>)}</section>
-          </aside>
+          </aside>}
         </div>
       </section>}
 
