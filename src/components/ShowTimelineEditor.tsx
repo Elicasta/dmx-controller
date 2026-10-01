@@ -449,7 +449,7 @@ export default function ShowTimelineEditor(props: Props) {
         </button>
         <button onClick={stop}>Stop / Rewind</button>
         {/\.mp4$/i.test(audioName) && <button onClick={()=>void openMediaOutput().catch(error=>setAudioError(String(error)))}>Pop Out Video</button>}
-        <button aria-label="Rewind timeline" onClick={() => seek(0)}>⏮</button>
+        <button aria-label="Rewind timeline" onClick={() => seek(0)}><svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true"><path fill="currentColor" d="M2 3h2v10H2zM13 3v10L5 8z" /></svg></button>
         <button aria-label="Previous beat" onClick={() => seek(steppedBar(cursorRef.current, -1, timeline.beatsPerBar))}>‹ Beat</button>
         <button aria-label="Next beat" onClick={() => seek(steppedBar(cursorRef.current, 1, timeline.beatsPerBar))}>Beat ›</button>
         <label>Jump to cue<select aria-label="Jump to cue" value="" onChange={e => {
@@ -498,13 +498,13 @@ export default function ShowTimelineEditor(props: Props) {
           <input
             aria-label="Timeline zoom"
             type="range"
-            min={18}
-            max={100}
+            min={4}
+            max={400}
             value={zoom}
             onChange={(e) => setZoom(Number(e.target.value))}
           />
         </label>
-        <button onClick={() => { const width = Math.max(320, (scrollRef.current?.clientWidth ?? 900) - 120); setZoom(clamp(width / Math.max(1, totalBars), 18, 100)); }}>Fit</button>
+        <button onClick={() => { const width = Math.max(320, (scrollRef.current?.clientWidth ?? 900) - 120); setZoom(clamp(width / Math.max(1, totalBars), 4, 400)); }}>Fit</button>
         <button className={followPlayhead ? "active" : ""} aria-pressed={followPlayhead} onClick={() => setFollowPlayhead((value) => !value)}>Follow {followPlayhead ? "On" : "Off"}</button>
         <label className="file-button">
           {audioUrl ? "Relink Audio" : "Load Audio"}
@@ -572,7 +572,7 @@ export default function ShowTimelineEditor(props: Props) {
                 >
                   {Array.from({ length: totalBars }, (_, i) => (
                     <span key={i} style={{ left: i * zoom, width: zoom }}>
-                      {zoom >= 30 || i % 4 === 0 ? i + 1 : ""}
+                      {zoom >= 30 || i % Math.ceil(40 / zoom) === 0 ? i + 1 : ""}
                     </span>
                   ))}
                 </div>

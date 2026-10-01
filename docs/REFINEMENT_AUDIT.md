@@ -2,6 +2,32 @@
 
 Reviewed against the 32-item refinement request and the 0.2.2 implementation. The 0.2.3 repair pass addresses preservation, reusable songs, tempo editing, panel resizing and the repeated layout failures. This is not a claim that all integrations, media outputs or rendering requests are finished.
 
+## 0.2.4 internal workflow milestone
+External Ableton/LumaLive/MIDI linking is explicitly deferred until internal editing is complete.
+
+Now implemented and regression checked:
+- Content-keyed persistent waveform analysis with every sample from every channel contributing.
+- Non-destructive Timeline media trim in/out and correct source-time playback.
+- Lane/waveform seeking, draggable playhead, beat/bar keyboard steps and cue jump picker.
+- Independent section group layers with color, intensity, musical cycle/rate, phase, phase spread, direction, offset and explicit order.
+- Custom Programmer FX in the recipe browser, favorites, section notes and clipboard copy/paste.
+- Creator Save to Song Library rebuilds current programming before saving reusable masters.
+- True orthographic Top/Front/Side views through the existing Visualizer, with projection-preserving zoom.
+- A native video output window that follows the main media element, preserves aspect ratio and supports fullscreen.
+
+Still open after this milestone:
+- Shared source-neutral Transport Engine and Connection Manager.
+- Managed native media directories, copy/reference choice, missing-media detection and relink workflow.
+- Stage screen MP4/image/test source assignment.
+- Tempo analysis with confidence/downbeat and manual correction tools.
+- Beat-based Step Editor.
+- Recording pause/rewind/overdub and Timeline editing.
+- Volumetric beam/occlusion/surface spill and replacement crowd geometry.
+- Further Cues/Live polish, cross-rig fixture mapping and explicit Song master version handling.
+- Physical Mac, multi-monitor and show-hardware validation.
+
+The detailed rows below describe the earlier 0.2.3 baseline; this update supersedes their Timeline, section-layer, FX-browser, orthographic-view and video-output gaps.
+
 ## Current changes
 
 - Song Bank has two distinct lists: this Show's songs and the reusable Song Library. A Song Program includes media links, decimal tempo and lock, sections, cues, fixture-group definitions, position palettes and timeline arrangement. Add to Show copies the program with fresh editable identities.
