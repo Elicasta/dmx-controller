@@ -17,5 +17,15 @@ External Ableton, LumaLive, MIDI connection adapters and shared connection UI ar
 Unit tests cover source time mapping, offset, trim end, legacy validation, shorter relinks, invalid checkpoints, beat stepping and stereo/final-sample transients.
 Browser checks cover cached waveform, trim playback, lane seeking, keyboard stepping, cue jumping, persisted trim and reset.
 
+## Section editing and FX
+- Save to Song Library rebuilds the current song before saving its reusable master.
+- Notes, duplicate, clipboard copy/paste, existing rename/delete/reorder and saved templates.
+- Independent group layers with intensity, color, musical cycle, rate, phase, phase spread, direction, offset and movement.
+- Array order is priority; layers have explicit reorder controls. Disabled layers do not override the base look.
+- Saved custom Programmer FX appear in the same browser; added layers capture their full recipe so deleting a global preset cannot break the song.
+- Search, categories, custom and favorites share a bounded preset browser.
+- Supported rates: ¼×, ½×, 1×, 2×, 3×, 4×, 8×. Cycles include bars, half/quarter/eighth/sixteenth beats and triplets.
+- Favorites are preferences in localStorage; they are not part of the reusable Song master.
+
 ## Still to complete
-Section editing, per-group FX controls, musical rate browsers, managed native media/relink workflow, video output, orthographic Visualizer views, beam/surface rendering, Step Editor and Recording editing/overdub remain in the ordered refinement backlog. External linking comes last.
+Managed native media/relink workflow, video output, orthographic Visualizer views, beam/surface rendering, Step Editor and Recording editing/overdub remain in the ordered refinement backlog. External linking comes last.

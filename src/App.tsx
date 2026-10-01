@@ -3599,6 +3599,19 @@ export default function App() {
       } catch (error) { if (token === mediaLoadToken.current) setMessage(String(error)); }
     }
   }
+  async function saveCreatorSongProgram() {
+    if (!libraryReady) return;
+    const song = creatorSong;
+    if (!song) { setMessage('Choose a Song in Song Bank before saving its programming.'); return; }
+    setSaveStatus('Saving…');
+    try {
+      const next = buildSong(showFileRef.current, song, patchRef.current);
+      setShowFile(next);
+      const saved = await saveAppProgramState(next, { forceId: programId(next, song), workspace: currentWorkspaceCheckpoint() });
+      setSongLibrary(saved.programs); setSaveStatus('Saved');
+      setMessage(`${song.name} rebuilt and saved to Song Library with its sections, layers, timeline and media.`);
+    } catch (error) { setSaveStatus('Save failed'); setMessage(String(error)); }
+  }
   function buildCreatorSections() {
     try {
       const targets = creatorSong ? [creatorSong] : songBank;
@@ -4506,7 +4519,7 @@ export default function App() {
           <div className="cue-transport-console"><button onClick={goPreviousCue} disabled={!showFile.cues.length}>BACK</button><span><small>CURRENT</small><strong>{activeCue?.name ?? 'Ready'}</strong></span><button className="giant-go" onClick={goNextCue} disabled={!nextCue}>GO<small>{nextCue?.name ?? 'End'}</small></button><span><small>NEXT</small><strong>{nextCue?.name ?? 'End of show'}</strong></span><button onClick={goNextCue} disabled={!nextCue}>NEXT</button></div>
         </ResizableWorkspace>}
 
-        {showMode === 'creator' && <Suspense fallback={<p>Loading Show Creator…</p>}><ShowCreator presets={sectionPresets} onPresetsChange={setSectionPresets} key={creatorSong?.id ?? 'all'} songName={creatorSong?.name} onRenameSong={name => { if (creatorSong) renameBankSong(creatorSong.id, name); }} onSongBank={() => setShowMode('songs')} sections={(showFile.creatorSections ?? []).filter(section => !creatorSong || section.song === creatorSong.name)} setSections={(action) => setShowFile(current => {
+        {showMode === 'creator' && <Suspense fallback={<p>Loading Show Creator…</p>}><ShowCreator customEffects={customEffects} onSaveSong={saveCreatorSongProgram} presets={sectionPresets} onPresetsChange={setSectionPresets} key={creatorSong?.id ?? 'all'} songName={creatorSong?.name} onRenameSong={name => { if (creatorSong) renameBankSong(creatorSong.id, name); }} onSongBank={() => setShowMode('songs')} sections={(showFile.creatorSections ?? []).filter(section => !creatorSong || section.song === creatorSong.name)} setSections={(action) => setShowFile(current => {
           const all = current.creatorSections ?? [];
           const editing = all.filter(section => !creatorSong || section.song === creatorSong.name);
           const next = typeof action === 'function' ? action(editing) : action;

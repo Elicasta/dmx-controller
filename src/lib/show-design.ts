@@ -20,8 +20,19 @@ export type EffectStackLayer = {
   effect: CustomEffect;
   selectionGrid?: FixtureSelectionGrid;
   enabled?: boolean;
+  phaseOffsetBeats?: number;
 };
 export type SectionLayer = {
+  customEffect?: CustomEffect;
+  intensity?: number;
+  color?: string;
+  cycleBeats?: number;
+  rateMultiplier?: number;
+  phaseOffsetBeats?: number;
+  phaseSpread?: number;
+  direction?: 'forward' | 'reverse';
+  offset?: number;
+  motionShape?: CustomEffect['motionShape'];
   id: string;
   recipeId: string;
   groupId: string;
@@ -29,6 +40,7 @@ export type SectionLayer = {
   enabled: boolean;
 };
 export type ShowSection = {
+  notes?: string;
   id: string;
   song: string;
   name: string;
@@ -78,7 +90,7 @@ export const SHOW_COLORS = [
 export type FxRecipe = {
   id: string;
   name: string;
-  category: "Intensity" | "Rows" | "Movement" | "Color";
+  category: "Intensity" | "Rows" | "Movement" | "Color" | "Custom";
   description: string;
   effect: CustomEffect;
 };
@@ -359,7 +371,11 @@ export function sectionStack(
   return specs
     .filter((l) => l.enabled && l.recipeId)
     .map((layer) => {
-      const found = FX_RECIPES.find((r) => r.id === layer.recipeId);
+      const found = layer.customEffect ? {
+        name: layer.customEffect.name,
+        category: layer.customEffect.parameter === 'position' || layer.customEffect.parameter === 'pan' || layer.customEffect.parameter === 'tilt' ? 'Movement' : 'Custom',
+        effect: layer.customEffect,
+      } : FX_RECIPES.find((r) => r.id === layer.recipeId);
       if (!found) throw Error("Choose an FX recipe from the library.");
       const group = groups.find((g) => g.id === layer.groupId);
       if (layer.groupId && !group)
@@ -385,17 +401,24 @@ export function sectionStack(
         throw Error("Movement FX need a target with moving fixtures.");
       const effect = structuredClone(found.effect);
       effect.bpm = section.bpm;
+      effect.cycleBeats = Math.max(0.0625, Math.min(32, (layer.cycleBeats ?? effect.cycleBeats ?? 1) / (layer.rateMultiplier ?? 1)));
+      effect.phaseSpread = layer.phaseSpread ?? effect.phaseSpread;
+      effect.direction = layer.direction ?? effect.direction;
+      effect.offset = layer.offset ?? effect.offset;
+      effect.motionShape = layer.motionShape ?? effect.motionShape;
+      if (layer.motionShape) effect.parameter = "position";
+      const intensity = layer.intensity ?? section.intensity;
       effect.depth *= layer.energy / 100;
       if (effect.parameter === "dimmer") {
-        effect.depth *= section.intensity / 100;
-        effect.offset *= section.intensity / 100;
+        effect.depth *= intensity / 100;
+        effect.offset *= intensity / 100;
       }
       effect.lanes = effect.lanes?.map((l) =>
         l.parameter === "dimmer"
           ? {
               ...l,
-              depth: (l.depth * section.intensity) / 100,
-              offset: (l.offset * section.intensity) / 100,
+              depth: (l.depth * intensity) / 100,
+              offset: (l.offset * intensity) / 100,
             }
           : l,
       );
@@ -404,6 +427,7 @@ export function sectionStack(
         name: found.name,
         targetIds: targets.map((f) => f.id),
         effect,
+        phaseOffsetBeats: layer.phaseOffsetBeats,
         selectionGrid: group
           ? normalizeSelectionGrid(group.selectionGrid, group.fixtureOrder)
           : undefined,
@@ -428,7 +452,7 @@ export function renderEffectStack(
     renderCustomEffect(
       effect,
       targets,
-      elapsedMs,
+      elapsedMs + (((layer.phaseOffsetBeats ?? 0) % (effect.cycleBeats ?? 1) + (effect.cycleBeats ?? 1)) % (effect.cycleBeats ?? 1)) * 60000 / effect.bpm,
       base,
       layer.selectionGrid,
     ).forEach(([c, v]) => updates.set(c, v));
@@ -460,6 +484,19 @@ export function buildSectionCues(
         ...(uv ? [uv] : []),
       ];
     });
+    // Layer array order is explicit priority; only its own group's static attributes are overridden.
+    for (const layer of section.layers) {
+      if (!layer.enabled || (layer.color === undefined && layer.intensity === undefined)) continue;
+      const group = groups.find(g => g.id === layer.groupId);
+      const ids = new Set(group?.fixtureOrder ?? (layer.groupId ? [] : fixtures.map(f => f.id)));
+      for (const fixture of fixtures.filter(f => ids.has(f.id))) {
+        if (layer.color) changes.push(...fixtureColorUpdates(fixture, colorRgb(layer.color)));
+        if (layer.intensity !== undefined) {
+          const dimmer = fixtureParameterUpdate(fixture, 'dimmer', layer.intensity * 2.55);
+          if (dimmer) changes.push(dimmer);
+        }
+      }
+    }
     if (!changes.length)
       throw Error("Patch fixtures into the selected target first.");
     const stack = sectionStack(section, fixtures, groups);
@@ -633,7 +670,7 @@ export function isEffectRecipe(value: unknown): value is CustomEffect {
     [e.blocks, e.groups, e.wings, e.shift].every(
       (v) => v === undefined || (typeof v === "number" && Number.isFinite(v)),
     ) &&
-    (e.cycleBeats === undefined || finite(e.cycleBeats, 0.125, 32)) &&
+    (e.cycleBeats === undefined || finite(e.cycleBeats, 0.0625, 32)) &&
     (e.lanes === undefined ||
       (Array.isArray(e.lanes) &&
         e.lanes.length <= 16 &&
@@ -670,6 +707,7 @@ export function isEffectStack(value: unknown): value is EffectStackLayer[] {
         l.targetIds.every((id: unknown) => typeof id === "string") &&
         isEffectRecipe(l.effect) &&
         (l.enabled === undefined || typeof l.enabled === "boolean") &&
+        (l.phaseOffsetBeats === undefined || finite(l.phaseOffsetBeats, -32, 32)) &&
         (l.selectionGrid === undefined ||
           (l.selectionGrid &&
             finite(l.selectionGrid.rows, 1, 256) &&
@@ -695,6 +733,7 @@ export function isShowSection(value: unknown): value is ShowSection {
     ["id", "song", "name", "groupId", "recipeId"].every(
       (k) => typeof s[k as keyof ShowSection] === "string",
     ) &&
+    (s.notes === undefined || (typeof s.notes === "string" && s.notes.length <= 4000)) &&
     hex(s.color) &&
     finite(s.intensity, 0, 100) &&
     finite(s.bpm, 20, 300) &&
@@ -710,6 +749,16 @@ export function isShowSection(value: unknown): value is ShowSection {
         typeof l.recipeId === "string" &&
         typeof l.groupId === "string" &&
         finite(l.energy, 0, 100) &&
+        (l.customEffect === undefined || isEffectRecipe(l.customEffect)) &&
+        (l.intensity === undefined || finite(l.intensity, 0, 100)) &&
+        (l.color === undefined || hex(l.color)) &&
+        (l.cycleBeats === undefined || finite(l.cycleBeats, 0.0625, 32)) &&
+        (l.rateMultiplier === undefined || finite(l.rateMultiplier, 0.25, 8)) &&
+        (l.phaseOffsetBeats === undefined || finite(l.phaseOffsetBeats, -32, 32)) &&
+        (l.phaseSpread === undefined || finite(l.phaseSpread, 0, 200)) &&
+        (l.offset === undefined || finite(l.offset, -100, 100)) &&
+        (l.direction === undefined || ['forward','reverse'].includes(l.direction)) &&
+        (l.motionShape === undefined || ['circle','figure-eight','diagonal','pan-sweep','tilt-sweep'].includes(l.motionShape)) &&
         typeof l.enabled === "boolean",
     )
   );
