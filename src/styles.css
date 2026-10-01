@@ -3953,3 +3953,34 @@ body,#root { min-width:0; width:100%; overflow:hidden; }
   .song-program-grid article > div:last-child button,
   .media-asset-list article > div button { flex: 1; }
 }
+
+
+/* Resizable Cues workspace */
+.show-cue-layout.resizable-workspace {
+  position: relative;
+  display: grid !important;
+  grid-template-columns: var(--workspace-columns) !important;
+  grid-template-rows: 28px minmax(0,1fr) !important;
+  gap: 5px;
+}
+.show-cue-layout.resizable-workspace > .workspace-panel-tools {
+  grid-column: 1/-1;
+  grid-row: 1;
+}
+.show-cue-layout.resizable-workspace > .song-cue-library,
+.show-cue-layout.resizable-workspace > .cue-preview-console,
+.show-cue-layout.resizable-workspace > .cue-integrated-timeline,
+.show-cue-layout.resizable-workspace > .cue-inspector-console {
+  grid-row: 2;
+  min-width: 0;
+  max-width: 100%;
+}
+.show-cue-layout.resizable-workspace.left-collapsed > .song-cue-library { display: none; }
+.show-cue-layout.resizable-workspace.right-collapsed > .cue-inspector-console { display: none; }
+.show-cue-layout.resizable-workspace.workspace-compact {
+  grid-template-columns: minmax(0,1fr) !important;
+}
+.show-cue-layout.resizable-workspace.workspace-compact > .cue-preview-console,
+.show-cue-layout.resizable-workspace.workspace-compact > .cue-integrated-timeline {
+  grid-column: 1;
+}
