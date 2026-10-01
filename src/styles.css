@@ -2903,3 +2903,37 @@ body,#root { min-width:0; width:100%; overflow:hidden; }
 }
 .visualizer-input-panel > div > button strong { font-size: 10px; }
 .visualizer-input-panel > div > button small { font-size: 8px; }
+
+
+/* Operator refinement: Creator, Timeline, Programmer stage and Visualizer. LIVE surface intentionally untouched. */
+.creator-master-row{display:flex;align-items:center;justify-content:space-between;gap:10px;margin:-2px 0 14px;padding:8px 10px;border:1px solid #293942;background:#0b1217;color:#80939e;font-size:9px}
+.creator-master-row button{flex:0 0 auto}
+.creator-song-strip{display:flex;gap:6px;overflow-x:auto;padding:2px 0 10px;scrollbar-width:thin}
+.creator-song-strip button{flex:0 0 auto;min-width:135px;display:grid;gap:4px;text-align:left;border-top:3px solid #33454f}
+.creator-song-strip button.active{border-color:#63dda0;background:#163024;color:#e6fff2}
+.creator-song-strip strong{max-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:10px}
+.creator-song-strip small{font-size:8px;color:#80949f}
+
+.timeline-toolbar{position:sticky;top:0;z-index:12;padding:8px;border:1px solid #293841;border-radius:5px;background:rgba(9,14,18,.97);backdrop-filter:blur(10px)}
+.timeline-toolbar>button.active{border-color:#63dda0;background:#173126;color:#dffff0}
+.timeline-edit-layout{min-height:0}
+.timeline-arranger{min-height:0}
+.timeline-scroll{scroll-behavior:smooth;overscroll-behavior:contain}
+.timeline-playhead{box-shadow:0 0 10px #fcf7d480}
+.timeline-cue-library{scrollbar-width:thin}
+
+.programmer-target-actions{flex-wrap:wrap;justify-content:flex-end}
+.programmer-target-actions button.active{border-color:#55e98d;background:#163123;color:#caffdc}
+.programmer-stage>.visualizer-3d{height:100%;min-height:0;border:0}
+.programmer-stage>.visualizer-3d .visualizer-3d-toolbar{padding:4px 6px}
+.programmer-stage>.visualizer-3d .visualizer-camera-bank button,
+.programmer-stage>.visualizer-3d .visualizer-playback-tools button{min-height:26px;padding:4px 6px;font-size:8px}
+
+.visualizer-3d-help{display:flex;align-items:center;justify-content:space-between;gap:12px}
+.visualizer-3d-help strong{color:#9fb4be;font-weight:700;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+
+@media(max-width:900px){
+  .creator-master-row{align-items:flex-start;flex-direction:column}
+  .programmer-target-actions{gap:3px}
+  .programmer-target-actions button{padding:5px 7px}
+}
