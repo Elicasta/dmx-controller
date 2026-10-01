@@ -6,6 +6,8 @@ import {
   interpolateVisualizerCamera,
   orbitVisualizerCamera,
   projectVisualizerPoint,
+  screenRayFromVisualizerPoint,
+  intersectVisualizerRayWithYPlane,
   visualizerCameraPreset,
   visualizerFlybyCamera
 } from './visualizer-camera';
@@ -52,4 +54,16 @@ describe('visualizer camera math', () => {
     expect(Number.isFinite(flyby.position.x)).toBe(true);
     expect(Number.isFinite(flyby.target.z)).toBe(true);
   });
+  it('converts a screen point back onto a stage height plane', () => {
+    const camera = visualizerCameraPreset('foh', DEFAULT_STAGE_DIMENSIONS);
+    const point = { x: 1.2, y: .75, z: DEFAULT_STAGE_DIMENSIONS.depth * .5 };
+    const projected = projectVisualizerPoint(point, camera, 1200, 700);
+    const ray = screenRayFromVisualizerPoint(projected.x, projected.y, 1200, 700, camera);
+    const intersection = intersectVisualizerRayWithYPlane(ray, point.y);
+
+    expect(intersection).not.toBeNull();
+    expect(intersection!.x).toBeCloseTo(point.x, 3);
+    expect(intersection!.z).toBeCloseTo(point.z, 3);
+  });
+
 });

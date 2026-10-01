@@ -124,6 +124,7 @@ import {
   metersToDisplay,
   pointAlongRay,
   type CalibrationObservation,
+  type EulerDegrees,
   type StageDimensions,
   type StageUnit,
   type Vec3
@@ -3045,6 +3046,21 @@ export default function App() {
     }));
   }
 
+  function updateStageElementTransform(id: string, update: { position?: Vec3; rotation?: EulerDegrees }) {
+    setActiveStagePresetId(null);
+    setStageElements((current) => current.map((element) => {
+      if (element.id !== id) return element;
+      const migrated = migrateStageElement(element, stageSettings.dimensions);
+      return {
+        ...migrated,
+        transform: {
+          position: update.position ? { ...update.position } : { ...migrated.transform!.position },
+          rotation: update.rotation ? { ...update.rotation } : { ...migrated.transform!.rotation }
+        }
+      };
+    }));
+  }
+
   function updateStageElementDimension(id: string, axis: 'x' | 'y' | 'z', value: number) {
     setActiveStagePresetId(null);
     const safeValue = Math.max(.03, Math.min(100, Number.isFinite(value) ? value : .03));
@@ -3401,16 +3417,17 @@ export default function App() {
     const recipe=FX_RECIPES.find(r=>r.id===recipeId);if(!recipe)return;
     if(showFile.cues.length>=200||editingTimeline.clips.length>=1000){setMessage('Cue or timeline clip limit reached.');return;}
     try {
-      const section={...createSection(recipe.name,cueTimelineSong??'Timeline FX',selectedGroup?.id??'',editingTimeline.bpm),recipeId,fadeMs:0,energy:100,intensity:100};
+      const targetGroupId=recipe.scope==='scene'?'':selectedGroup?.id??'';
+      const section={...createSection(recipe.name,cueTimelineSong??'Timeline FX',targetGroupId,editingTimeline.bpm),recipeId,fadeMs:0,energy:100,intensity:100};
       const built=buildSectionCues([section],patchRef.current,showFile.groups??[])[0];
       const cue={...built,name:recipe.name,sourceSectionId:undefined,changes:[] as DmxUpdate[],universe:undefined};
-      const clip={id:crypto.randomUUID(),cueId:cue.id,startBar,lengthBars:8,lane,enabled:true};
+      const clip={id:crypto.randomUUID(),cueId:cue.id,startBar,lengthBars:recipe.defaultBars??8,lane,enabled:true};
       setShowFile(current=>{
         const next={...current,cues:renumberCues([...current.cues,cue])};
         if(timelineShowId)return {...next,timelineShows:(current.timelineShows??[]).map(item=>item.id===timelineShowId?{...item,timeline:{...item.timeline,clips:[...item.timeline.clips,clip]}}:item)};
         return {...next,timeline:{...(current.timeline??EMPTY_TIMELINE),clips:[...(current.timeline?.clips??[]),clip]}};
       });
-      setMessage(recipe.name+' added to FX lane '+(lane+1)+'.');
+      setMessage(recipe.name+' added to FX lane '+(lane+1)+(recipe.scope==='scene'?' · full scene.':'.'));
     }catch(error){setMessage(String(error));}
   }
   function updateEditingTimeline(timeline: typeof EMPTY_TIMELINE) {
@@ -4226,7 +4243,7 @@ export default function App() {
           </div>
         </header>
         <div className="visualizer-workspace-layout">
-          <div className="visualizer-workspace-canvas"><Visualizer3D snapshot={stageSnapshot} selectedElementId={selectedStageElementId} onSelectElement={(id) => { setSelectedStageElementId(id); clearFixtureSelection(); }}/></div>
+          <div className="visualizer-workspace-canvas"><Visualizer3D snapshot={stageSnapshot} selectedElementId={selectedStageElementId} onSelectElement={(id) => { setSelectedStageElementId(id); clearFixtureSelection(); }} onTransformElement={updateStageElementTransform}/></div>
           <aside className="visualizer-workspace-sidebar">
             <section className="visualizer-scene-tree">
               <span>SCENE</span>

@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent, type WheelEvent as ReactWheelEvent } from 'react';
 import { fixtureGeometryState } from '../core/fixture-geometry';
-import { cameraBasis, cameraOrbitFromPose, orbitVisualizerCamera, projectVisualizerPoint, visualizerCameraPreset, visualizerFlybyCamera, type VisualizerCamera, type VisualizerCameraPreset } from '../core/visualizer-camera';
+import { cameraBasis, cameraOrbitFromPose, intersectVisualizerRayWithYPlane, orbitVisualizerCamera, projectVisualizerPoint, screenRayFromVisualizerPoint, visualizerCameraPreset, visualizerFlybyCamera, type VisualizerCamera, type VisualizerCameraPreset } from '../core/visualizer-camera';
 import { pointAlongRay, type EulerDegrees, type StageDimensions, type Vec3 } from '../core/geometry';
 import { findMode, readFixtureParameter, type PatchedFixture } from '../lib/fixtures';
 import { stageElementPosition, type StageElement } from '../lib/stage';
@@ -13,7 +13,8 @@ export type VisualizerSnapshot = {
   blackout: boolean;
 };
 
-type VisualizerQuality = 'fast' | 'quality';
+type VisualizerQuality = 'fast' | 'quality' | 'high';
+type VisualizerTransformMode = 'navigate' | 'move' | 'rotate';
 type CameraSelection = VisualizerCameraPreset | 'custom';
 
 type MediaEntry = {
@@ -116,25 +117,38 @@ function shade(color: string, factor: number, alpha = 1) {
   return `rgba(${Math.round(red * factor)},${Math.round(green * factor)},${Math.round(blue * factor)},${alpha})`;
 }
 
+function rgba(color: string, alpha: number) {
+  const rgb = color.match(/^rgb\(\s*(\d+(?:\.\d+)?)\s*,\s*(\d+(?:\.\d+)?)\s*,\s*(\d+(?:\.\d+)?)\s*\)$/i);
+  if (rgb) return `rgba(${rgb[1]},${rgb[2]},${rgb[3]},${clamp(alpha, 0, 1)})`;
+  const [red, green, blue] = parseHex(color);
+  return `rgba(${red},${green},${blue},${clamp(alpha, 0, 1)})`;
+}
+
 function fixtureColor(snapshot: VisualizerSnapshot, fixture: PatchedFixture): string {
   const mode = findMode(fixture);
   const has = (parameter: string) => mode?.channels.some((channel) => channel.parameter === parameter) ?? false;
-  const red = has('red') ? readFixtureParameter(snapshot.output, fixture, 'red') : 255;
-  const green = has('green') ? readFixtureParameter(snapshot.output, fixture, 'green') : 255;
-  const blue = has('blue') ? readFixtureParameter(snapshot.output, fixture, 'blue') : 255;
+  const hasRgb = has('red') || has('green') || has('blue');
+  const red = has('red') ? readFixtureParameter(snapshot.output, fixture, 'red') : hasRgb ? 0 : 255;
+  const green = has('green') ? readFixtureParameter(snapshot.output, fixture, 'green') : hasRgb ? 0 : 255;
+  const blue = has('blue') ? readFixtureParameter(snapshot.output, fixture, 'blue') : hasRgb ? 0 : 255;
   const white = has('white') ? readFixtureParameter(snapshot.output, fixture, 'white') : 0;
   const amber = has('amber') ? readFixtureParameter(snapshot.output, fixture, 'amber') : 0;
-  const r = clamp(red + white * .7 + amber * .85, 0, 255);
-  const g = clamp(green + white * .7 + amber * .35, 0, 255);
-  const b = clamp(blue + white * .7, 0, 255);
+  const uv = has('uv') ? readFixtureParameter(snapshot.output, fixture, 'uv') : 0;
+  const r = clamp(red + white * .72 + amber * .92 + uv * .34, 0, 255);
+  const g = clamp(green + white * .72 + amber * .46 + uv * .05, 0, 255);
+  const b = clamp(blue + white * .76 + uv * .95, 0, 255);
   return `rgb(${Math.round(r)},${Math.round(g)},${Math.round(b)})`;
 }
 
 function fixtureIntensity(snapshot: VisualizerSnapshot, fixture: PatchedFixture): number {
   if (snapshot.blackout) return 0;
   const mode = findMode(fixture);
-  const hasDimmer = mode?.channels.some((channel) => channel.parameter === 'dimmer') ?? false;
-  return hasDimmer ? readFixtureParameter(snapshot.output, fixture, 'dimmer') / 255 : 1;
+  const has = (parameter: string) => mode?.channels.some((channel) => channel.parameter === parameter) ?? false;
+  if (has('dimmer')) return readFixtureParameter(snapshot.output, fixture, 'dimmer') / 255;
+  const additive = ['red', 'green', 'blue', 'white', 'amber', 'uv']
+    .filter(has)
+    .map((parameter) => readFixtureParameter(snapshot.output, fixture, parameter as 'red' | 'green' | 'blue' | 'white' | 'amber' | 'uv'));
+  return additive.length ? Math.max(...additive) / 255 : 1;
 }
 
 function polygon(ctx: CanvasRenderingContext2D, points: readonly Projected[]) {
@@ -240,7 +254,7 @@ function objectFaces(element: StageElement, stage: StageDimensions, camera: Visu
 function drawFloorGrid(ctx: CanvasRenderingContext2D, camera: VisualizerCamera, stage: StageDimensions, width: number, height: number, quality: VisualizerQuality) {
   const roomHalf = stage.roomWidth / 2;
   const roomDepth = Math.max(stage.roomDepth, stage.depth * 1.5);
-  const step = quality === 'quality' ? 1 : 2;
+  const step = quality === 'high' ? .5 : quality === 'quality' ? 1 : 2;
   ctx.save();
   ctx.lineWidth = 1;
 
@@ -330,44 +344,95 @@ function drawBeams(
   quality: VisualizerQuality
 ) {
   const basis = cameraBasis(camera);
-  const length = Math.max(snapshot.dimensions.roomDepth, snapshot.dimensions.depth * 2.1);
+  const maxLength = Math.max(snapshot.dimensions.roomDepth, snapshot.dimensions.depth * 2.1);
+  const layerCount = quality === 'high' ? 6 : quality === 'quality' ? 4 : 2;
   ctx.save();
   ctx.globalCompositeOperation = 'lighter';
 
   snapshot.patch.forEach((fixture, index) => {
-    const intensity = fixtureIntensity(snapshot, fixture);
-    if (intensity <= .01) return;
+    const rawIntensity = fixtureIntensity(snapshot, fixture);
+    if (rawIntensity <= .01) return;
+    const intensity = Math.pow(rawIntensity, 1.18);
     const geometry = fixtureGeometryState(snapshot.output, fixture, index, snapshot.patch.length, snapshot.dimensions);
-    const endpoint = pointAlongRay(geometry.beam, length);
-    const radius = Math.max(.03, Math.tan(radians(geometry.beam.angleDegrees / 2)) * length);
+
+    let beamLength = maxLength;
+    let floorHit = false;
+    if (geometry.beam.direction.y < -.015) {
+      const floorDistance = (0 - geometry.beam.origin.y) / geometry.beam.direction.y;
+      if (floorDistance > .05 && floorDistance < beamLength) {
+        beamLength = floorDistance;
+        floorHit = true;
+      }
+    }
+
+    const endpoint = pointAlongRay(geometry.beam, beamLength);
+    const radius = Math.max(.035, Math.tan(radians(geometry.beam.angleDegrees / 2)) * beamLength);
     const start = projectVisualizerPoint(geometry.beam.origin, camera, width, height);
-    const endLeft = projectVisualizerPoint(add(endpoint, scale(basis.right, -radius)), camera, width, height);
-    const endRight = projectVisualizerPoint(add(endpoint, scale(basis.right, radius)), camera, width, height);
-    if (start.depth <= 0 || endLeft.depth <= 0 || endRight.depth <= 0) return;
+    const end = projectVisualizerPoint(endpoint, camera, width, height);
+    if (start.depth <= 0 || end.depth <= 0) return;
 
     const color = fixtureColor(snapshot, fixture);
-    const alpha = clamp((quality === 'quality' ? .34 : .23) * intensity * (.35 + haze), .03, .7);
-    const gradient = ctx.createLinearGradient(start.x, start.y, (endLeft.x + endRight.x) / 2, (endLeft.y + endRight.y) / 2);
-    gradient.addColorStop(0, color.replace('rgb(', 'rgba(').replace(')', `,${alpha * .95})`));
-    gradient.addColorStop(.65, color.replace('rgb(', 'rgba(').replace(')', `,${alpha * .55})`));
-    gradient.addColorStop(1, color.replace('rgb(', 'rgba(').replace(')', ',0)'));
+    const hazeGain = .22 + haze * .92;
+    const baseAlpha = clamp((quality === 'high' ? .26 : quality === 'quality' ? .22 : .16) * intensity * hazeGain, .025, .72);
 
+    for (let layer = layerCount - 1; layer >= 0; layer -= 1) {
+      const normalized = (layer + 1) / layerCount;
+      const widthScale = .22 + normalized * .9;
+      const layerRadius = radius * widthScale;
+      const endLeft = projectVisualizerPoint(add(endpoint, scale(basis.right, -layerRadius)), camera, width, height);
+      const endRight = projectVisualizerPoint(add(endpoint, scale(basis.right, layerRadius)), camera, width, height);
+      if (endLeft.depth <= 0 || endRight.depth <= 0) continue;
+
+      const alpha = baseAlpha * (1 - normalized * .55) * (quality === 'high' ? 1.08 : 1);
+      const gradient = ctx.createLinearGradient(start.x, start.y, end.x, end.y);
+      gradient.addColorStop(0, rgba(color, alpha * 1.45));
+      gradient.addColorStop(.08, rgba(color, alpha * 1.25));
+      gradient.addColorStop(.58, rgba(color, alpha * .72));
+      gradient.addColorStop(1, rgba(color, floorHit ? alpha * .18 : 0));
+
+      const sourceHalfWidth = Math.max(1.2, 4.5 * (1 - normalized * .6));
+      ctx.beginPath();
+      ctx.moveTo(start.x - sourceHalfWidth, start.y);
+      ctx.lineTo(start.x + sourceHalfWidth, start.y);
+      ctx.lineTo(endRight.x, endRight.y);
+      ctx.lineTo(endLeft.x, endLeft.y);
+      ctx.closePath();
+      ctx.fillStyle = gradient;
+      ctx.fill();
+    }
+
+    const core = ctx.createLinearGradient(start.x, start.y, end.x, end.y);
+    core.addColorStop(0, rgba(color, clamp(baseAlpha * 2.6, 0, .96)));
+    core.addColorStop(.35, rgba(color, clamp(baseAlpha * 1.35, 0, .75)));
+    core.addColorStop(1, rgba(color, floorHit ? baseAlpha * .2 : 0));
+    ctx.strokeStyle = core;
+    ctx.lineWidth = quality === 'high' ? Math.max(1.4, intensity * 2.6) : Math.max(1, intensity * 1.8);
     ctx.beginPath();
-    ctx.moveTo(start.x - 1.5, start.y);
-    ctx.lineTo(start.x + 1.5, start.y);
-    ctx.lineTo(endRight.x, endRight.y);
-    ctx.lineTo(endLeft.x, endLeft.y);
-    ctx.closePath();
-    ctx.fillStyle = gradient;
+    ctx.moveTo(start.x, start.y);
+    ctx.lineTo(end.x, end.y);
+    ctx.stroke();
+
+    const sourceRadius = clamp((quality === 'high' ? 150 : 110) / start.depth, 5, quality === 'high' ? 24 : 17);
+    const sourceGlow = ctx.createRadialGradient(start.x, start.y, 0, start.x, start.y, sourceRadius);
+    sourceGlow.addColorStop(0, rgba(color, clamp(intensity * .95, 0, .95)));
+    sourceGlow.addColorStop(.28, rgba(color, clamp(intensity * .42, 0, .55)));
+    sourceGlow.addColorStop(1, rgba(color, 0));
+    ctx.fillStyle = sourceGlow;
+    ctx.beginPath();
+    ctx.arc(start.x, start.y, sourceRadius, 0, Math.PI * 2);
     ctx.fill();
 
-    if (quality === 'quality') {
-      ctx.strokeStyle = color.replace('rgb(', 'rgba(').replace(')', `,${Math.min(.8, alpha * 1.45)})`);
-      ctx.lineWidth = Math.max(1, intensity * 1.6);
+    if (floorHit) {
+      const edge = projectVisualizerPoint(add(endpoint, scale(basis.right, radius * .6)), camera, width, height);
+      const poolRadius = clamp(Math.hypot(edge.x - end.x, edge.y - end.y), 5, 120);
+      const pool = ctx.createRadialGradient(end.x, end.y, 0, end.x, end.y, poolRadius);
+      pool.addColorStop(0, rgba(color, clamp(baseAlpha * 1.7, 0, .72)));
+      pool.addColorStop(.42, rgba(color, clamp(baseAlpha * .7, 0, .34)));
+      pool.addColorStop(1, rgba(color, 0));
+      ctx.fillStyle = pool;
       ctx.beginPath();
-      ctx.moveTo(start.x, start.y);
-      ctx.lineTo((endLeft.x + endRight.x) / 2, (endLeft.y + endRight.y) / 2);
-      ctx.stroke();
+      ctx.ellipse(end.x, end.y, poolRadius, Math.max(2, poolRadius * .34), 0, 0, Math.PI * 2);
+      ctx.fill();
     }
   });
 
@@ -379,14 +444,14 @@ function crowdPoints(stage: StageDimensions, quality: VisualizerQuality) {
   const half = Math.min(stage.roomWidth / 2 - .8, Math.max(stage.width / 2, 4));
   const start = stage.depth + 1.2;
   const end = Math.max(start + 1, stage.roomDepth - 1.2);
-  const xStep = quality === 'quality' ? .72 : 1.05;
-  const zStep = quality === 'quality' ? .82 : 1.18;
+  const xStep = quality === 'high' ? .62 : quality === 'quality' ? .78 : 1.08;
+  const zStep = quality === 'high' ? .7 : quality === 'quality' ? .9 : 1.22;
   let row = 0;
   for (let z = start; z <= end; z += zStep) {
     const offset = row % 2 ? xStep * .45 : 0;
     for (let x = -half + offset; x <= half; x += xStep) {
       points.push({ x, y: 0, z });
-      if (points.length >= (quality === 'quality' ? 420 : 190)) return points;
+      if (points.length >= (quality === 'high' ? 520 : quality === 'quality' ? 360 : 170)) return points;
     }
     row += 1;
   }
@@ -403,7 +468,7 @@ function drawCrowd(ctx: CanvasRenderingContext2D, camera: VisualizerCamera, stag
   for (const item of people) {
     const foot = projectVisualizerPoint(item.point, camera, width, height);
     const head = item.projected;
-    const size = clamp(210 / head.depth, 2.2, quality === 'quality' ? 8 : 6);
+    const size = clamp(210 / head.depth, 2.2, quality === 'high' ? 9 : quality === 'quality' ? 8 : 6);
     ctx.strokeStyle = 'rgba(137,151,160,.36)';
     ctx.fillStyle = 'rgba(164,176,183,.42)';
     ctx.lineWidth = Math.max(1, size * .24);
@@ -424,12 +489,28 @@ function drawFixtureBodies(ctx: CanvasRenderingContext2D, snapshot: VisualizerSn
     const point = projectVisualizerPoint(geometry.beam.origin, camera, width, height);
     if (point.depth <= 0) return;
     const radius = clamp(80 / point.depth, 3, 8);
+    const intensity = fixtureIntensity(snapshot, fixture);
+    const color = fixtureColor(snapshot, fixture);
+    if (intensity > .01) {
+      const glowRadius = radius * (2.2 + intensity * 1.8);
+      const glow = ctx.createRadialGradient(point.x, point.y, 0, point.x, point.y, glowRadius);
+      glow.addColorStop(0, rgba(color, Math.min(.88, intensity)));
+      glow.addColorStop(.35, rgba(color, Math.min(.34, intensity * .4)));
+      glow.addColorStop(1, rgba(color, 0));
+      ctx.save();
+      ctx.globalCompositeOperation = 'lighter';
+      ctx.fillStyle = glow;
+      ctx.beginPath();
+      ctx.arc(point.x, point.y, glowRadius, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.restore();
+    }
     ctx.beginPath();
     ctx.arc(point.x, point.y, radius, 0, Math.PI * 2);
-    ctx.fillStyle = '#151b21';
+    ctx.fillStyle = '#11161b';
     ctx.fill();
-    ctx.strokeStyle = fixture.labelColor ?? '#788a95';
-    ctx.lineWidth = 1.2;
+    ctx.strokeStyle = intensity > .01 ? rgba(color, .86) : fixture.labelColor ?? '#788a95';
+    ctx.lineWidth = intensity > .01 ? 1.7 : 1.2;
     ctx.stroke();
   });
 }
@@ -464,7 +545,7 @@ function drawFaces(
       }
     }
 
-    if (face.label && quality === 'quality') {
+    if (face.label && quality !== 'fast') {
       const centerX = face.points.reduce((sum, point) => sum + point.x, 0) / face.points.length;
       const centerY = face.points.reduce((sum, point) => sum + point.y, 0) / face.points.length;
       ctx.fillStyle = 'rgba(224,234,239,.76)';
@@ -627,7 +708,7 @@ function drawAssetDetails(
       drawWorldCircle(ctx, camera, width, height, worldFromElementLocal(element, stage, {x:w*.22,y:h*.12,z:0}), Math.max(.1,w*.12), '#20272d', stroke);
       drawWorldLine(ctx, camera, width, height, worldFromElementLocal(element, stage, {x:-w*.4,y:h*.28,z:0}), worldFromElementLocal(element, stage, {x:-w*.06,y:h*.28,z:0}), '#c5a95d', 1.4);
       drawWorldLine(ctx, camera, width, height, worldFromElementLocal(element, stage, {x:w*.08,y:h*.34,z:0}), worldFromElementLocal(element, stage, {x:w*.42,y:h*.34,z:0}), '#c5a95d', 1.4);
-      if (element.assetKind === 'drum-shield' && quality === 'quality') {
+      if (element.assetKind === 'drum-shield' && quality !== 'fast') {
         for (const x of [-w*.48,-w*.16,w*.16,w*.48]) {
           drawWorldLine(ctx, camera, width, height, worldFromElementLocal(element, stage, {x,y:-h*.45,z:-d*.48}), worldFromElementLocal(element, stage, {x,y:h*.48,z:-d*.48}), 'rgba(190,215,225,.42)', 1);
         }
@@ -689,25 +770,40 @@ export default function Visualizer3D({
   compact = false,
   className = '',
   selectedElementId,
-  onSelectElement
+  onSelectElement,
+  onTransformElement
 }: {
   snapshot: VisualizerSnapshot;
   compact?: boolean;
   className?: string;
   selectedElementId?: string | null;
   onSelectElement?: (id: string) => void;
+  onTransformElement?: (id: string, update: { position?: Vec3; rotation?: EulerDegrees }) => void;
 }) {
   const hostRef = useRef<HTMLDivElement | null>(null);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const mediaRef = useRef<Map<string, MediaEntry>>(new Map());
-  const dragRef = useRef<{ pointerId: number; x: number; y: number; startX: number; startY: number; moved: boolean } | null>(null);
+  const dragRef = useRef<{
+    pointerId: number;
+    x: number;
+    y: number;
+    startX: number;
+    startY: number;
+    moved: boolean;
+    mode: VisualizerTransformMode;
+    elementId?: string;
+    startPosition?: Vec3;
+    startRotation?: EulerDegrees;
+    anchor?: Vec3;
+  } | null>(null);
   const cameraRef = useRef<VisualizerCamera>(visualizerCameraPreset('foh', snapshot.dimensions));
   const flybyStartRef = useRef(0);
   const [cameraSelection, setCameraSelection] = useState<CameraSelection>('foh');
   const [orbit, setOrbit] = useState(() => cameraOrbitFromPose(visualizerCameraPreset('foh', snapshot.dimensions)));
   const [haze, setHaze] = useState(.68);
   const [showCrowd, setShowCrowd] = useState(true);
-  const [quality, setQuality] = useState<VisualizerQuality>('quality');
+  const [quality, setQuality] = useState<VisualizerQuality>('high');
+  const [transformMode, setTransformMode] = useState<VisualizerTransformMode>('navigate');
   const [playingFlyby, setPlayingFlyby] = useState(false);
   const [mediaRevision, setMediaRevision] = useState(0);
 
@@ -800,13 +896,13 @@ export default function Visualizer3D({
 
     const draw = (now: number) => {
       if (disposed) return;
-      const targetFps = quality === 'quality' ? 30 : 24;
+      const targetFps = quality === 'high' ? 60 : quality === 'quality' ? 45 : 30;
       if (now - lastDraw >= 1000 / targetFps) {
         lastDraw = now;
         const bounds = host.getBoundingClientRect();
         const cssWidth = Math.max(320, Math.floor(bounds.width));
         const cssHeight = Math.max(compact ? 260 : 380, Math.floor(bounds.height));
-        const dpr = Math.min(window.devicePixelRatio || 1, quality === 'quality' ? 2 : 1.35);
+        const dpr = Math.min(window.devicePixelRatio || 1, quality === 'high' ? 2.5 : quality === 'quality' ? 2 : 1.35);
         const pixelWidth = Math.floor(cssWidth * dpr);
         const pixelHeight = Math.floor(cssHeight * dpr);
         if (canvas.width !== pixelWidth || canvas.height !== pixelHeight) {
@@ -851,7 +947,7 @@ export default function Visualizer3D({
 
         const vignette = context.createRadialGradient(cssWidth / 2, cssHeight / 2, Math.min(cssWidth, cssHeight) * .2, cssWidth / 2, cssHeight / 2, Math.max(cssWidth, cssHeight) * .72);
         vignette.addColorStop(0, 'rgba(0,0,0,0)');
-        vignette.addColorStop(1, quality === 'quality' ? 'rgba(0,0,0,.38)' : 'rgba(0,0,0,.24)');
+        vignette.addColorStop(1, quality === 'high' ? 'rgba(0,0,0,.32)' : quality === 'quality' ? 'rgba(0,0,0,.38)' : 'rgba(0,0,0,.24)');
         context.fillStyle = vignette;
         context.fillRect(0, 0, cssWidth, cssHeight);
 
@@ -870,46 +966,114 @@ export default function Visualizer3D({
     };
   }, [snapshot, orbit, haze, showCrowd, quality, compact, playingFlyby, cameraSelection, target, mediaRevision, selectedElementId]);
 
-  function beginOrbit(event: ReactPointerEvent<HTMLCanvasElement>) {
-    if (event.button !== 0 && event.pointerType === 'mouse') return;
-    event.currentTarget.setPointerCapture(event.pointerId);
-    dragRef.current = { pointerId: event.pointerId, x: event.clientX, y: event.clientY, startX: event.clientX, startY: event.clientY, moved: false };
+  function pickElement(event: ReactPointerEvent<HTMLCanvasElement>) {
+    const bounds = event.currentTarget.getBoundingClientRect();
+    const x = event.clientX - bounds.left;
+    const y = event.clientY - bounds.top;
+    const camera = cameraRef.current;
+    return snapshot.elements.flatMap((element) => objectFaces(element, snapshot.dimensions, camera, bounds.width, bounds.height))
+      .filter((face) => pointInsideFace(x, y, face.points))
+      .sort((a, b) => a.depth - b.depth)[0]?.elementId ?? null;
   }
 
-  function moveOrbit(event: ReactPointerEvent<HTMLCanvasElement>) {
+  function beginInteraction(event: ReactPointerEvent<HTMLCanvasElement>) {
+    if (event.button !== 0 && event.pointerType === 'mouse') return;
+    const hitId = pickElement(event);
+    const mode: VisualizerTransformMode = transformMode !== 'navigate' && onTransformElement && hitId ? transformMode : 'navigate';
+    const element = hitId ? snapshot.elements.find((item) => item.id === hitId) : undefined;
+    if (hitId) onSelectElement?.(hitId);
+    event.currentTarget.setPointerCapture(event.pointerId);
+
+    const state: NonNullable<typeof dragRef.current> = {
+      pointerId: event.pointerId,
+      x: event.clientX,
+      y: event.clientY,
+      startX: event.clientX,
+      startY: event.clientY,
+      moved: false,
+      mode
+    };
+
+    if (mode !== 'navigate' && element) {
+      const position = stageElementPosition(element, snapshot.dimensions);
+      state.elementId = element.id;
+      state.startPosition = { ...position };
+      state.startRotation = { ...(element.transform?.rotation ?? { yaw: 0, pitch: 0, roll: 0 }) };
+      if (mode === 'move') {
+        const bounds = event.currentTarget.getBoundingClientRect();
+        const ray = screenRayFromVisualizerPoint(event.clientX - bounds.left, event.clientY - bounds.top, bounds.width, bounds.height, cameraRef.current);
+        state.anchor = intersectVisualizerRayWithYPlane(ray, position.y) ?? undefined;
+      }
+      setPlayingFlyby(false);
+    }
+    dragRef.current = state;
+  }
+
+  function moveInteraction(event: ReactPointerEvent<HTMLCanvasElement>) {
     const drag = dragRef.current;
     if (!drag || drag.pointerId !== event.pointerId) return;
     const dx = event.clientX - drag.x;
     const dy = event.clientY - drag.y;
     drag.x = event.clientX;
     drag.y = event.clientY;
-    if (!drag.moved && Math.hypot(event.clientX - drag.startX, event.clientY - drag.startY) > 4) {
-      drag.moved = true;
+    if (!drag.moved && Math.hypot(event.clientX - drag.startX, event.clientY - drag.startY) > 3) drag.moved = true;
+    if (!drag.moved) return;
+
+    if (drag.mode === 'navigate') {
       setPlayingFlyby(false);
       setCameraSelection('custom');
+      setOrbit((current) => ({
+        ...current,
+        yaw: current.yaw - dx * .006,
+        pitch: clamp(current.pitch + dy * .005, -.15, 1.28)
+      }));
+      return;
     }
-    if (!drag.moved) return;
-    setOrbit((current) => ({
-      ...current,
-      yaw: current.yaw - dx * .006,
-      pitch: clamp(current.pitch + dy * .005, -.15, 1.28)
-    }));
+
+    if (!drag.elementId || !onTransformElement || !drag.startPosition || !drag.startRotation) return;
+
+    if (drag.mode === 'rotate') {
+      onTransformElement(drag.elementId, {
+        rotation: {
+          ...drag.startRotation,
+          yaw: drag.startRotation.yaw + (event.clientX - drag.startX) * .45,
+          pitch: clamp(drag.startRotation.pitch - (event.clientY - drag.startY) * .2, -89, 89)
+        }
+      });
+      return;
+    }
+
+    if (event.shiftKey) {
+      onTransformElement(drag.elementId, {
+        position: {
+          ...drag.startPosition,
+          y: Math.max(0, drag.startPosition.y - (event.clientY - drag.startY) * .012)
+        }
+      });
+      return;
+    }
+
+    const bounds = event.currentTarget.getBoundingClientRect();
+    const ray = screenRayFromVisualizerPoint(event.clientX - bounds.left, event.clientY - bounds.top, bounds.width, bounds.height, cameraRef.current);
+    const point = intersectVisualizerRayWithYPlane(ray, drag.startPosition.y);
+    if (!point || !drag.anchor) return;
+    onTransformElement(drag.elementId, {
+      position: {
+        x: drag.startPosition.x + point.x - drag.anchor.x,
+        y: drag.startPosition.y,
+        z: drag.startPosition.z + point.z - drag.anchor.z
+      }
+    });
   }
 
-  function endOrbit(event: ReactPointerEvent<HTMLCanvasElement>) {
+  function endInteraction(event: ReactPointerEvent<HTMLCanvasElement>) {
     const drag = dragRef.current;
     if (!drag || drag.pointerId !== event.pointerId) return;
     dragRef.current = null;
     if (event.currentTarget.hasPointerCapture(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId);
-    if (!drag.moved && onSelectElement) {
-      const bounds = event.currentTarget.getBoundingClientRect();
-      const x = event.clientX - bounds.left;
-      const y = event.clientY - bounds.top;
-      const camera = cameraRef.current;
-      const candidates = snapshot.elements.flatMap((element) => objectFaces(element, snapshot.dimensions, camera, bounds.width, bounds.height))
-        .filter((face) => pointInsideFace(x, y, face.points))
-        .sort((a, b) => a.depth - b.depth);
-      if (candidates[0]) onSelectElement(candidates[0].elementId);
+    if (!drag.moved && drag.mode === 'navigate') {
+      const hitId = pickElement(event);
+      if (hitId) onSelectElement?.(hitId);
     }
   }
 
@@ -944,9 +1108,14 @@ export default function Visualizer3D({
       <div className="visualizer-playback-tools">
         <button className={playingFlyby ? 'active' : ''} onClick={toggleFlyby}>{playingFlyby ? 'Stop Flyby' : '▶ Flyby'}</button>
         <button onClick={() => setShowCrowd((value) => !value)} aria-pressed={showCrowd}>Crowd {showCrowd ? 'On' : 'Off'}</button>
-        <button onClick={() => setQuality((value) => value === 'quality' ? 'fast' : 'quality')}>Render {quality === 'quality' ? 'Quality' : 'Fast'}</button>
+        <button onClick={() => setQuality((value) => value === 'high' ? 'quality' : value === 'quality' ? 'fast' : 'high')}>Render {quality === 'high' ? 'High' : quality === 'quality' ? 'Quality' : 'Fast'}</button>
       </div>
       {!compact && <label className="visualizer-haze"><span>Haze {Math.round(haze * 100)}%</span><input type="range" min="0" max="1" step=".02" value={haze} onChange={(event) => setHaze(Number(event.target.value))}/></label>}
+      {!compact && onTransformElement && <div className="visualizer-transform-tools" role="group" aria-label="Scene transform tool">
+        <button className={transformMode === 'navigate' ? 'active' : ''} onClick={() => setTransformMode('navigate')}>Navigate</button>
+        <button className={transformMode === 'move' ? 'active' : ''} onClick={() => setTransformMode('move')}>Move</button>
+        <button className={transformMode === 'rotate' ? 'active' : ''} onClick={() => setTransformMode('rotate')}>Rotate</button>
+      </div>}
     </div>
     <div className="visualizer-fixture-state-list" aria-hidden="true" hidden>
       {snapshot.patch.map((fixture) => <span
@@ -960,12 +1129,13 @@ export default function Visualizer3D({
       ref={canvasRef}
       className="visualizer-3d-canvas"
       aria-label="Interactive 3D stage visualizer"
-      onPointerDown={beginOrbit}
-      onPointerMove={moveOrbit}
-      onPointerUp={endOrbit}
-      onPointerCancel={endOrbit}
+      data-tool={transformMode}
+      onPointerDown={beginInteraction}
+      onPointerMove={moveInteraction}
+      onPointerUp={endInteraction}
+      onPointerCancel={endInteraction}
       onWheel={zoom}
     />
-    {!compact && <div className="visualizer-3d-help">Drag to orbit · scroll to zoom · Flyby previews the room automatically</div>}
+    {!compact && <div className="visualizer-3d-help">{transformMode === 'navigate' ? 'Drag to orbit · scroll to zoom' : transformMode === 'move' ? 'Drag an object to move it · Shift-drag changes height' : 'Drag an object to rotate yaw + pitch'} · shared scene updates everywhere</div>}
   </section>;
 }
