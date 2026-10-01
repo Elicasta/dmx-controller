@@ -1,4 +1,4 @@
-import { useState, type Dispatch, type SetStateAction } from "react";
+import { useEffect, useMemo, useState, type Dispatch, type SetStateAction } from "react";
 import type { PatchedFixture } from "../lib/fixtures";
 import type { FixtureGroup } from "../lib/show";
 import type { CustomEffect } from "../lib/effects";
@@ -20,6 +20,8 @@ type Props = {
   onStop: () => void;
   onTimeline: () => void;
   onEditFx: (effect: CustomEffect) => void;
+  masterBpm: number;
+  onMasterBpmChange: (bpm: number) => void;
 };
 const PRESETS = "lumarig-section-presets-v1";
 function loadPresets() {
@@ -40,9 +42,11 @@ export default function ShowCreator({
   onStop,
   onTimeline,
   onEditFx,
+  masterBpm,
+  onMasterBpmChange,
 }: Props) {
   const [song, setSong] = useState(sections[0]?.song ?? "New Song");
-  const [bpm, setBpm] = useState(sections[0]?.bpm ?? 100);
+  const [bpm, setBpm] = useState(sections[0]?.bpm ?? masterBpm);
   const [groupId, setGroupId] = useState(
     sections[0]?.groupId ?? groups[0]?.id ?? "",
   );
@@ -55,6 +59,16 @@ export default function ShowCreator({
   const [category, setCategory] = useState("All");
   const [presets, setPresets] = useState<ShowSection[]>(loadPresets);
   const selected = sections.find((s) => s.id === selectedId) ?? sections[0];
+  const songStats = useMemo(() => [...new Set(sections.map((section) => section.song))].map((name) => {
+    const items = sections.filter((section) => section.song === name);
+    return { name, count: items.length, bars: items.reduce((sum, section) => sum + section.bars, 0) };
+  }), [sections]);
+  useEffect(() => setBpm(masterBpm), [masterBpm]);
+  const setMasterTempo = (value: number) => {
+    const next = Math.max(20, Math.min(300, Number.isFinite(value) ? value : 120));
+    setBpm(next);
+    onMasterBpmChange(next);
+  };
   const preview = (section: ShowSection) => {
     setSelectedId(section.id);
     setPreviewingId(section.id);
@@ -159,15 +173,13 @@ export default function ShowCreator({
                 <input value={song} onChange={(e) => setSong(e.target.value)} />
               </label>
               <label>
-                Tempo
+                Master tempo
                 <input
                   type="number"
                   min={20}
                   max={300}
                   value={bpm}
-                  onChange={(e) =>
-                    setBpm(Math.max(20, Math.min(300, Number(e.target.value))))
-                  }
+                  onChange={(e) => setMasterTempo(Number(e.target.value))}
                 />
               </label>
               <label>
@@ -180,6 +192,7 @@ export default function ShowCreator({
                 </select>
               </label>
             </div>
+            <div className="creator-master-row"><span>{bpm} BPM drives new sections, timeline playback and live FX.</span><button disabled={!sections.length} onClick={() => setSections((all) => all.map((section) => ({ ...section, bpm })))}>Apply master tempo to all sections</button></div>
             <div className="creator-templates">
               {SONG_TEMPLATES.map((t) => (
                 <button
@@ -216,7 +229,8 @@ export default function ShowCreator({
               Drag to reorder. Each section becomes a reusable cue and a
               timeline clip.
             </p>
-            <div className="creator-song-filter"><select aria-label="Filter sections by song" value={songFilter} onChange={e=>setSongFilter(e.target.value)}><option value="">All songs</option>{[...new Set(sections.map(s=>s.song))].map(name=><option key={name}>{name}</option>)}</select><input aria-label="Find section" placeholder="Find a section…" value={sectionSearch} onChange={e=>setSectionSearch(e.target.value)}/></div>
+            <div className="creator-song-strip"><button className={!songFilter ? "active" : ""} onClick={() => setSongFilter("")}><strong>ALL SONGS</strong><small>{sections.length} sections</small></button>{songStats.map((item) => <button key={item.name} className={songFilter === item.name ? "active" : ""} onClick={() => { setSongFilter(item.name); setSong(item.name); const first = sections.find((section) => section.song === item.name); if (first) setGroupId(first.groupId); }}><strong>{item.name}</strong><small>{item.count} sections · {item.bars} bars</small></button>)}</div>
+            <div className="creator-song-filter"><select aria-label="Filter sections by song" value={songFilter} onChange={e=>setSongFilter(e.target.value)}><option value="">All songs</option>{songStats.map(item=><option key={item.name}>{item.name}</option>)}</select><input aria-label="Find section" placeholder="Find a section…" value={sectionSearch} onChange={e=>setSectionSearch(e.target.value)}/></div>
             <div className="section-list">
               {sections.length ? (
                 sections.map((s, index) => (!songFilter||s.song===songFilter) && (s.name+" "+s.song).toLowerCase().includes(sectionSearch.toLowerCase()) && (
@@ -369,7 +383,7 @@ export default function ShowCreator({
                   />
                 </label>
                 <label>
-                  Tempo
+                  Section tempo
                   <input
                     type="number"
                     min={20}
