@@ -6,6 +6,7 @@ export default defineConfig({
   use: {
     baseURL: "http://127.0.0.1:1420",
     channel: process.env.PLAYWRIGHT_CHANNEL,
+    launchOptions: process.env.LUMARIG_BROWSER_PATH ? {executablePath: process.env.LUMARIG_BROWSER_PATH, args: ["--no-sandbox", "--disable-dev-shm-usage"]} : undefined,
     viewport: { width: 1280, height: 800 },
     trace: "retain-on-failure",
   },
