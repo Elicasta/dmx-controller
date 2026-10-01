@@ -171,6 +171,17 @@ type ShowProjectSnapshot = {
   stageSettings: StageSettings;
   looks: FixtureLook[];
 };
+
+type ShowRecoverySnapshot = {
+  id: string;
+  savedAt: string;
+  reason: string;
+  show: ShowFile;
+  patch: PatchedFixture[];
+  stageElements: StageElement[];
+  stageSettings: StageSettings;
+  looks: FixtureLook[];
+};
 type StageDesignerMode = 'select' | 'move' | 'rotate' | 'aim' | 'measure' | 'target' | 'patch';
 
 function initialConsoleValue<T extends string>(key: string, allowed: readonly T[], fallback: T): T {
@@ -258,6 +269,8 @@ const CUSTOM_FX_STORAGE_KEY = 'dmx-controller.custom-fx.v1';
 const SHOW_STORAGE_KEY = 'dmx-controller.show.v1';
 const SHOW_BACKUP_STORAGE_KEY = 'dmx-controller.show.backup.v1';
 const SHOW_LIBRARY_STORAGE_KEY = 'dmx-controller.show-library.v1';
+const SONG_LIBRARY_STORAGE_KEY = 'dmx-controller.song-library.v1';
+const SHOW_RECOVERY_STORAGE_KEY = 'dmx-controller.show-recovery.v1';
 const PATCH_STORAGE_KEY = 'dmx-controller.patch.v1';
 const PATCH_BACKUP_STORAGE_KEY = 'dmx-controller.patch.backup.v1';
 const MIDI_STORAGE_KEY = 'dmx-controller.midi-map.v1';
@@ -432,6 +445,41 @@ function loadShowLibrary(): ShowProjectSnapshot[] {
   }
 }
 
+function loadSongLibrary(): SongProgram[] {
+  if (typeof window === 'undefined') return [];
+  try {
+    const parsed: unknown = JSON.parse(window.localStorage.getItem(SONG_LIBRARY_STORAGE_KEY) || '[]');
+    return Array.isArray(parsed) ? parsed.filter(isSongProgram).slice(0, 100) : [];
+  } catch {
+    return [];
+  }
+}
+
+function loadShowRecovery(): ShowRecoverySnapshot[] {
+  if (typeof window === 'undefined') return [];
+  try {
+    const parsed: unknown = JSON.parse(window.localStorage.getItem(SHOW_RECOVERY_STORAGE_KEY) || '[]');
+    if (!Array.isArray(parsed)) return [];
+    return parsed.filter((item): item is ShowRecoverySnapshot => {
+      if (!item || typeof item !== 'object') return false;
+      const candidate = item as Partial<ShowRecoverySnapshot>;
+      return typeof candidate.id === 'string'
+        && typeof candidate.savedAt === 'string'
+        && typeof candidate.reason === 'string'
+        && Boolean(candidate.show && isShowFile(candidate.show))
+        && Array.isArray(candidate.patch)
+        && candidate.patch.every(isPatchedFixture)
+        && Array.isArray(candidate.stageElements)
+        && candidate.stageElements.every(isStageElement)
+        && Array.isArray(candidate.looks)
+        && candidate.looks.every(isFixtureLook)
+        && Boolean(candidate.stageSettings);
+    }).slice(0, 12);
+  } catch {
+    return [];
+  }
+}
+
 function loadPatch(): PatchedFixture[] {
   if (typeof window === 'undefined') return DEFAULT_PATCH;
   try {
@@ -596,6 +644,10 @@ export default function App() {
   const [savedLooks, setSavedLooks] = useState<FixtureLook[]>(loadSavedLooks);
   const [showFile, setShowFile] = useState<ShowFile>(loadShowFile);
   const [showLibrary, setShowLibrary] = useState<ShowProjectSnapshot[]>(loadShowLibrary);
+  const [songLibrary, setSongLibrary] = useState<SongProgram[]>(loadSongLibrary);
+  const [showRecovery, setShowRecovery] = useState<ShowRecoverySnapshot[]>(loadShowRecovery);
+  const [transport, setTransport] = useState<TransportSnapshot>(() => makeTransportSnapshot());
+  const [connections, setConnections] = useState<ConnectionMap>(() => makeConnectionMap());
   const [liveBank, setLiveBank] = useState<LiveBank>('fixtures');
   const [liveProgrammerOpen, setLiveProgrammerOpen] = useState(false);
   const [livePaletteFamily, setLivePaletteFamily] = useState<LivePaletteFamily>('groups');
@@ -1023,6 +1075,14 @@ export default function App() {
     try { window.localStorage.setItem(SHOW_LIBRARY_STORAGE_KEY, JSON.stringify(showLibrary)); }
     catch { setMessage('Show library storage is full. Delete an older saved show or large recording.'); }
   }, [showLibrary]);
+  useEffect(() => {
+    try { window.localStorage.setItem(SONG_LIBRARY_STORAGE_KEY, JSON.stringify(songLibrary)); }
+    catch { setMessage('Song library storage is full. Remove older song programs or large embedded metadata.'); }
+  }, [songLibrary]);
+  useEffect(() => {
+    try { window.localStorage.setItem(SHOW_RECOVERY_STORAGE_KEY, JSON.stringify(showRecovery)); }
+    catch { /* recovery is best-effort and must never block the live application */ }
+  }, [showRecovery]);
   useEffect(() => window.localStorage.setItem(MIDI_STORAGE_KEY, JSON.stringify(midiMappings)), [midiMappings]);
   useEffect(() => window.localStorage.setItem(SETTINGS_STORAGE_KEY, JSON.stringify(settings)), [settings]);
   useEffect(() => {
