@@ -148,6 +148,10 @@ export function estimateTempoFromSamples(
     if (intervalConsistency >= .72 || preferred.score >= best.score * .82) best = preferred;
   }
 
+  // Use the actual analyzed lag for timing rather than the integer scan label.
+  // Several adjacent integer BPM candidates can quantize to the same analysis lag.
+  const effectiveBpm = clamp(60 / (best.lag * secondsPerFrame), minBpm, maxBpm);
+  const beatMs = 60000 / effectiveBpm;
   const phaseScores = Array.from({ length: best.lag }, () => 0);
   if (!peakFrames.length) {
     for (let phase = 0; phase < best.lag; phase += 1) {
@@ -155,15 +159,14 @@ export function estimateTempoFromSamples(
     }
   }
   const bestPhase = peakFrames.length
-    ? Math.round(((peakFrames[0] * secondsPerFrame * 1000) % (60000 / best.bpm)) / (secondsPerFrame * 1000)) % best.lag
+    ? Math.round(((peakFrames[0] * secondsPerFrame * 1000) % beatMs) / (secondsPerFrame * 1000)) % best.lag
     : phaseScores.reduce((winner, score, index) => score > phaseScores[winner] ? index : winner, 0);
 
   const baseline = median(candidates.map((candidate) => candidate.score));
   const confidence = clamp((best.score - baseline) / Math.max(.08, 1 - baseline), 0, 1);
-  const beatMs = 60000 / best.bpm;
 
   return {
-    bpm: Math.round(best.bpm),
+    bpm: Math.round(effectiveBpm),
     beatMs,
     firstBeatMs: bestPhase * secondsPerFrame * 1000,
     confidence
