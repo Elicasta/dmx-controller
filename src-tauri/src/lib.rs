@@ -28,11 +28,13 @@ fn open_media_output(app: tauri::AppHandle, asset_id: String) -> Result<(), Stri
     if let Some(window) = app.get_webview_window(label) {
         window.close().map_err(|e| e.to_string())?;
     }
-    let encoded = urlencoding::encode(&asset_id);
+    if !asset_id.chars().all(|value| value.is_ascii_alphanumeric() || value == '-' || value == '_') {
+        return Err("Invalid media asset id".into());
+    }
     tauri::WebviewWindowBuilder::new(
         &app,
         label,
-        tauri::WebviewUrl::App(format!("index.html?media-output={encoded}").into())
+        tauri::WebviewUrl::App(format!("index.html?media-output={asset_id}").into())
     )
         .title("LumaRig · Media Output")
         .inner_size(1280.0, 720.0)
