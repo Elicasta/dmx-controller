@@ -228,6 +228,7 @@ for (const width of [820, 1024, 1280])
     const presets = (await page.locator(".programmer-v3>.looks-strip").boundingBox());
     expect(presets).not.toBeNull();
     expect(deck.y + deck.height).toBeLessThanOrEqual(presets!.y + 1);
+    expect((await page.locator('.programmer-stage canvas.visualizer-3d-canvas').boundingBox())!.height).toBeGreaterThanOrEqual(180);
     await page.screenshot({ path: info.outputPath(`programmer-${width}.png`) });
     await page.getByRole("button", { name: "FX", exact: true }).click();
     await page.getByRole("button", { name: /Ocean Color Wave/ }).click();
@@ -648,4 +649,27 @@ test('New Show cancels if its atomic checkpoint fails', async ({page}) => {
   await page.getByRole('button',{name:'Song Bank',exact:true}).click();
   await expect(page.getByRole('status')).toHaveText('Saved');
   await expect(page.getByLabel('Song name Protected Song')).toBeVisible();
+});
+
+
+test('Programmer splitters persist, reset, and protect the Stage on narrow windows', async ({page}, info) => {
+ await seed(page); await page.goto('/');
+ await page.getByRole('button',{name:'CREATE',exact:true}).click();
+ const left=page.getByRole('separator',{name:'Resize left panel'});
+ await expect(left).toBeVisible();
+ await left.focus(); await left.press('ArrowRight');
+ await expect(left).toHaveAttribute('aria-valuenow','190');
+ await page.reload();
+ await page.getByRole('button',{name:'CREATE',exact:true}).click();
+ await expect(left).toHaveAttribute('aria-valuenow','190');
+ await left.dblclick();
+ await expect(left).toHaveAttribute('aria-valuenow','180');
+ await page.setViewportSize({width:820,height:650});
+ await expect(page.getByRole('button',{name:'Show FX',exact:true})).toBeVisible();
+ const canvas=page.locator('.programmer-stage canvas.visualizer-3d-canvas');
+ expect((await canvas.boundingBox())!.height).toBeGreaterThanOrEqual(180);
+ expect(await page.locator('.program-center').evaluate(e=>e.scrollWidth<=e.clientWidth+1)).toBe(true);
+ await page.screenshot({path:info.outputPath('programmer-stage-narrow.png')});
+ await page.getByRole('button',{name:'Collapse Fixtures',exact:true}).click();
+ await expect(page.locator('.effects-inspector')).toBeVisible();
 });

@@ -318,3 +318,13 @@
 .library-save-guard { position:fixed; inset:0; z-index:10000; display:grid; place-items:center; background:rgba(8,15,20,.9); color:#dfe8ee; font-size:14px; cursor:progress; }
 .creator-library .recipe-list { max-height: min(52vh, 520px); overflow:auto; min-height:0; }
 .recipe-list article { min-width:0; }
+/* The rendered stage stays usable; the center scrolls when all panels cannot fit vertically. */
+.programmer-v3 { grid-template-rows:auto minmax(340px,42vh) 280px 90px!important; overflow-y:auto!important; }
+.programmer-stage { min-height:340px!important; }
+.programmer-stage > .visualizer-3d { min-height:340px!important; }
+.programmer-stage > .visualizer-3d .visualizer-3d-canvas { min-height:180px!important; flex:1; }
+.programmer-stage > .physical-stage { min-height:300px!important; }
+.program-subtabs { flex-wrap:wrap; height:auto; flex-shrink:0; }
+.program-subtabs button { min-height:32px; }
+.workspace-panel-tools button:disabled { opacity:1; color:#8a9ca6; background:#111b22; }
+.workspace-divider { border-radius:3px; }
