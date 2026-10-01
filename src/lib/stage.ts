@@ -30,6 +30,15 @@ export type StageScreenSource =
       deviceId?: string;
       sourceName?: string;
       fit?: 'contain' | 'cover';
+    }
+  | {
+      kind: 'media';
+      assetId: string;
+      sourceName?: string;
+      mediaKind: 'video' | 'image';
+      fit?: 'contain' | 'cover';
+      muted?: boolean;
+      loop?: boolean;
     };
 
 export type StageElement = {
@@ -176,12 +185,34 @@ function isStageAssetKind(value: unknown): value is StageAssetKind {
 
 function isStageScreenSource(value: unknown): value is StageScreenSource {
   if (!value || typeof value !== 'object') return false;
-  const source = value as Partial<StageScreenSource> & { fit?: unknown };
+  const source = value as {
+    kind?: unknown;
+    deviceId?: unknown;
+    sourceName?: unknown;
+    assetId?: unknown;
+    mediaKind?: unknown;
+    fit?: unknown;
+    muted?: unknown;
+    loop?: unknown;
+  };
   if (source.kind === 'none') return true;
-  return source.kind === 'ndi'
-    && (source.deviceId === undefined || typeof source.deviceId === 'string')
-    && (source.sourceName === undefined || typeof source.sourceName === 'string')
-    && (source.fit === undefined || source.fit === 'contain' || source.fit === 'cover');
+  const fitValid = source.fit === undefined || source.fit === 'contain' || source.fit === 'cover';
+  const nameValid = source.sourceName === undefined || typeof source.sourceName === 'string';
+  if (source.kind === 'ndi') {
+    return (source.deviceId === undefined || typeof source.deviceId === 'string')
+      && nameValid
+      && fitValid;
+  }
+  if (source.kind === 'media') {
+    return typeof source.assetId === 'string'
+      && source.assetId.length > 0
+      && (source.mediaKind === 'video' || source.mediaKind === 'image')
+      && nameValid
+      && fitValid
+      && (source.muted === undefined || typeof source.muted === 'boolean')
+      && (source.loop === undefined || typeof source.loop === 'boolean');
+  }
+  return false;
 }
 
 function isVector(value: unknown): value is Vec3 {
