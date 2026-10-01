@@ -7,6 +7,7 @@ import SongCueLibrary from './components/SongCueLibrary';
 import BpmField from './components/BpmField';
 import { moveRundownItemCues } from './lib/show';
 import { deriveSongProgram, isSongProgram, mergeSongProgramIntoShow, showSongNames, type SongProgram } from './lib/song-library';
+import { deleteMediaAsset, importMediaAsset, listMediaAssets, mediaObjectUrl, type MediaAsset } from './lib/media-library';
 import { activeTimelineCueId, createSection, EMPTY_TIMELINE, FX_RECIPES, SHOW_COLORS, buildSectionCues, renderEffectStack, renderShowTimeline, isEffectRecipe, type EffectStackLayer, type ShowSection } from './lib/show-design';
 import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState, type ChangeEvent, type PointerEvent as ReactPointerEvent } from 'react';
 import { lumaVizDirectStatus, pollLumaVizDirectMessages, semanticFrameFromResolvedOutput, sendLumaVizDirectFrame, sendLumaVizDirectMessage, startLumaVizDirect, type LumaVizDirectStatus, type SharedShowPatchMutation } from './core/lumaviz-direct';
@@ -671,6 +672,12 @@ export default function App() {
     return () => window.clearInterval(timer);
   }, []);
 
+  useEffect(() => {
+    void listMediaAssets()
+      .then(setMediaAssets)
+      .catch((error) => setMediaLibraryError(error instanceof Error ? error.message : String(error)));
+  }, []);
+
   const recoveryFingerprintRef = useRef('');
   const sharedShowRevisionRef = useRef(1);
   const [activeLocation, setActiveLocation] = useState<{id:string;name:string;estimated:boolean}|null>(null);
@@ -885,6 +892,8 @@ export default function App() {
   });
   const [stageVideoInputs, setStageVideoInputs] = useState<StageVideoInputOption[]>([]);
   const [stageVideoInputError, setStageVideoInputError] = useState('');
+  const [mediaAssets, setMediaAssets] = useState<MediaAsset[]>([]);
+  const [mediaLibraryError, setMediaLibraryError] = useState('');
   const [stageMonitorOpen,setStageMonitorOpen]=useState(false);
   const [midiMapOpen,setMidiMapOpen]=useState(false);
   const [timelineShowId,setTimelineShowId]=useState('');
@@ -3186,6 +3195,66 @@ export default function App() {
     setActiveStagePresetId(presetId);
     setStageMode('select');
     setMessage(`${preset.name} loaded as a separate stage scene.`);
+  }
+
+  async function importMediaFile(file: File): Promise<MediaAsset | null> {
+    setMediaLibraryError('');
+    try {
+      const asset = await importMediaAsset(file);
+      setMediaAssets((current) => [asset, ...current.filter((item) => item.id !== asset.id)]);
+      setMessage(`${asset.name} imported to Media Library.`);
+      return asset;
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      setMediaLibraryError(message);
+      setMessage(`Media import failed: ${message}`);
+      return null;
+    }
+  }
+
+  async function importScreenMedia(file: File, screenId: string) {
+    const asset = await importMediaFile(file);
+    if (!asset || (asset.kind !== 'video' && asset.kind !== 'image')) return;
+    updateStageElement(screenId, {
+      mediaSource: {
+        kind: 'media',
+        assetId: asset.id,
+        sourceName: asset.name,
+        mediaKind: asset.kind,
+        fit: 'contain',
+        muted: true,
+        loop: true
+      }
+    });
+  }
+
+  function routeMediaAssetToScreen(assetId: string, screenId: string) {
+    const asset = mediaAssets.find((item) => item.id === assetId);
+    if (!asset || (asset.kind !== 'video' && asset.kind !== 'image')) return;
+    updateStageElement(screenId, {
+      mediaSource: {
+        kind: 'media',
+        assetId: asset.id,
+        sourceName: asset.name,
+        mediaKind: asset.kind,
+        fit: 'contain',
+        muted: true,
+        loop: true
+      }
+    });
+  }
+
+  async function removeMediaAsset(id: string) {
+    const asset = mediaAssets.find((item) => item.id === id);
+    if (!asset) return;
+    if (!window.confirm(`Delete ${asset.name} from the LumaRig Media Library? Screens using it will need to be relinked.`)) return;
+    try {
+      await deleteMediaAsset(id);
+      setMediaAssets((current) => current.filter((item) => item.id !== id));
+      setMessage(`${asset.name} removed from Media Library.`);
+    } catch (error) {
+      setMediaLibraryError(error instanceof Error ? error.message : String(error));
+    }
   }
 
   async function scanStageVideoInputs() {
