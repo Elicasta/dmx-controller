@@ -1,3 +1,5 @@
+import { waveformForBlob, displayPeaks, type Waveform } from '../lib/media-waveform';
+import { mediaWindow, mediaPosition, steppedBar } from '../lib/timeline-media';
 import ResizableWorkspace from './ResizableWorkspace';
 import TempoInput from './TempoInput';
 import {
@@ -37,7 +39,7 @@ type Props = {
   onMasterBpmChange: (bpm: number) => void;
 };
 type Drag = {
-  kind: "move" | "resize" | "audio";
+  kind: "move" | "resize" | "audio" | "trim-in" | "trim-out" | "playhead";
   id: string;
   x: number;
   start: number;
@@ -77,7 +79,7 @@ export default function ShowTimelineEditor(props: Props) {
   const followPlayheadRef = useRef(true);
   const scrollRef = useRef<HTMLDivElement | null>(null);
   const [lanes, setLanes] = useState(3);
-  const [peaks, setPeaks] = useState<number[]>([]);
+  const [waveform, setWaveform] = useState<Waveform | null>(null);
   const [audioError, setAudioError] = useState("");
   const undo = useRef<ShowTimeline[]>([]),
     redo = useRef<ShowTimeline[]>([]);
@@ -95,7 +97,10 @@ export default function ShowTimelineEditor(props: Props) {
     0,
     ...timeline.clips.map((c) => c.startBar + c.lengthBars),
   );
-  const audioEnd = timeline.audioOffsetBars + audioDurationMs / msPerBar;
+  const bounds = mediaWindow(timeline, audioDurationMs);
+  const audioEnd = timeline.audioOffsetBars + bounds.durationMs / msPerBar;
+  const waveformWidth = Math.max(1, bounds.durationMs / msPerBar * zoom);
+  const peaks = waveform ? displayPeaks(waveform, bounds.startMs, bounds.endMs, waveformWidth) : [];
   const endBar = Math.max(16, clipEnd, audioEnd);
   const totalBars = Math.max(32, Math.ceil(endBar + 8));
   const laneCount = Math.max(lanes, ...timeline.clips.map((c) => c.lane + 1));
@@ -148,14 +153,17 @@ export default function ShowTimelineEditor(props: Props) {
     const p = latest.current,
       audio = p.audioRef.current;
     if (!audio || !p.audioUrl) return;
-    const local = positionMs - p.timeline.audioOffsetBars * runtimeBarMs(p);
-    if (local < 0 || local >= audio.duration * 1000) {
+    const bounds = mediaWindow(p.timeline, p.audioDurationMs);
+    const source = mediaPosition(positionMs, p.timeline.audioOffsetBars * runtimeBarMs(p), bounds);
+    if (source === null) {
       audio.pause();
-      if (local < 0 && audio.currentTime !== 0) audio.currentTime = 0;
+      const boundary = positionMs < p.timeline.audioOffsetBars * runtimeBarMs(p) ? bounds.startMs : bounds.endMs;
+      if (Number.isFinite(boundary) && audio.readyState >= 1 && Math.abs(audio.currentTime * 1000 - boundary) > 5)
+        audio.currentTime = boundary / 1000;
       return;
     }
-    if (force)
-      audio.currentTime = Math.max(0, local / 1000);
+    if ((force || (audio.paused && Math.abs(audio.currentTime * 1000 - source) > 100)) && audio.readyState >= 1)
+      audio.currentTime = source / 1000;
     if (playingRef.current && audio.paused && !audioStarting.current) {
       audioStarting.current = true;
       void audio.play().then(()=>{if(!playingRef.current)audio.pause();}).catch(() => {
@@ -177,11 +185,11 @@ export default function ShowTimelineEditor(props: Props) {
     pause();
     cursorRef.current = 0;
     setCursor(0);
-    if (audioRef.current) audioRef.current.currentTime = 0;
+    if (audioRef.current) audioRef.current.currentTime = mediaWindow(latest.current.timeline, latest.current.audioDurationMs).startMs / 1000;
     latest.current.onStop();
   }
   function seek(bar: number) {
-    const next = Math.max(0, bar);
+    const next = clamp(bar, 0, 100000);
     cursorRef.current = next;
     setCursor(next);
     latest.current.onFrame(next * runtimeBarMs(latest.current));
@@ -205,10 +213,18 @@ export default function ShowTimelineEditor(props: Props) {
       const offset = p.timeline.audioOffsetBars;
       // Media owns the clock during audio playback, including buffering.
       // Repeated currentTime corrections cause audible seek artifacts.
-      if (p.audioUrl && audio && cursorRef.current >= offset && !audio.ended &&
-          (!Number.isFinite(audio.duration) || audio.currentTime < audio.duration)) {
+      const bounds = mediaWindow(p.timeline, p.audioDurationMs);
+      const mediaEnd = offset + bounds.durationMs / runtimeBarMs(p);
+      if (p.audioUrl && audio && bounds.durationMs > 0 && cursorRef.current >= offset && cursorRef.current < mediaEnd) {
         syncAudio(cursorRef.current * runtimeBarMs(p));
-        cursorRef.current = offset + audio.currentTime * 1000 / runtimeBarMs(p);
+        if (audio.readyState >= 1) {
+          cursorRef.current = offset + clamp(audio.currentTime * 1000 - bounds.startMs, 0, bounds.durationMs) / runtimeBarMs(p);
+          // At trim-out, hand timing back to the internal clock for any remaining lighting clips.
+          if (audio.currentTime * 1000 >= bounds.endMs - 2 || audio.ended) {
+            cursorRef.current = mediaEnd;
+            audio.pause();
+          }
+        }
       } else {
         cursorRef.current += (now - previous) / runtimeBarMs(p);
       }
@@ -229,9 +245,10 @@ export default function ShowTimelineEditor(props: Props) {
       const end = Math.max(
         1,
         ...p.timeline.clips.map((c) => c.startBar + c.lengthBars),
-        p.timeline.audioOffsetBars + p.audioDurationMs / runtimeBarMs(p),
+        p.timeline.audioOffsetBars + mediaWindow(p.timeline, p.audioDurationMs).durationMs / runtimeBarMs(p),
       );
       if (cursorRef.current >= end) {
+        cursorRef.current = end; setCursor(end); p.onFrame(end * runtimeBarMs(p));
         pause();
         p.onStop();
         return;
@@ -256,39 +273,43 @@ export default function ShowTimelineEditor(props: Props) {
   );
   useEffect(() => {
     let cancelled = false;
-    setPeaks([]);
+    const controller = new AbortController();
+    setWaveform(null);
+    setAudioError('');
     if (!audioUrl) return;
-    const context = new AudioContext();
-    void fetch(audioUrl)
-      .then((r) => r.arrayBuffer())
-      .then((b) => context.decodeAudioData(b))
-      .then((buffer) => {
-        if (cancelled) return;
-        const samples = buffer.getChannelData(0),
-          stride = Math.max(1, Math.floor(samples.length / 320));
-        const next = Array.from({ length: 320 }, (_, i) => {
-          let peak = 0;
-          for (
-            let j = i * stride;
-            j < Math.min(samples.length, (i + 1) * stride);
-            j += Math.max(1, Math.floor(stride / 80))
-          )
-            peak = Math.max(peak, Math.abs(samples[j]));
-          return peak;
-        });
-        setPeaks(next);
-      })
-      .catch(() => {
-        if (!cancelled)
-          setAudioError(
-            "Waveform unavailable. The track can still play if your system supports it.",
-          );
-      })
-      .finally(() => void context.close());
-    return () => {
-      cancelled = true;
-    };
+    void fetch(audioUrl, { signal: controller.signal })
+      .then(r => { if (!r.ok) throw Error('Media unavailable'); return r.blob(); })
+      .then(waveformForBlob)
+      .then(wave => { if (!cancelled) setWaveform(wave); })
+      .catch(() => { if (!cancelled) setAudioError('Waveform unavailable for this codec. Media playback remains available.'); });
+    return () => { cancelled = true; controller.abort(); };
   }, [audioUrl]);
+  function seekPointer(e: PointerEvent<HTMLElement>) {
+    if (drag.current || e.button !== 0) return;
+    const lane = e.currentTarget.closest<HTMLElement>('.timeline-lane, .bar-ruler');
+    if (!lane) return;
+    seek((e.clientX - lane.getBoundingClientRect().left) / zoomRef.current);
+  }
+  function beginTrim(e: PointerEvent<HTMLElement>, kind: 'trim-in' | 'trim-out') {
+    e.preventDefault(); e.stopPropagation(); pause();
+    e.currentTarget.setPointerCapture(e.pointerId);
+    const bounds = mediaWindow(timeline, audioDurationMs);
+    drag.current = { kind, id: 'audio', x: e.clientX, start: bounds.startMs, length: bounds.endMs, lane: 0, nextLane: 0, before: structuredClone(timeline) };
+  }
+  function cancelPointer(e: PointerEvent<HTMLElement>) {
+    const before = drag.current?.before;
+    drag.current = null;
+    if (e.currentTarget.hasPointerCapture(e.pointerId)) e.currentTarget.releasePointerCapture(e.pointerId);
+    if (before) onChange(before);
+  }
+  function transportKey(e: import('react').KeyboardEvent<HTMLElement>) {
+    if ((e.target as HTMLElement).closest('input,select,textarea,button,[role="button"],[role="slider"]')) return;
+    if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') {
+      e.preventDefault();
+      seek(steppedBar(cursorRef.current, e.key === 'ArrowRight' ? 1 : -1, timeline.beatsPerBar, e.shiftKey));
+    } else if (e.key === 'Home') { e.preventDefault(); seek(0); }
+    else if (e.code === 'Space') { e.preventDefault(); play(); }
+  }
   function begin(
     e: PointerEvent<HTMLElement>,
     clip: TimelineClip,
@@ -313,7 +334,17 @@ export default function ShowTimelineEditor(props: Props) {
   function movePointer(e: PointerEvent<HTMLElement>) {
     const d = drag.current;
     if (!d) return;
-    const delta = (e.clientX - d.x) / zoom;
+    const delta = (e.clientX - d.x) / zoomRef.current;
+    if (d.kind === 'playhead') { seek(d.start + delta); return; }
+    if (d.kind === 'trim-in' || d.kind === 'trim-out') {
+      const ms = delta * runtimeBarMs(latest.current);
+      const minimum = Math.min(10, audioDurationMs);
+      onChange({ ...latest.current.timeline,
+        audioTrimInMs: d.kind === 'trim-in' ? clamp(d.start + ms, 0, d.length - minimum) : d.start,
+        audioTrimOutMs: d.kind === 'trim-out' ? clamp(d.length + ms, d.start + minimum, audioDurationMs) : d.length,
+      });
+      return;
+    }
     if (d.kind === "audio") {
       onChange({
         ...latest.current.timeline,
@@ -347,7 +378,7 @@ export default function ShowTimelineEditor(props: Props) {
       e.currentTarget.releasePointerCapture(e.pointerId);
     if (d.kind === "move" && d.nextLane !== d.lane)
       changeClip(d.id, { lane: d.nextLane }, false);
-    checkpoint(d.before);
+    if (d.kind !== 'playhead' && JSON.stringify(d.before) !== JSON.stringify(latest.current.timeline)) checkpoint(d.before);
   }
   function dropCue(e: import("react").DragEvent<HTMLElement>, lane: number) {
     e.preventDefault();
@@ -371,9 +402,9 @@ export default function ShowTimelineEditor(props: Props) {
         const file = e.dataTransfer.files?.[0];
         if (!file) return;
         e.preventDefault();
-        if (file.type.startsWith("audio/") || /\.(wav|mp3|m4a|aac|aif|aiff|ogg|flac)$/i.test(file.name)) {
+        if (file.type.startsWith("audio/") || file.type === "video/mp4" || /\.(wav|mp3|m4a|aac|aif|aiff|ogg|flac|mp4)$/i.test(file.name)) {
           pause(); onLoadAudio(file);
-        } else setAudioError("Choose an audio file: WAV, MP3, M4A, AIFF, OGG or FLAC.");
+        } else setAudioError("Choose audio or an MP4 with audio: WAV, MP3, M4A, AIFF, OGG, FLAC or MP4.");
       }}>
       <header className="creator-command">
         <div>
@@ -411,7 +442,13 @@ export default function ShowTimelineEditor(props: Props) {
           {playing ? "Pause" : "Play Show"}
         </button>
         <button onClick={stop}>Stop / Rewind</button>
-        <output>BAR {(cursor + 1).toFixed(2)}</output>
+        <button aria-label="Rewind timeline" onClick={() => seek(0)}>⏮</button>
+        <button aria-label="Previous beat" onClick={() => seek(steppedBar(cursorRef.current, -1, timeline.beatsPerBar))}>‹ Beat</button>
+        <button aria-label="Next beat" onClick={() => seek(steppedBar(cursorRef.current, 1, timeline.beatsPerBar))}>Beat ›</button>
+        <label>Jump to cue<select aria-label="Jump to cue" value="" onChange={e => {
+          const clip = timeline.clips.find(c => c.id === e.target.value); if (clip) seek(clip.startBar);
+        }}><option value="">Choose cue</option>{[...timeline.clips].sort((a,b) => a.startBar - b.startBar).map(c => <option key={c.id} value={c.id}>{cues.find(q => q.id === c.cueId)?.name ?? 'Missing cue'} · Bar {c.startBar + 1}</option>)}</select></label>
+        <output aria-label="Timeline position">BAR {Math.floor(cursor) + 1} · BEAT {Math.floor((cursor % 1) * timeline.beatsPerBar) + 1}</output>
         <label>
           Master BPM
           <TempoInput label="Master BPM" value={masterBpm} disabled={playing} onChange={next => {
@@ -443,8 +480,10 @@ export default function ShowTimelineEditor(props: Props) {
             onChange={(e) => setSnap(Number(e.target.value))}
           >
             <option value={1}>Bar</option>
-            <option value={0.25}>Quarter bar</option>
-            <option value={0.0625}>Fine</option>
+            <option value={1 / timeline.beatsPerBar}>Beat</option>
+            <option value={1 / (timeline.beatsPerBar * 2)}>½ Beat</option>
+            <option value={1 / (timeline.beatsPerBar * 4)}>¼ Beat</option>
+            <option value={1 / (timeline.beatsPerBar * 3)}>Triplet</option>
           </select>
         </label>
         <label>
@@ -465,7 +504,7 @@ export default function ShowTimelineEditor(props: Props) {
           <input
             aria-label="Load timeline audio"
             type="file"
-            accept="audio/*"
+            accept="audio/*,video/mp4,.mp4"
             onChange={(e) => {
               const f = e.target.files?.[0];
               if (f) {
@@ -512,7 +551,7 @@ export default function ShowTimelineEditor(props: Props) {
           )}
         </aside>
         <main className="timeline-arranger">
-          <div className="timeline-scroll" ref={scrollRef}>
+          <div className="timeline-scroll" ref={scrollRef} tabIndex={0} aria-label="Timeline editing area" onKeyDown={transportKey}>
             <div
               className="timeline-sheet"
               style={{ width: totalBars * zoom + 100 }}
@@ -522,17 +561,7 @@ export default function ShowTimelineEditor(props: Props) {
                 <div
                   className="bar-ruler"
                   style={{ width: totalBars * zoom }}
-                  onClick={(e) => {
-                    pause();
-                    seek(
-                      snapBar(
-                        (e.clientX -
-                          e.currentTarget.getBoundingClientRect().left) /
-                          zoom,
-                        snap,
-                      ),
-                    );
-                  }}
+                  onPointerDown={seekPointer}
                 >
                   {Array.from({ length: totalBars }, (_, i) => (
                     <span key={i} style={{ left: i * zoom, width: zoom }}>
@@ -545,10 +574,13 @@ export default function ShowTimelineEditor(props: Props) {
                 <div className="lane-label">AUDIO</div>
                 <div
                   className="timeline-lane"
+                  onPointerDown={seekPointer}
                   style={
                     {
                       width: totalBars * zoom,
                       "--bar-width": `${zoom}px`,
+                        "--beat-width": `${zoom / timeline.beatsPerBar}px`,
+                        "--subdivision-width": `${zoom / (timeline.beatsPerBar * 4)}px`,
                     } as import("react").CSSProperties
                   }
                   onDragOver={(e) => {
@@ -557,7 +589,7 @@ export default function ShowTimelineEditor(props: Props) {
                   }}
                   onDrop={(e) => {
                     const file = e.dataTransfer.files?.[0];
-                    if (file && (file.type.startsWith("audio/") || /\.(wav|mp3|m4a|aac|aif|aiff|ogg|flac)$/i.test(file.name))) {
+                    if (file && (file.type.startsWith("audio/") || file.type === "video/mp4" || /\.(wav|mp3|m4a|aac|aif|aiff|ogg|flac|mp4)$/i.test(file.name))) {
                       e.preventDefault();
                       e.stopPropagation();
                       pause();
@@ -575,10 +607,7 @@ export default function ShowTimelineEditor(props: Props) {
                       className={`timeline-audio-block ${audioUrl ? "" : "missing"}`}
                       style={{
                         left: timeline.audioOffsetBars * zoom,
-                        width: Math.max(
-                          180,
-                          (audioDurationMs / msPerBar) * zoom,
-                        ),
+                        width: Math.max(1, waveformWidth),
                       }}
                       onKeyDown={(e) => {
                         if (e.key === "ArrowLeft" || e.key === "ArrowRight") {
@@ -594,7 +623,8 @@ export default function ShowTimelineEditor(props: Props) {
                         }
                       }}
                       onPointerDown={(e) => {
-                        pause();
+                        if (!e.altKey) { e.stopPropagation(); seek(timeline.audioOffsetBars + (e.clientX - e.currentTarget.getBoundingClientRect().left) / zoom); return; }
+                        e.preventDefault(); e.stopPropagation(); pause();
                         e.currentTarget.setPointerCapture(e.pointerId);
                         drag.current = {
                           kind: "audio",
@@ -609,20 +639,25 @@ export default function ShowTimelineEditor(props: Props) {
                       }}
                       onPointerMove={movePointer}
                       onPointerUp={endPointer}
-                      onPointerCancel={endPointer}
+                      onPointerCancel={cancelPointer}
                     >
                       <strong>
                         {audioName || timeline.audioName}{" "}
                         {!audioUrl && "· relink audio"}
                       </strong>
-                      <svg viewBox="0 0 320 48" preserveAspectRatio="none">
+                      <span className="audio-trim-handle trim-in" role="slider" tabIndex={0} aria-label="Media trim in" aria-valuemin={0} aria-valuemax={bounds.endMs / 1000} aria-valuenow={bounds.startMs / 1000}
+                        onPointerDown={e => beginTrim(e, 'trim-in')} onPointerMove={movePointer} onPointerUp={endPointer} onPointerCancel={cancelPointer}
+                        onKeyDown={e => { if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') { e.preventDefault(); e.stopPropagation(); edit({ ...timeline, audioTrimInMs: clamp(bounds.startMs + (e.key === 'ArrowRight' ? 10 : -10), 0, bounds.endMs - 10) }); } }} />
+                      <span className="audio-trim-handle trim-out" role="slider" tabIndex={0} aria-label="Media trim out" aria-valuemin={bounds.startMs / 1000} aria-valuemax={audioDurationMs / 1000} aria-valuenow={bounds.endMs / 1000}
+                        onPointerDown={e => beginTrim(e, 'trim-out')} onPointerMove={movePointer} onPointerUp={endPointer} onPointerCancel={cancelPointer}
+                        onKeyDown={e => { if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') { e.preventDefault(); e.stopPropagation(); edit({ ...timeline, audioTrimOutMs: clamp(bounds.endMs + (e.key === 'ArrowRight' ? 10 : -10), bounds.startMs + 10, audioDurationMs) }); } }} />
+                      <svg viewBox={`0 0 ${Math.max(1, peaks.length)} 48`} preserveAspectRatio="none">
                         <path d={wavePath} />
                       </svg>
                     </div>
                   ) : (
                     <p>
-                      Load or drop an audio file. Drag its waveform to align the
-                      first beat.
+                      Load or drop audio or MP4. Click to seek; Alt-drag the waveform to align it. Drag its edges to trim.
                     </p>
                   )}
                 </div>
@@ -632,11 +667,14 @@ export default function ShowTimelineEditor(props: Props) {
                   <div className="lane-label">FX {lane + 1}</div>
                   <div
                     data-lane={lane}
+                    onPointerDown={seekPointer}
                     className="timeline-lane"
                     style={
                       {
                         width: totalBars * zoom,
                         "--bar-width": `${zoom}px`,
+                        "--beat-width": `${zoom / timeline.beatsPerBar}px`,
+                        "--subdivision-width": `${zoom / (timeline.beatsPerBar * 4)}px`,
                       } as import("react").CSSProperties
                     }
                     onDragOver={(e) => {
@@ -670,7 +708,7 @@ export default function ShowTimelineEditor(props: Props) {
                             onPointerDown={(e) => begin(e, c, "move")}
                             onPointerMove={movePointer}
                             onPointerUp={endPointer}
-                            onPointerCancel={endPointer}
+                            onPointerCancel={cancelPointer}
                             onKeyDown={(e) => {
                               if (e.key === "Enter") setSelectedId(c.id);
                               if (
@@ -699,7 +737,7 @@ export default function ShowTimelineEditor(props: Props) {
                               onPointerDown={(e) => begin(e, c, "resize")}
                               onPointerMove={movePointer}
                               onPointerUp={endPointer}
-                              onPointerCancel={endPointer}
+                              onPointerCancel={cancelPointer}
                             />
                           </div>
                         );
@@ -709,6 +747,10 @@ export default function ShowTimelineEditor(props: Props) {
               ))}
               <div
                 className="timeline-playhead"
+                role="slider" tabIndex={0} aria-label="Timeline playhead" aria-valuemin={1} aria-valuemax={totalBars} aria-valuenow={cursor + 1}
+                onPointerDown={e => { e.preventDefault(); e.stopPropagation(); e.currentTarget.setPointerCapture(e.pointerId); drag.current = { kind:'playhead', id:'playhead', x:e.clientX, start:cursorRef.current, length:0, lane:0, nextLane:0, before:timeline }; }}
+                onPointerMove={movePointer} onPointerUp={endPointer} onPointerCancel={e => { drag.current=null; if(e.currentTarget.hasPointerCapture(e.pointerId))e.currentTarget.releasePointerCapture(e.pointerId); }}
+                onKeyDown={e => { if(e.key==='ArrowLeft'||e.key==='ArrowRight'){e.preventDefault();seek(steppedBar(cursorRef.current,e.key==='ArrowRight'?1:-1,timeline.beatsPerBar,e.shiftKey));} }}
                 style={{ left: 100 + cursor * zoom }}
               />
               <button
@@ -721,6 +763,13 @@ export default function ShowTimelineEditor(props: Props) {
             </div>
           </div>
           <div className="timeline-inspector">
+            {audioUrl && audioDurationMs > 0 && <>
+              <label>Trim in (seconds)<input aria-label="Trim in seconds" type="number" min={0} max={Math.max(0, (bounds.endMs - 10) / 1000)} step={0.01} value={bounds.startMs / 1000} disabled={playing}
+                onChange={e => edit({ ...timeline, audioTrimInMs: clamp(Number(e.target.value) * 1000, 0, bounds.endMs - 10) })} /></label>
+              <label>Trim out (seconds)<input aria-label="Trim out seconds" type="number" min={(bounds.startMs + 10) / 1000} max={audioDurationMs / 1000} step={0.01} value={bounds.endMs / 1000} disabled={playing}
+                onChange={e => edit({ ...timeline, audioTrimOutMs: clamp(Number(e.target.value) * 1000, bounds.startMs + 10, audioDurationMs) })} /></label>
+              <button disabled={playing || (!timeline.audioTrimInMs && timeline.audioTrimOutMs === undefined)} onClick={() => edit({ ...timeline, audioTrimInMs: undefined, audioTrimOutMs: undefined })}>Reset Trim</button>
+            </>}
             <label>
               Audio starts at bar
               <input
@@ -834,7 +883,7 @@ export default function ShowTimelineEditor(props: Props) {
           </div>
           <p className="creator-hint">
             FX lanes mix from top to bottom. Lower lanes win when two clips
-            write the same channel. Linked song media restores automatically on this computer.{" "}
+            write the same channel. Linked song media and non-destructive trims restore automatically on this computer. Click empty lanes or the waveform to seek. Alt-drag media to move it. Arrow keys step beats; Shift steps bars.{" "}
             {audioError}
           </p>
         </main>

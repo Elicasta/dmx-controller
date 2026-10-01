@@ -55,6 +55,8 @@ export type ShowTimeline = {
   beatsPerBar: number;
   audioOffsetBars: number;
   audioName?: string;
+  audioTrimInMs?: number;
+  audioTrimOutMs?: number;
   clips: TimelineClip[];
 };
 export const EMPTY_TIMELINE: ShowTimeline = {
@@ -721,6 +723,8 @@ export function isShowTimeline(value: unknown): value is ShowTimeline {
     Number.isInteger(t.beatsPerBar) &&
     finite(t.audioOffsetBars, 0, 100000) &&
     (t.audioName === undefined || typeof t.audioName === "string") &&
+    (t.audioTrimInMs === undefined || finite(t.audioTrimInMs, 0, 86400000)) &&
+    (t.audioTrimOutMs === undefined || (finite(t.audioTrimOutMs, 0, 86400000) && t.audioTrimOutMs > (t.audioTrimInMs ?? 0))) &&
     Array.isArray(t.clips) &&
     t.clips.length <= 1000 &&
     t.clips.every(

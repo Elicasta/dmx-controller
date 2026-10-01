@@ -161,7 +161,7 @@ test("solo creator builds an editable audio-aligned show and preserves the draft
   await page
     .getByRole("button", { name: "Stop / Rewind", exact: true })
     .click();
-  await expect(page.locator(".timeline-toolbar output")).toHaveText("BAR 1.00");
+  await expect(page.locator(".timeline-toolbar output")).toHaveText("BAR 1 · BEAT 1");
   await page.screenshot({ path: info.outputPath("timeline.png") });
   await page.reload();
   await page.getByRole("button", { name: "SHOW", exact: true }).click();
@@ -799,4 +799,54 @@ test('zero trim height saves, and a corrupt workspace checkpoint is preserved',a
   await expect(page.locator('.show-recovery [role="status"]')).toHaveText('Save unavailable');
   await expect(page.getByRole('button',{name:'＋ New Show',exact:true})).toBeDisabled();
   expect(await readCheckpoint()).toEqual(damaged);
+});
+
+test('trimmed media, cached waveform and lane seeking survive Song reuse and restart', async ({ page }, info) => {
+  const errors: string[] = [];
+  page.on('pageerror', e => errors.push(e.message));
+  await seed(page); await page.goto('/');
+  await page.getByRole('button', { name:'SHOW', exact:true }).click();
+  await page.getByRole('button', { name:'Show Creator', exact:true }).click();
+  await page.getByRole('button', { name:/Worship Song/ }).click();
+  await page.getByRole('button', { name:'Build / Update 8 Sections', exact:true }).click();
+  await page.getByRole('button', { name:'Open Timeline ↗', exact:true }).click();
+  await page.getByLabel('Load timeline audio').setInputFiles({ name:'trim-test.wav', mimeType:'audio/wav', buffer:wav() });
+  await expect(page.getByLabel('Trim out seconds')).toHaveValue('3');
+  await expect.poll(() => page.locator('.timeline-audio-block path').getAttribute('d')).toMatch(/M /);
+  await page.getByLabel('Trim in seconds').fill('0.5');
+  await page.getByLabel('Trim out seconds').fill('2');
+  await expect.poll(async () => (await readShow(page)).timelineShows[0].timeline.audioTrimOutMs).toBe(2000);
+  await page.getByRole('button', { name:'Rewind timeline' }).click();
+  await page.getByRole('button', { name:'Play Show', exact:true }).click();
+  await expect.poll(() => page.locator('audio').evaluate((a:HTMLAudioElement) => a.currentTime)).toBeGreaterThan(0.5);
+  await page.getByRole('button', { name:'Pause', exact:true }).click();
+  const empty = page.locator('[data-lane="2"]');
+  await empty.evaluate(el => el.scrollIntoView({ block:'center', inline:'nearest' }));
+  await empty.click({ position:{ x:54, y:35 } });
+  await expect(page.getByLabel('Timeline position')).toHaveText('BAR 2 · BEAT 3');
+  await page.getByLabel('Timeline editing area').focus();
+  await page.keyboard.press('ArrowRight');
+  await expect(page.getByLabel('Timeline position')).toHaveText('BAR 2 · BEAT 4');
+  await page.keyboard.press('Shift+ArrowRight');
+  await expect(page.getByLabel('Timeline position')).toHaveText('BAR 3 · BEAT 4');
+  await page.getByRole('button', { name:'Rewind timeline' }).click();
+  await page.getByLabel('Jump to cue').selectOption({ index:2 });
+  await expect(page.getByLabel('Timeline position')).toHaveText('BAR 9 · BEAT 1');
+  const cacheCount = await page.evaluate(async () => new Promise<number>((resolve,reject) => {
+    const request=indexedDB.open('lumarig-waveforms',1);
+    request.onsuccess=()=>{const db=request.result;const tx=db.transaction('peaks');const count=tx.objectStore('peaks').count();count.onsuccess=()=>{resolve(count.result);db.close();};count.onerror=()=>reject(count.error);};
+    request.onerror=()=>reject(request.error);
+  }));
+  expect(cacheCount).toBe(1);
+  await page.reload();
+  await page.getByRole('button', { name:'SHOW', exact:true }).click();
+  await page.getByRole('button', { name:'Timeline', exact:true }).click();
+  await expect(page.getByLabel('Trim in seconds')).toHaveValue('0.5');
+  await expect(page.getByLabel('Trim out seconds')).toHaveValue('2');
+  await expect.poll(() => page.locator('.timeline-audio-block path').getAttribute('d')).toMatch(/M /);
+  await page.screenshot({ path:info.outputPath('trimmed-timeline.png') });
+  await page.getByRole('button', { name:'Reset Trim', exact:true }).click();
+  await expect(page.getByLabel('Trim in seconds')).toHaveValue('0');
+  await expect(page.getByLabel('Trim out seconds')).toHaveValue('3');
+  expect(errors).toEqual([]);
 });

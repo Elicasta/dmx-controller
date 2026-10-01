@@ -195,6 +195,8 @@ export async function storeSongMedia(id: string, file: File): Promise<void> {
           tx.error ?? Error("Could not save media. Free disk space and retry."),
         );
     });
+    // Analysis runs after the durable media write; unsupported codecs still import and play.
+    void import('./media-waveform').then(({ waveformForBlob }) => waveformForBlob(file)).catch(() => {});
   } finally {
     db.close();
   }
