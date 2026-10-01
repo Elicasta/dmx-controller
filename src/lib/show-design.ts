@@ -27,6 +27,8 @@ export type SectionLayer = {
   groupId: string;
   energy: number;
   enabled: boolean;
+  rateMultiplier?: number;
+  priority?: number;
 };
 export type ShowSection = {
   id: string;
@@ -40,6 +42,7 @@ export type ShowSection = {
   fadeMs: number;
   recipeId: string;
   energy: number;
+  rateMultiplier?: number;
   layers: SectionLayer[];
 };
 export type TimelineClip = {
@@ -49,12 +52,20 @@ export type TimelineClip = {
   lengthBars: number;
   lane: number;
   enabled: boolean;
+  stepDivision?: 4 | 8 | 16;
+  stepPattern?: boolean[];
 };
 export type ShowTimeline = {
   bpm: number;
   beatsPerBar: number;
   audioOffsetBars: number;
   audioName?: string;
+  mediaAssetId?: string;
+  mediaKind?: 'audio' | 'video';
+  trimInMs?: number;
+  trimOutMs?: number;
+  tempoLocked?: boolean;
+  downbeatOffsetMs?: number;
   clips: TimelineClip[];
 };
 export const EMPTY_TIMELINE: ShowTimeline = {
@@ -376,6 +387,7 @@ export function createSection(
     fadeMs: lift ? 1200 : 2500,
     recipeId: lift ? "wave" : "breathe",
     energy: lift ? 80 : 40,
+    rateMultiplier: 1,
     layers: [],
   };
 }
@@ -410,9 +422,11 @@ export function sectionStack(
       groupId: section.groupId,
       energy: section.energy,
       enabled: true,
+      rateMultiplier: section.rateMultiplier ?? 1,
+      priority: 0,
     },
     ...section.layers,
-  ];
+  ].sort((a, b) => (a.priority ?? 0) - (b.priority ?? 0));
   return specs
     .filter((l) => l.enabled && l.recipeId)
     .map((layer) => {
@@ -441,7 +455,8 @@ export function sectionStack(
       )
         throw Error("Movement FX need a target with moving fixtures.");
       const effect = structuredClone(found.effect);
-      effect.bpm = section.bpm;
+      const rateMultiplier = Math.max(.25, Math.min(8, layer.rateMultiplier ?? 1));
+      effect.bpm = section.bpm * rateMultiplier;
       effect.depth *= layer.energy / 100;
       if (effect.parameter === "dimmer") {
         effect.depth *= section.intensity / 100;
@@ -549,6 +564,23 @@ export function barMs(timeline: Pick<ShowTimeline, "bpm" | "beatsPerBar">) {
 export function snapBar(value: number, step = 1) {
   return Math.max(0, Math.round(value / step) * step);
 }
+
+export function timelineStepState(
+  clip: TimelineClip,
+  timeline: Pick<ShowTimeline, "bpm" | "beatsPerBar">,
+  positionBars: number
+): { active: boolean; localMs: number } {
+  if (!clip.stepDivision || !clip.stepPattern?.length) {
+    return { active: true, localMs: Math.max(0, positionBars - clip.startBar) * barMs(timeline) };
+  }
+  const division = clip.stepDivision;
+  const relativeBars = Math.max(0, positionBars - clip.startBar);
+  const stepFloat = relativeBars * division;
+  const stepIndex = Math.floor(stepFloat) % division;
+  const active = Boolean(clip.stepPattern[stepIndex]);
+  const localStepBars = (stepFloat - Math.floor(stepFloat)) / division;
+  return { active, localMs: localStepBars * barMs(timeline) };
+}
 export function activeTimelineCueId(
   timeline: ShowTimeline,
   cues: readonly ShowCue[],
@@ -562,7 +594,8 @@ export function activeTimelineCueId(
         clip.enabled &&
         validCueIds.has(clip.cueId) &&
         position >= clip.startBar &&
-        position < clip.startBar + clip.lengthBars,
+        position < clip.startBar + clip.lengthBars &&
+        timelineStepState(clip, timeline, position).active,
     )
     .sort(
       (a, b) =>
@@ -587,7 +620,8 @@ export function renderShowTimeline(
       (c) =>
         c.enabled &&
         position >= c.startBar &&
-        position < c.startBar + c.lengthBars,
+        position < c.startBar + c.lengthBars &&
+        timelineStepState(c, timeline, position).active,
     )
     .sort(
       (a, b) =>
@@ -596,7 +630,10 @@ export function renderShowTimeline(
   for (const clip of active) {
     const cue = cues.find((c) => c.id === clip.cueId);
     if (!cue) continue;
-    const local = elapsedMs - clip.startBar * duration;
+    const stepState = timelineStepState(clip, timeline, position);
+    const local = clip.stepDivision && clip.stepPattern?.length
+      ? stepState.localMs
+      : elapsedMs - clip.startBar * duration;
     const fade = cue.fadeMs ? Math.min(1, local / cue.fadeMs) : 1;
     const changes =
       cue.changes ?? cue.universe?.map((v, i) => [i + 1, v] as DmxUpdate) ?? [];
@@ -758,6 +795,7 @@ export function isShowSection(value: unknown): value is ShowSection {
     finite(s.bars, 0.25, 512) &&
     finite(s.fadeMs, 0, 60000) &&
     finite(s.energy, 0, 100) &&
+    (s.rateMultiplier === undefined || finite(s.rateMultiplier, .25, 8)) &&
     Array.isArray(s.layers) &&
     s.layers.length <= 8 &&
     s.layers.every(
@@ -767,6 +805,8 @@ export function isShowSection(value: unknown): value is ShowSection {
         typeof l.recipeId === "string" &&
         typeof l.groupId === "string" &&
         finite(l.energy, 0, 100) &&
+        (l.rateMultiplier === undefined || finite(l.rateMultiplier, .25, 8)) &&
+        (l.priority === undefined || finite(l.priority, -100, 100)) &&
         typeof l.enabled === "boolean",
     )
   );
@@ -780,6 +820,13 @@ export function isShowTimeline(value: unknown): value is ShowTimeline {
     Number.isInteger(t.beatsPerBar) &&
     finite(t.audioOffsetBars, 0, 100000) &&
     (t.audioName === undefined || typeof t.audioName === "string") &&
+    (t.mediaAssetId === undefined || typeof t.mediaAssetId === "string") &&
+    (t.mediaKind === undefined || t.mediaKind === "audio" || t.mediaKind === "video") &&
+    (t.trimInMs === undefined || finite(t.trimInMs, 0, 24 * 60 * 60 * 1000)) &&
+    (t.trimOutMs === undefined || finite(t.trimOutMs, 0, 24 * 60 * 60 * 1000)) &&
+    (t.trimInMs === undefined || t.trimOutMs === undefined || t.trimOutMs >= t.trimInMs) &&
+    (t.tempoLocked === undefined || typeof t.tempoLocked === "boolean") &&
+    (t.downbeatOffsetMs === undefined || finite(t.downbeatOffsetMs, 0, 24 * 60 * 60 * 1000)) &&
     Array.isArray(t.clips) &&
     t.clips.length <= 1000 &&
     t.clips.every(
@@ -791,7 +838,13 @@ export function isShowTimeline(value: unknown): value is ShowTimeline {
         finite(c.lengthBars, 0.25, 100000) &&
         finite(c.lane, 0, 7) &&
         Number.isInteger(c.lane) &&
-        typeof c.enabled === "boolean",
+        typeof c.enabled === "boolean" &&
+        (c.stepDivision === undefined || c.stepDivision === 4 || c.stepDivision === 8 || c.stepDivision === 16) &&
+        (c.stepPattern === undefined || (
+          Array.isArray(c.stepPattern) &&
+          c.stepPattern.length <= 16 &&
+          c.stepPattern.every((step) => typeof step === "boolean")
+        )),
     )
   );
 }

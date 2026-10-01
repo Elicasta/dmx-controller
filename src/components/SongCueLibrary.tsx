@@ -103,7 +103,8 @@ export default function SongCueLibrary(p: Props) {
 
     <div className="rundown-section-list">
       {sectionViews.map((section, sectionIndex) => {
-        const sectionCues = p.cues.filter((cue) => sectionIdForCue(cue) === section.id && matches(cue));
+        const sectionMatches = section.name.toLowerCase().includes(query.toLowerCase());
+        const sectionCues = p.cues.filter((cue) => sectionIdForCue(cue) === section.id && (sectionMatches || matches(cue)));
         const itemMap = new Map<string, { name: string; kind: 'song' | 'media'; cues: ShowCue[] }>();
         for (const cue of sectionCues) {
           const name = cueItemName(cue);
@@ -128,18 +129,20 @@ export default function SongCueLibrary(p: Props) {
               <strong>{sectionExpanded ? '▾' : '▸'} {section.name}</strong>
               <small>{items.length} item{items.length === 1 ? '' : 's'} · {sectionCues.length} cue{sectionCues.length === 1 ? '' : 's'}</small>
             </button>
-            {!section.synthetic && <div className="rundown-section-actions">
+            {!section.synthetic && <div className="rundown-section-actions compact-actions">
               <input
                 aria-label={`Section name ${sectionIndex + 1}`}
                 value={section.name}
                 onChange={(event) => renameSection(section.id, event.target.value)}
               />
-              <button aria-label={`Move section ${section.name} up`} disabled={realSectionIndex <= 0} onClick={() => moveSection(section.id, -1)}>↑</button>
-              <button aria-label={`Move section ${section.name} down`} disabled={realSectionIndex < 0 || realSectionIndex >= p.sections.length - 1} onClick={() => moveSection(section.id, 1)}>↓</button>
-              <button
-                aria-label={`Delete section ${section.name}`}
-                onClick={() => p.onSectionsChange(p.sections.filter((item) => item.id !== section.id))}
-              >×</button>
+              <details className="context-menu">
+                <summary aria-label={`Section actions ${section.name}`}>•••</summary>
+                <div>
+                  <button disabled={realSectionIndex <= 0} onClick={() => moveSection(section.id, -1)}>Move Up</button>
+                  <button disabled={realSectionIndex < 0 || realSectionIndex >= p.sections.length - 1} onClick={() => moveSection(section.id, 1)}>Move Down</button>
+                  <button className="danger-button" onClick={() => p.onSectionsChange(p.sections.filter((item) => item.id !== section.id))}>Delete Section</button>
+                </div>
+              </details>
             </div>}
           </header>
 
@@ -160,10 +163,16 @@ export default function SongCueLibrary(p: Props) {
                       <small>{item.cues.length} cues{p.timelineNames.includes(item.name) ? ' · timeline show' : ''}</small>
                     </span>
                   </button>
-                  <div>
-                    <button aria-label={`Move ${item.kind} ${item.name} up`} disabled={itemIndex === 0} onClick={() => p.onMoveSong(section.id, item.name, -1)}>↑</button>
-                    <button aria-label={`Move ${item.kind} ${item.name} down`} disabled={itemIndex === items.length - 1} onClick={() => p.onMoveSong(section.id, item.name, 1)}>↓</button>
-                    {(item.kind === 'song' || p.timelineNames.includes(item.name)) && <button aria-label={`Open timeline for ${item.name}`} onClick={() => p.onTimeline(item.name)}>Timeline</button>}
+                  <div className="rundown-item-actions">
+                    {(item.kind === 'song' || p.timelineNames.includes(item.name)) && <button className="timeline-shortcut" aria-label={`Open timeline for ${item.name}`} title="Timeline" onClick={() => p.onTimeline(item.name)}>⌁</button>}
+                    <details className="context-menu">
+                      <summary aria-label={`Actions for ${item.name}`}>•••</summary>
+                      <div>
+                        <button disabled={itemIndex === 0} onClick={() => p.onMoveSong(section.id, item.name, -1)}>Move Up</button>
+                        <button disabled={itemIndex === items.length - 1} onClick={() => p.onMoveSong(section.id, item.name, 1)}>Move Down</button>
+                        {(item.kind === 'song' || p.timelineNames.includes(item.name)) && <button onClick={() => p.onTimeline(item.name)}>Open Timeline</button>}
+                      </div>
+                    </details>
                   </div>
                 </header>
 
@@ -176,11 +185,14 @@ export default function SongCueLibrary(p: Props) {
                       <small>{cue.fadeMs / 1000}s fade · {cue.effectStack?.length || 0} FX</small>
                     </span>
                   </button>
-                  <div>
-                    <button aria-label={`Move ${cue.name} up`} onClick={() => p.onMove(cue.id, -1)}>↑</button>
-                    <button aria-label={`Move ${cue.name} down`} onClick={() => p.onMove(cue.id, 1)}>↓</button>
-                    <button aria-label={`Delete ${cue.name}`} onClick={() => p.onDelete(cue.id)}>×</button>
-                  </div>
+                  <details className="context-menu cue-context-menu">
+                    <summary aria-label={`Cue actions ${cue.name}`}>•••</summary>
+                    <div>
+                      <button onClick={() => p.onMove(cue.id, -1)}>Move Up</button>
+                      <button onClick={() => p.onMove(cue.id, 1)}>Move Down</button>
+                      <button className="danger-button" onClick={() => p.onDelete(cue.id)}>Delete</button>
+                    </div>
+                  </details>
                 </article>)}
               </section>;
             })}

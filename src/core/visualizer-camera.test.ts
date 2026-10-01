@@ -7,6 +7,7 @@ import {
   orbitVisualizerCamera,
   projectVisualizerPoint,
   screenRayFromVisualizerPoint,
+  intersectVisualizerRayWithPlane,
   intersectVisualizerRayWithYPlane,
   visualizerCameraPreset,
   visualizerFlybyCamera
@@ -64,6 +65,21 @@ describe('visualizer camera math', () => {
     expect(intersection).not.toBeNull();
     expect(intersection!.x).toBeCloseTo(point.x, 3);
     expect(intersection!.z).toBeCloseTo(point.z, 3);
+  });
+
+  it('supports orthographic front and side programming views', () => {
+    const front = visualizerCameraPreset('front', DEFAULT_STAGE_DIMENSIONS);
+    const side = visualizerCameraPreset('side', DEFAULT_STAGE_DIMENSIONS);
+    expect(front.orthographicScale).toBeGreaterThan(0);
+    expect(side.orthographicScale).toBeGreaterThan(0);
+
+    const point = { x: 1, y: .8, z: DEFAULT_STAGE_DIMENSIONS.depth * .4 };
+    const projected = projectVisualizerPoint(point, front, 1000, 600);
+    const ray = screenRayFromVisualizerPoint(projected.x, projected.y, 1000, 600, front);
+    const intersection = intersectVisualizerRayWithPlane(ray, 'z', point.z);
+    expect(intersection).not.toBeNull();
+    expect(intersection!.x).toBeCloseTo(point.x, 3);
+    expect(intersection!.y).toBeCloseTo(point.y, 3);
   });
 
 });

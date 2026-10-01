@@ -4,9 +4,10 @@ export type VisualizerCamera = {
   position: Vec3;
   target: Vec3;
   fovDegrees: number;
+  orthographicScale?: number;
 };
 
-export type VisualizerCameraPreset = 'foh' | 'stage-left' | 'stage-right' | 'top' | 'close';
+export type VisualizerCameraPreset = 'foh' | 'stage-left' | 'stage-right' | 'top' | 'front' | 'side' | 'close';
 
 export type CameraBasis = {
   forward: Vec3;
@@ -80,6 +81,15 @@ export function screenRayFromVisualizerPoint(
   const safeWidth = Math.max(1, width);
   const safeHeight = Math.max(1, height);
   const basis = cameraBasis(camera);
+  if (camera.orthographicScale && camera.orthographicScale > 0) {
+    const worldPerPixel = camera.orthographicScale / Math.min(safeWidth, safeHeight);
+    const horizontal = (x - safeWidth / 2) * worldPerPixel;
+    const vertical = (safeHeight / 2 - y) * worldPerPixel;
+    return {
+      origin: add(add(camera.position, scale(basis.right, horizontal)), scale(basis.up, vertical)),
+      direction: basis.forward
+    };
+  }
   const fov = Math.max(20, Math.min(100, camera.fovDegrees)) * Math.PI / 180;
   const focal = safeHeight / (2 * Math.tan(fov / 2));
   const horizontal = (x - safeWidth / 2) / focal;
@@ -88,11 +98,20 @@ export function screenRayFromVisualizerPoint(
   return { origin: { ...camera.position }, direction };
 }
 
-export function intersectVisualizerRayWithYPlane(ray: VisualizerRay, y: number): Vec3 | null {
-  if (Math.abs(ray.direction.y) < EPSILON) return null;
-  const distance = (y - ray.origin.y) / ray.direction.y;
+export function intersectVisualizerRayWithPlane(
+  ray: VisualizerRay,
+  axis: 'x' | 'y' | 'z',
+  value: number
+): Vec3 | null {
+  const direction = ray.direction[axis];
+  if (Math.abs(direction) < EPSILON) return null;
+  const distance = (value - ray.origin[axis]) / direction;
   if (distance <= 0) return null;
   return add(ray.origin, scale(ray.direction, distance));
+}
+
+export function intersectVisualizerRayWithYPlane(ray: VisualizerRay, y: number): Vec3 | null {
+  return intersectVisualizerRayWithPlane(ray, 'y', y);
 }
 
 export function projectVisualizerPoint(
@@ -112,8 +131,11 @@ export function projectVisualizerPoint(
   const vertical = dot(relative, basis.up);
   const fov = Math.max(20, Math.min(100, camera.fovDegrees)) * Math.PI / 180;
   const focal = safeHeight / (2 * Math.tan(fov / 2));
-  const x = safeWidth / 2 + horizontal * focal / depth;
-  const y = safeHeight / 2 - vertical * focal / depth;
+  const orthoScale = camera.orthographicScale && camera.orthographicScale > 0
+    ? Math.min(safeWidth, safeHeight) / camera.orthographicScale
+    : 0;
+  const x = orthoScale ? safeWidth / 2 + horizontal * orthoScale : safeWidth / 2 + horizontal * focal / depth;
+  const y = orthoScale ? safeHeight / 2 - vertical * orthoScale : safeHeight / 2 - vertical * focal / depth;
   const margin = Math.max(safeWidth, safeHeight) * .25;
 
   return {
@@ -146,9 +168,28 @@ export function visualizerCameraPreset(preset: VisualizerCameraPreset, dimension
 
   if (preset === 'top') {
     return {
-      position: { x: 0, y: Math.max(dimensions.roomHeight * 1.75, dimensions.height * 2.5), z: dimensions.depth * .6 },
+      position: { x: 0, y: Math.max(dimensions.roomHeight * 2.5, dimensions.height * 4), z: dimensions.depth * .6 },
       target: { x: 0, y: 0, z: dimensions.depth * .55 },
-      fovDegrees: 48
+      fovDegrees: 48,
+      orthographicScale: Math.max(dimensions.roomWidth, dimensions.roomDepth) * 1.15
+    };
+  }
+
+  if (preset === 'front') {
+    return {
+      position: { x: 0, y: dimensions.height * .42, z: Math.max(dimensions.roomDepth * 2.5, dimensions.depth * 4) },
+      target: { x: 0, y: dimensions.height * .42, z: dimensions.depth * .42 },
+      fovDegrees: 45,
+      orthographicScale: Math.max(dimensions.roomWidth, dimensions.roomHeight * 1.6) * 1.08
+    };
+  }
+
+  if (preset === 'side') {
+    return {
+      position: { x: dimensions.roomWidth * 2.5, y: dimensions.height * .42, z: dimensions.depth * .55 },
+      target: { x: 0, y: dimensions.height * .42, z: dimensions.depth * .55 },
+      fovDegrees: 45,
+      orthographicScale: Math.max(dimensions.roomDepth, dimensions.roomHeight * 1.6) * 1.08
     };
   }
 
@@ -210,7 +251,10 @@ export function interpolateVisualizerCamera(a: VisualizerCamera, b: VisualizerCa
   return {
     position: lerpVec3(a.position, b.position, t),
     target: lerpVec3(a.target, b.target, t),
-    fovDegrees: lerp(a.fovDegrees, b.fovDegrees, t)
+    fovDegrees: lerp(a.fovDegrees, b.fovDegrees, t),
+    orthographicScale: a.orthographicScale && b.orthographicScale
+      ? lerp(a.orthographicScale, b.orthographicScale, t)
+      : undefined
   };
 }
 

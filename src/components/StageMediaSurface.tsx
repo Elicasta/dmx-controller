@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
+import { mediaObjectUrl } from '../lib/media-library';
 import type { StageScreenSource } from '../lib/stage';
 
 export type StageVideoInputOption = {
@@ -25,11 +26,35 @@ export async function requestStageVideoInputs(): Promise<StageVideoInputOption[]
 
 export function StageMediaSurface({ source }: { source?: StageScreenSource }) {
   const videoRef = useRef<HTMLVideoElement | null>(null);
+  const [mediaUrl, setMediaUrl] = useState('');
   const [status, setStatus] = useState<'idle' | 'connecting' | 'live' | 'error'>('idle');
 
   useEffect(() => {
+    if (!source || source.kind !== 'media') {
+      setMediaUrl('');
+      return;
+    }
+    let cancelled = false;
+    let objectUrl = '';
+    setStatus('connecting');
+    void mediaObjectUrl(source.assetId).then((url) => {
+      if (cancelled) return URL.revokeObjectURL(url);
+      objectUrl = url;
+      setMediaUrl(url);
+      setStatus('live');
+    }).catch(() => {
+      if (!cancelled) setStatus('error');
+    });
+    return () => {
+      cancelled = true;
+      if (objectUrl) URL.revokeObjectURL(objectUrl);
+      setMediaUrl('');
+    };
+  }, [source?.kind, source?.kind === 'media' ? source.assetId : undefined]);
+
+  useEffect(() => {
     if (!source || source.kind !== 'ndi' || !source.deviceId || !navigator.mediaDevices?.getUserMedia) {
-      setStatus('idle');
+      if (source?.kind !== 'media') setStatus('idle');
       return;
     }
 
@@ -67,6 +92,30 @@ export function StageMediaSurface({ source }: { source?: StageScreenSource }) {
   }, [source?.kind, source?.kind === 'ndi' ? source.deviceId : undefined]);
 
   if (!source || source.kind === 'none') return null;
+
+  if (source.kind === 'media') {
+    if (!mediaUrl) {
+      return <span className="stage-media-placeholder">{status === 'error' ? 'Media missing · relink' : 'Loading media…'}</span>;
+    }
+    if (source.mediaKind === 'image') {
+      return <span className="stage-media-surface" data-state={status}>
+        <img src={mediaUrl} alt={source.sourceName ?? 'Stage screen media'} style={{ width: '100%', height: '100%', objectFit: source.fit ?? 'contain' }}/>
+      </span>;
+    }
+    return <span className="stage-media-surface" data-state={status}>
+      <video
+        ref={videoRef}
+        src={mediaUrl}
+        autoPlay
+        muted={source.muted ?? true}
+        loop={source.loop ?? true}
+        playsInline
+        aria-label={source.sourceName ? `${source.sourceName} screen media` : 'Stage screen media'}
+        style={{ objectFit: source.fit ?? 'contain' }}
+      />
+      {status !== 'live' && <span className="stage-media-status">{status === 'error' ? 'Media unavailable' : 'Loading…'}</span>}
+    </span>;
+  }
 
   if (!source.deviceId) {
     return <span className="stage-media-placeholder">NDI · select input</span>;

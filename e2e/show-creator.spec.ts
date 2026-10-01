@@ -168,8 +168,9 @@ test("solo creator builds an editable audio-aligned show and preserves the draft
   await page.getByRole("button", { name: "Timeline", exact: true }).click();
   await expect(page.locator(".timeline-clip")).toHaveCount(8);
   await expect(page.locator(".timeline-audio-block")).toContainText(
-    "relink audio",
+    "test-song.wav",
   );
+  await expect(page.locator(".timeline-audio-block")).not.toHaveClass(/missing/);
   expect((await readShow(page)).timeline.audioOffsetBars).toBe(1);
   expect((await readShow(page)).cues[0].effectStack).toHaveLength(2);
   await page.getByRole("button", { name: "Show Creator", exact: true }).click();
@@ -301,8 +302,9 @@ test('color input, compact panels and detached stage follow actual output', asyn
  expect((await page.locator('.program-center').boundingBox())!.width).toBeGreaterThan(before.width);
  await page.getByRole('button',{name:'Show Fixtures',exact:true}).click();
  const separator=page.getByRole('separator',{name:'Resize left panel'});
+ const initialWidth=Number(await separator.getAttribute('aria-valuenow'));
  await separator.focus();await page.keyboard.press('ArrowRight');
- await expect(separator).toHaveAttribute('aria-valuenow','190');
+ await expect(separator).toHaveAttribute('aria-valuenow',String(initialWidth+12));
  await page.getByRole('button',{name:'SHOW',exact:true}).click();
  await expect(page.locator('.floating-stage-monitor')).toBeVisible();
  const popupPromise=page.waitForEvent('popup');
@@ -339,7 +341,7 @@ test('songs collapse, open inline timelines and preserve imported timeline shows
  await page.getByRole('button',{name:'Play Show',exact:true}).click();
  await expect.poll(()=>page.locator('.floating-stage-monitor [data-fixture="f0"]').getAttribute('data-level')).not.toBe('0');
  await page.getByRole('button',{name:'Stop / Rewind',exact:true}).click();
- console.log('VISUAL_REVIEW_CUES:'+ (await page.screenshot({type:'jpeg',quality:55})).toString('base64'));
+ await page.screenshot({path:info.outputPath('cues.png')});
  await page.getByRole('button',{name:'Close visualizer',exact:true}).click();
  await page.getByRole('button',{name:'Close timeline',exact:true}).click();
  const show=await readShow(page);show.name='Imported Song';
@@ -375,7 +377,7 @@ test('LIVE remains bounded with all recipe assignments and audio drop avoids see
  await expect(page.locator('.desk-assign-grid.list-view button').filter({hasText:'Row Chase'})).toHaveCount(1);
  await page.locator('.desk-assign-grid.list-view button').filter({hasText:'Row Chase'}).click();
  await page.getByRole('button',{name:'DONE',exact:true}).click();
- console.log('VISUAL_REVIEW_LIVE:'+ (await page.screenshot({type:'jpeg',quality:55})).toString('base64'));
+ await page.screenshot({path:info.outputPath('live.png')});
  await page.getByRole('button',{name:'SHOW',exact:true}).click();
  await page.locator('.show-subtabs').getByRole('button',{name:'Timeline',exact:true}).click();
  const snap=page.locator('.timeline-toolbar label').filter({hasText:'Snap'}).locator('select');
