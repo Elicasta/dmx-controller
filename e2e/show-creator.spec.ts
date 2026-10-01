@@ -772,3 +772,31 @@ test('working songs and rig restart when compatibility storage is full or stale'
   await page.getByRole('button',{name:'CREATE',exact:true}).click();
   await expect(page.locator('.console-browser')).toContainText('Wash 1');
 });
+
+test('zero trim height saves, and a corrupt workspace checkpoint is preserved',async({page})=>{
+  await seed(page);
+  await page.addInitScript(()=>{
+    if(!localStorage.getItem('dmx-controller.stage-settings.v2')) localStorage.setItem('dmx-controller.stage-settings.v2',JSON.stringify({schemaVersion:2,unit:'meters',dimensions:{width:14,depth:9,height:6,trimHeight:0,roomWidth:20,roomDepth:20,roomHeight:8}}));
+  });
+  const readCheckpoint=()=>page.evaluate(()=>new Promise<any>((resolve,reject)=>{
+    const open=indexedDB.open('lumarig-program-library',1);
+    open.onsuccess=()=>{const db=open.result,request=db.transaction('state').objectStore('state').get('current');request.onsuccess=()=>{db.close();resolve(request.result);};request.onerror=()=>{db.close();reject(request.error);};};
+    open.onerror=()=>reject(open.error);
+  }));
+  await page.goto('/'); await page.getByRole('button',{name:'SHOW',exact:true}).click();
+  await page.getByRole('button',{name:'Song Bank',exact:true}).click();
+  await expect(page.getByRole('status')).toHaveText('Saved');
+  expect((await readCheckpoint()).workspace.stageSettings.dimensions.trimHeight).toBe(0);
+  await page.reload(); await expect(page.getByRole('status')).toHaveText('Saved');
+  expect((await readCheckpoint()).workspace.stageSettings.dimensions.trimHeight).toBe(0);
+  await page.evaluate(()=>new Promise<void>((resolve,reject)=>{
+    const open=indexedDB.open('lumarig-program-library',1);
+    open.onsuccess=()=>{const db=open.result,tx=db.transaction('state','readwrite'),store=tx.objectStore('state'),request=store.get('current');request.onsuccess=()=>{const state=request.result;state.workspace.stageSettings.dimensions.trimHeight=-1;store.put(state,'current');};tx.oncomplete=()=>{db.close();resolve();};tx.onabort=()=>{db.close();reject(tx.error);};};
+    open.onerror=()=>reject(open.error);
+  }));
+  const damaged=await readCheckpoint();
+  await page.reload(); await page.getByRole('button',{name:'Show Library',exact:true}).click();
+  await expect(page.locator('.show-recovery [role="status"]')).toHaveText('Save unavailable');
+  await expect(page.getByRole('button',{name:'＋ New Show',exact:true})).toBeDisabled();
+  expect(await readCheckpoint()).toEqual(damaged);
+});

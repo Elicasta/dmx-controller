@@ -468,6 +468,13 @@ function isAppWorkspaceCheckpoint(value: unknown): value is AppWorkspaceCheckpoi
     });
 }
 
+/** Validate the app checkpoint before committing it, as well as on restart. */
+async function saveAppProgramState(show: ShowFile, options: Parameters<typeof saveProgramState>[1] = {}) {
+  if (options?.workspace && !isAppWorkspaceCheckpoint(options.workspace)) throw Error('Workspace save failed validation. Your previous saved work is intact.');
+  if (options?.recoverWorkspace && !isAppWorkspaceCheckpoint(options.recoverWorkspace)) throw Error('Recovery save failed validation. Your previous saved work is intact.');
+  return saveProgramState(show, options);
+}
+
 function loadPatch(): PatchedFixture[] {
   if (typeof window === 'undefined') return DEFAULT_PATCH;
   try {
@@ -495,8 +502,9 @@ function isStageSettings(value: unknown): value is StageSettings {
   return settings.schemaVersion === 2
     && (settings.unit === 'feet' || settings.unit === 'meters')
     && Boolean(dimensions)
-    && [dimensions?.width, dimensions?.depth, dimensions?.height, dimensions?.trimHeight, dimensions?.roomWidth, dimensions?.roomDepth, dimensions?.roomHeight]
-      .every((part) => typeof part === 'number' && Number.isFinite(part) && part > 0);
+    && [dimensions?.width, dimensions?.depth, dimensions?.height, dimensions?.roomWidth, dimensions?.roomDepth, dimensions?.roomHeight]
+      .every((part) => typeof part === 'number' && Number.isFinite(part) && part > 0)
+    && typeof dimensions?.trimHeight === 'number' && Number.isFinite(dimensions.trimHeight) && dimensions.trimHeight >= 0;
 }
 
 function loadStageSettings(): StageSettings {
@@ -1089,7 +1097,7 @@ export default function App() {
       const working = state.working ?? showFileRef.current;
       if (state.workspace && !isAppWorkspaceCheckpoint(state.workspace)) throw Error('Saved workspace is invalid. Existing data is preserved.');
       if (state.recovery.some(r => r.workspace && !isAppWorkspaceCheckpoint(r.workspace))) throw Error('Recovery workspace is invalid. Existing data is preserved.');
-      const saved = await saveProgramState(working, { workspace: state.workspace ?? currentWorkspaceCheckpoint(), seed: showLibrary.map(item => item.show) });
+      const saved = await saveAppProgramState(working, { workspace: state.workspace ?? currentWorkspaceCheckpoint(), seed: showLibrary.map(item => item.show) });
       if (cancelled) return;
       if (state.workspace) applyWorkspaceCheckpoint(state.workspace);
       setSongLibrary(saved.programs); setShowRecovery(saved.recovery);
@@ -1101,7 +1109,7 @@ export default function App() {
     if (!libraryReady || transitionRef.current) return;
     const sequence = ++saveSequence.current;
     setSaveStatus('Saving…');
-    void saveProgramState(showFile, { workspace: currentWorkspaceCheckpoint() }).then(state => {
+    void saveAppProgramState(showFile, { workspace: currentWorkspaceCheckpoint() }).then(state => {
       if (sequence !== saveSequence.current) return;
       setSongLibrary(state.programs); setShowRecovery(state.recovery); setSaveStatus('Saved');
     }).catch(error => {
@@ -1826,7 +1834,7 @@ export default function App() {
     };
     const nextLibrary = [snapshot, ...showLibrary.filter(item => item.id !== snapshot.id)].slice(0, 40);
     try {
-      await saveProgramState(showFileRef.current, { workspace: { ...currentWorkspaceCheckpoint(), projects: nextLibrary } });
+      await saveAppProgramState(showFileRef.current, { workspace: { ...currentWorkspaceCheckpoint(), projects: nextLibrary } });
       try { writeCompatibilityStorage(SHOW_LIBRARY_STORAGE_KEY, JSON.stringify(nextLibrary)); } catch { /* Authoritative checkpoint already committed. */ }
     } catch (error) { setSaveStatus('Save failed'); setMessage(`Show Save failed: ${String(error)}`); return; }
     setShowLibrary(nextLibrary);
@@ -1840,9 +1848,9 @@ export default function App() {
     const outgoingWorkspace = currentWorkspaceCheckpoint();
     ++saveSequence.current; setSaveStatus('Saving…');
     try {
-      const saved = await saveProgramState(next, { recover: current, capture: 'none', workspace, recoverWorkspace: outgoingWorkspace });
+      const saved = await saveAppProgramState(next, { recover: current, capture: 'none', workspace, recoverWorkspace: outgoingWorkspace });
       if (showFileRef.current !== current || JSON.stringify(currentWorkspaceCheckpoint()) !== JSON.stringify(outgoingWorkspace)) {
-        const latest = await saveProgramState(showFileRef.current, { workspace: currentWorkspaceCheckpoint() });
+        const latest = await saveAppProgramState(showFileRef.current, { workspace: currentWorkspaceCheckpoint() });
         setSongLibrary(latest.programs); setShowRecovery(latest.recovery);
         setSaveStatus('Saved');
         setMessage('The Show changed while saving. Your latest work is saved. Retry the Show change.');
@@ -3530,7 +3538,7 @@ export default function App() {
     if (!libraryReady) return;
     setSaveStatus('Saving…');
     try {
-      const saved = await saveProgramState(showFileRef.current, { forceId: programId(showFileRef.current, song), workspace: currentWorkspaceCheckpoint() });
+      const saved = await saveAppProgramState(showFileRef.current, { forceId: programId(showFileRef.current, song), workspace: currentWorkspaceCheckpoint() });
       setSongLibrary(saved.programs); setSaveStatus('Saved'); setMessage(`${song.name} saved to Song Library.`);
     } catch (error) { setSaveStatus('Save failed'); setMessage(String(error)); }
   }
