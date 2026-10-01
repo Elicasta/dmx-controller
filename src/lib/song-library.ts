@@ -65,13 +65,22 @@ export function deriveSongProgram(
       }
     : undefined;
   const bpm = sections[0]?.bpm ?? timeline?.bpm ?? 120;
+  const timelineMedia: SongMediaReference | undefined = timeline?.mediaAssetId
+    ? {
+        assetId: timeline.mediaAssetId,
+        name: timeline.audioName ?? cleanName,
+        kind: timeline.mediaKind ?? 'audio',
+        trimInMs: timeline.trimInMs,
+        trimOutMs: timeline.trimOutMs
+      }
+    : undefined;
 
   return {
     id: existingId ?? `song-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 7)}`,
     name: cleanName,
     savedAt: new Date().toISOString(),
     bpm,
-    media: media ? clone(media) : undefined,
+    media: media ? clone(media) : timelineMedia,
     sections,
     cues,
     timeline
