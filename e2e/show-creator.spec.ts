@@ -340,7 +340,7 @@ test('songs collapse, open inline timelines and preserve imported timeline shows
  await expect.poll(()=>page.locator('.floating-stage-monitor [data-fixture="f0"]').getAttribute('data-level')).not.toBe('0');
  await page.getByRole('button',{name:'Stop / Rewind',exact:true}).click();
  console.log('VISUAL_REVIEW_CUES:'+ (await page.screenshot({type:'jpeg',quality:55})).toString('base64'));
- await page.getByRole('button',{name:'Close stage monitor',exact:true}).click();
+ await page.getByRole('button',{name:'Close visualizer',exact:true}).click();
  await page.getByRole('button',{name:'Close timeline',exact:true}).click();
  const show=await readShow(page);show.name='Imported Song';
  await page.getByLabel('Import timeline show',{exact:true}).setInputFiles({name:'song.json',mimeType:'application/json',buffer:Buffer.from(JSON.stringify(show))});
