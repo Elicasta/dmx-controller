@@ -2103,24 +2103,29 @@ export default function App() {
     setMessage(`${recording.name} saved with ${recording.frames.length.toLocaleString()} lighting changes.`);
   }
 
-  function startShowRecording() {
+  function startShowRecording(overdub = false) {
     if (showRecordingActiveRef.current) return;
     if (playingRecordingIdRef.current) stopRecordedShowPlayback(false);
+    const audio = showTrackAudioRef.current;
+    const startMs = overdub
+      ? Math.max(0, showTrackUrlRef.current && audio ? audio.currentTime * 1000 : showTrackPositionMs)
+      : 0;
     const initialFrame: ShowRecordingFrame = {
-      timeMs: 0,
+      timeMs: startMs,
       updates: outputUniverseRef.current.map((value, index) => [index + 1, value] as const)
     };
     showRecordingFramesRef.current = [initialFrame];
     showRecordingLastUniverseRef.current = [...outputUniverseRef.current];
-    showRecordingStartedRef.current = performance.now();
-    showRecordingLastSampleRef.current = 0;
+    showRecordingStartedRef.current = performance.now() - startMs;
+    showRecordingLastSampleRef.current = startMs;
     showRecordingActiveRef.current = true;
     setShowRecordingActive(true);
-    setShowRecordingElapsedMs(0);
-    const audio = showTrackAudioRef.current;
+    setShowRecordingElapsedMs(startMs);
     if (audio && showTrackUrlRef.current) {
-      audio.currentTime = 0;
-      setShowTrackPositionMs(0);
+      if (!overdub) {
+        audio.currentTime = 0;
+        setShowTrackPositionMs(0);
+      }
       void audio.play().catch(() => setMessage('Lighting is recording, but macOS did not start the track. Press Stop, then try Record again.'));
     }
     const tick = (now: number) => {
@@ -2144,7 +2149,9 @@ export default function App() {
     };
     showRecordingAnimationRef.current = requestAnimationFrame(tick);
     setWorkspace('live');
-    setMessage(showTrackName ? `Recording lights live with ${showTrackName}.` : 'Recording lights live without an audio track.');
+    setMessage(overdub
+      ? `Overdub recording from ${formatShowTime(startMs)}. The new take remains editable and non-destructive.`
+      : showTrackName ? `Recording lights live with ${showTrackName}.` : 'Recording lights live without an audio track.');
   }
 
   function stopRecordedShowPlayback(announce = true) {
@@ -4715,7 +4722,17 @@ export default function App() {
         </div>}
 
         {showMode === 'recordings' && <div className="recordings-console-v3">
-          <section className="console-panel recording-command"><header><div><span>SHOW RECORDER</span><h2>Capture live lighting performance</h2></div><b>{showFile.recordings?.length ?? 0} TAKES</b></header><div className="recording-arm-row"><input value={recordingTakeName} placeholder={`Take ${(showFile.recordings?.length ?? 0)+1}`} onChange={(event)=>setRecordingTakeName(event.target.value)}/><button className="record-button" onClick={startShowRecording}>● RECORD SHOW</button></div><small>Records resolved lighting changes so the take can be replayed locally or driven by LumaStudio / MIDI transport.</small></section>
+          <section className="console-panel recording-command"><header><div><span>SHOW RECORDER</span><h2>Capture live lighting performance</h2></div><b>{showFile.recordings?.length ?? 0} TAKES</b></header>
+          <div className="recording-transport">
+            <button aria-label="Rewind recording transport" onClick={()=>{const audio=showTrackAudioRef.current;if(audio){audio.pause();audio.currentTime=0;}setShowTrackPositionMs(0);}}>｜◀</button>
+            <button aria-label="Play pause recording transport" onClick={toggleShowTrackPreview}>{showTrackAudioRef.current&&!showTrackAudioRef.current.paused?'❚❚':'▶'}</button>
+            <button aria-label="Stop recording transport" onClick={()=>{if(showRecordingActiveRef.current)stopShowRecording(true);else{showTrackAudioRef.current?.pause();stopRecordedShowPlayback(false);}}}>■</button>
+            <span><small>PLAYHEAD</small><strong>{formatShowTime(showTrackPositionMs)}</strong></span>
+            <span><small>BAR · BEAT</small><strong>{transport.bar} · {transport.beat}</strong></span>
+            <span><small>BPM</small><strong>{transport.bpm.toFixed(1)}</strong></span>
+            <span><small>SOURCE</small><strong>{transportSourceLabel(transport.source)}</strong></span>
+          </div>
+          <div className="recording-arm-row"><input value={recordingTakeName} placeholder={`Take ${(showFile.recordings?.length ?? 0)+1}`} onChange={(event)=>setRecordingTakeName(event.target.value)}/><button className="record-button" onClick={()=>startShowRecording(false)}>● RECORD</button><button className="overdub-button" disabled={!showTrackUrl} onClick={()=>{setRecordingTakeName((current)=>current||`${showTrackName||'Show'} · Overdub`);startShowRecording(true);}}>＋ OVERDUB</button></div><small>Perform lighting live, capture it against the shared transport, then replay or edit the take. Overdub starts from the current playhead without changing the source media.</small></section>
           <section className="console-panel recorded-takes-console"><header><div><span>LIGHTING TAKES</span><h2>Saved Performances</h2></div></header>{showFile.recordings?.length?showFile.recordings.map((recording)=><article key={recording.id}><span><strong>{recording.name}</strong><small>{formatShowTime(recording.durationMs)} · {recording.frames.length} changes</small></span><button className={playingRecordingId===recording.id?'console-primary':''} onClick={()=>playingRecordingId===recording.id?stopRecordedShowPlayback():playShowRecording(recording)}>{playingRecordingId===recording.id?'Stop':'Play'}</button><button onClick={()=>assignExternalRecording(recording.id)}>Assign to Sync</button><button className="danger-button" onClick={()=>deleteShowRecording(recording)}>Delete</button></article>):<div className="empty-cues"><strong>No recordings yet</strong><span>Arm the recorder and perform the show from LIVE.</span></div>}</section>
         </div>}
       </section>}
