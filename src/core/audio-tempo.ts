@@ -29,7 +29,7 @@ export function estimateTempoFromSamples(
 ): TempoEstimate | null {
   if (!Number.isFinite(sampleRate) || sampleRate <= 0 || samples.length < sampleRate * 2) return null;
 
-  const hop = Math.max(64, Math.round(sampleRate * .01));
+  const hop = Math.max(16, Math.round(sampleRate * .01));
   const frameCount = Math.floor(samples.length / hop);
   if (frameCount < 80) return null;
 
