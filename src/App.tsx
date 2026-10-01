@@ -1,6 +1,7 @@
 import ResizableWorkspace from './components/ResizableWorkspace';
 import DraggablePanelDeck from './components/DraggablePanelDeck';
 import StageMonitor, { openStageWindow, useStagePublisher } from './components/StageMonitor';
+import { openMediaOutputWindow, useMediaOutputPublisher } from './components/MediaOutputWindow';
 import Visualizer3D from './components/Visualizer3D';
 import { StageMediaSurface, requestStageVideoInputs, type StageVideoInputOption } from './components/StageMediaSurface';
 import SongCueLibrary from './components/SongCueLibrary';
@@ -679,6 +680,8 @@ export default function App() {
       .catch((error) => setMediaLibraryError(error instanceof Error ? error.message : String(error)));
   }, []);
 
+  useMediaOutputPublisher(showTrackAssetId, transport);
+
   const recoveryFingerprintRef = useRef('');
   const sharedShowRevisionRef = useRef(1);
   const [activeLocation, setActiveLocation] = useState<{id:string;name:string;estimated:boolean}|null>(null);
@@ -845,6 +848,8 @@ export default function App() {
   const [showTrackUrl, setShowTrackUrl] = useState('');
   const showTrackUrlRef = useRef('');
   const [showTrackName, setShowTrackName] = useState('');
+  const [showTrackAssetId, setShowTrackAssetId] = useState('');
+  const [showTrackKind, setShowTrackKind] = useState<'audio' | 'video'>('audio');
   const [showTrackDurationMs, setShowTrackDurationMs] = useState(0);
   const [showTrackPositionMs, setShowTrackPositionMs] = useState(0);
   const showTrackAudioRef = useRef<HTMLAudioElement | null>(null);
@@ -2010,24 +2015,50 @@ export default function App() {
     setMessage(`${item.name} removed from the show library.`);
   }
 
-  function loadShowAudioFile(file: File) {
+  async function loadMediaAssetAsTrack(asset: MediaAsset, updateTimeline = true) {
+    if (asset.kind !== 'audio' && asset.kind !== 'video') return;
     showTrackAudioRef.current?.pause();
     if (showTrackUrlRef.current) URL.revokeObjectURL(showTrackUrlRef.current);
-    const url = URL.createObjectURL(file);
-    showTrackUrlRef.current = url;
-    setShowTrackUrl(url); setShowTrackName(file.name); setShowTrackDurationMs(0); setShowTrackPositionMs(0);
-    updateEditingTimeline({...editingTimeline,audioName:file.name});
-    setRecordingTakeName(`${file.name.replace(/\.[^.]+$/, '')} · Take ${(showFile.recordings?.length ?? 0) + 1}`);
-    setMessage(`${file.name} loaded. Align its waveform on the bar timeline.`);
+    try {
+      const url = await mediaObjectUrl(asset.id);
+      showTrackUrlRef.current = url;
+      setShowTrackUrl(url);
+      setShowTrackName(asset.name);
+      setShowTrackAssetId(asset.id);
+      setShowTrackKind(asset.kind);
+      setShowTrackDurationMs(asset.durationMs ?? 0);
+      setShowTrackPositionMs(0);
+      if (updateTimeline) {
+        updateEditingTimeline({
+          ...editingTimeline,
+          audioName: asset.name,
+          mediaAssetId: asset.id,
+          mediaKind: asset.kind
+        });
+      }
+      setRecordingTakeName(`${asset.name.replace(/\.[^.]+$/, '')} · Take ${(showFile.recordings?.length ?? 0) + 1}`);
+      setMessage(`${asset.name} loaded from Media Library. ${asset.kind === 'video' ? 'Video and embedded audio share the same transport.' : 'Align its waveform on the bar timeline.'}`);
+    } catch (error) {
+      setMessage(`Media is missing. Relink or re-import ${asset.name}. ${String(error)}`);
+    }
   }
+
+  async function loadShowAudioFile(file: File) {
+    const asset = await importMediaFile(file);
+    if (!asset || (asset.kind !== 'audio' && asset.kind !== 'video')) return;
+    await loadMediaAssetAsTrack(asset);
+  }
+
   function loadShowTrack(event: ChangeEvent<HTMLInputElement>) {
-    const file=event.target.files?.[0]; if(file) loadShowAudioFile(file); event.target.value='';
+    const file=event.target.files?.[0];
+    if(file) void loadShowAudioFile(file);
+    event.target.value='';
   }
   function clearShowAudio() {
     setTimelineShowId('');setCueTimelineSong(null);
     showTrackAudioRef.current?.pause();
     if(showTrackUrlRef.current) URL.revokeObjectURL(showTrackUrlRef.current);
-    showTrackUrlRef.current=''; setShowTrackUrl(''); setShowTrackName('');setShowTrackDurationMs(0);setShowTrackPositionMs(0);stopTimeline();
+    showTrackUrlRef.current=''; setShowTrackUrl(''); setShowTrackName(''); setShowTrackAssetId(''); setShowTrackKind('audio'); setShowTrackDurationMs(0);setShowTrackPositionMs(0);stopTimeline();
   }
 
   function captureShowRecordingFrame(timeMs: number) {
