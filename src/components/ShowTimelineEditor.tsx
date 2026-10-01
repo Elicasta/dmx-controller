@@ -916,6 +916,25 @@ export default function ShowTimelineEditor(props: Props) {
                   />
                   Enabled
                 </label>
+                <section className="timeline-step-editor">
+                  <header><span>STEP EDIT</span><strong>{selected.stepDivision ?? 8} steps / bar</strong></header>
+                  <label>Grid<select aria-label="Step edit division" value={selected.stepDivision ?? 8} onChange={(e)=>{
+                    const division=Number(e.target.value) as 4|8|16;
+                    const existing=selected.stepPattern??[];
+                    changeClip(selected.id,{stepDivision:division,stepPattern:Array.from({length:division},(_,index)=>existing[index]??(index%2===0))});
+                  }}><option value={4}>Quarter</option><option value={8}>Eighth</option><option value={16}>Sixteenth</option></select></label>
+                  <div className="step-editor-grid" style={{gridTemplateColumns:`repeat(${selected.stepDivision??8},minmax(24px,1fr))`}}>
+                    {Array.from({length:selected.stepDivision??8},(_,index)=>{
+                      const pattern=selected.stepPattern??Array.from({length:selected.stepDivision??8},(_,step)=>step%2===0);
+                      const active=pattern[index]??false;
+                      return <button key={index} className={active?'active':''} aria-label={`Step ${index+1}`} onClick={()=>{
+                        const next=[...pattern];next[index]=!active;changeClip(selected.id,{stepDivision:selected.stepDivision??8,stepPattern:next});
+                      }}><small>{index+1}</small><b>{active?'●':'·'}</b></button>;
+                    })}
+                  </div>
+                  <div className="step-editor-actions"><button onClick={()=>changeClip(selected.id,{stepDivision:selected.stepDivision??8,stepPattern:Array.from({length:selected.stepDivision??8},()=>true)})}>All</button><button onClick={()=>changeClip(selected.id,{stepDivision:selected.stepDivision??8,stepPattern:Array.from({length:selected.stepDivision??8},(_,index)=>index%2===0)})}>Alternate</button><button onClick={()=>changeClip(selected.id,{stepDivision:undefined,stepPattern:undefined})}>Continuous</button></div>
+                  <small>Use this for drum hits, strobes, blinders or tight rhythmic cue/effect clips. The pattern repeats each bar.</small>
+                </section>
                 <button
                   disabled={playing || timeline.clips.length >= 1000}
                   onClick={() => {
