@@ -378,7 +378,13 @@ test('LIVE remains bounded with all recipe assignments and audio drop avoids see
  console.log('VISUAL_REVIEW_LIVE:'+ (await page.screenshot({type:'jpeg',quality:55})).toString('base64'));
  await page.getByRole('button',{name:'SHOW',exact:true}).click();
  await page.locator('.show-subtabs').getByRole('button',{name:'Timeline',exact:true}).click();
+ const snap=page.locator('.timeline-toolbar label').filter({hasText:'Snap'}).locator('select');
+ await expect(snap.locator('option')).toHaveText(['1 Bar','1 Beat','1/2 Beat','1/4 Beat','Fine']);
+ await snap.selectOption('beat');
+ await expect(snap).toHaveValue('beat');
  await page.getByRole('button',{name:'FX recipes',exact:true}).click();
+ await expect(page.locator('.timeline-fx-recipe').filter({hasText:'Blinder Hit'})).toHaveCount(1);
+ await expect(page.locator('.timeline-fx-recipe').filter({hasText:'Scene · Deep Blue'})).toHaveCount(1);
  await page.locator('.timeline-fx-recipe').filter({hasText:'Row Chase'}).dragTo(page.locator('[data-lane="2"]'),{targetPosition:{x:18,y:25}});
  await expect(page.locator('.timeline-clip')).toHaveCount(1);
  expect((await readShow(page)).cues[0].effectStack).toHaveLength(1);
@@ -451,6 +457,11 @@ test('integrated visualizer keeps venue presets isolated and opens the renderer'
  await expect(page.locator('.visualizer-workspace')).toBeVisible();
  await expect(page.locator('.visualizer-workspace canvas.visualizer-3d-canvas')).toBeVisible();
  await expect(page.getByRole('button',{name:'▶ Flyby',exact:true}).first()).toBeVisible();
+ const transformTools=page.getByRole('group',{name:'Scene transform tool'});
+ await expect(transformTools.getByRole('button',{name:'Navigate',exact:true})).toBeVisible();
+ await expect(transformTools.getByRole('button',{name:'Move',exact:true})).toBeVisible();
+ await expect(transformTools.getByRole('button',{name:'Rotate',exact:true})).toBeVisible();
+ await expect(page.getByRole('button',{name:'Render High',exact:true})).toBeVisible();
 
  const initialObjectCount=await page.evaluate(()=>{
    const doc=JSON.parse(localStorage.getItem('dmx-controller.stage-elements.v1')??'{"elements":[]}');
