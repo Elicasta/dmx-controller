@@ -2937,3 +2937,33 @@ body,#root { min-width:0; width:100%; overflow:hidden; }
   .programmer-target-actions{gap:3px}
   .programmer-target-actions button{padding:5px 7px}
 }
+
+
+/* Stage workspace scale pass: keep Stage useful, never thumbnail-sized. */
+.stage-workspace-center{overflow:auto!important;overscroll-behavior:contain}
+.stage-workspace-center .stage-console-toolbar{position:sticky;top:0;z-index:25;flex:0 0 auto;flex-wrap:wrap;gap:6px;background:#0c1217}
+.stage-surface-toggle{display:flex;align-items:center;gap:3px;min-width:0}
+.stage-surface-toggle button{white-space:nowrap}
+.dominant-stage{flex:0 0 clamp(460px,60vh,760px);min-height:460px;padding:8px;overflow:hidden}
+.dominant-stage.visualizer-mode>.visualizer-3d{height:100%;min-height:440px;border:1px solid #263640;border-radius:7px}
+.dominant-stage.visualizer-mode .visualizer-3d-canvas{min-height:360px}
+.dominant-stage.plot-mode>.physical-stage{min-height:440px}
+.stage-bottom-tools{flex:0 0 auto}
+
+.programmer-v3{grid-template-rows:48px minmax(360px,48vh) auto 118px!important;overflow:auto!important}
+.programmer-stage{min-height:360px!important}
+.programmer-stage>.visualizer-3d{height:100%;min-height:360px!important}
+.programmer-stage>.visualizer-3d .visualizer-3d-canvas{min-height:280px}
+.programmer-stage>.physical-stage{min-height:360px}
+
+@media(max-height:760px){
+  .dominant-stage{flex-basis:390px;min-height:390px}
+  .dominant-stage.visualizer-mode>.visualizer-3d,.dominant-stage.plot-mode>.physical-stage{min-height:370px}
+  .programmer-v3{grid-template-rows:48px minmax(300px,46vh) auto 100px!important}
+  .programmer-stage,.programmer-stage>.visualizer-3d,.programmer-stage>.physical-stage{min-height:300px!important}
+}
+@media(max-width:900px){
+  .stage-console-toolbar>span{width:100%}
+  .stage-surface-toggle{order:3;width:100%}
+  .dominant-stage{flex-basis:430px;min-height:430px}
+}
