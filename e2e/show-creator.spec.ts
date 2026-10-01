@@ -693,6 +693,7 @@ for (const width of [650,820]) test(`P0 workspaces stay bounded at ${width}px`, 
     expect(box.x+box.width).toBeLessThanOrEqual(width+1);
     expect(await page.locator('.live-detail-view').evaluate(e=>e.scrollWidth<=e.clientWidth+1)).toBe(true);
     expect(await page.locator('.live-command-bar').evaluate(e=>e.scrollWidth<=e.clientWidth+1)).toBe(true);
+    expect(await page.locator('.live-back').evaluate(e=>e.scrollWidth<=e.clientWidth+1)).toBe(true);
     await page.screenshot({path:info.outputPath(`live-${name}-${width}.png`)});
   }
   await page.getByRole('button',{name:'SHOW',exact:true}).click();
@@ -711,6 +712,7 @@ for (const width of [650,820]) test(`P0 workspaces stay bounded at ${width}px`, 
       expect(Math.min(...contrast)).toBeGreaterThanOrEqual(4.5);
     }
     expect(await page.locator('.show-console-v3 > .workspace-subtabs').evaluate(e=>e.scrollWidth<=e.clientWidth+1)).toBe(true);
+    expect(await page.locator('.show-console-v3 > .workspace-subtabs button').evaluateAll(items=>items.every(e=>e.scrollWidth<=e.clientWidth+1))).toBe(true);
     await page.screenshot({path:info.outputPath(`show-${name.replaceAll(' ','-')}-${width}.png`)});
   }
 });

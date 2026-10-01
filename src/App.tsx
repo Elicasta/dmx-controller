@@ -4485,7 +4485,7 @@ export default function App() {
       {workspace === 'show' && <section className="show-console console-workspace-wide show-console-v3">
         <nav className="workspace-subtabs show-subtabs">{([
           ['songs','Song Bank'],['creator','Show Creator'],['cues','Cues'],['timeline','Timeline'],['tracks','Tracks'],['library','Show Library'],['sync','MIDI & Sync'],['recordings','Recordings']
-        ] as Array<[ShowMode,string]>).map(([id,label]) => <button key={id} className={showMode === id ? 'active' : ''} onClick={() => setShowMode(id)}>{label}</button>)}</nav>
+        ] as Array<[ShowMode,string]>).map(([id,label]) => <button key={id} aria-label={label} title={label} data-compact-label={{songs:'Songs',creator:'Creator',cues:'Cues',timeline:'Timeline',tracks:'Tracks',library:'Library',sync:'Sync',recordings:'Record'}[id]} className={showMode === id ? 'active' : ''} onClick={() => setShowMode(id)}>{label}</button>)}</nav>
 
         {showMode === 'songs' && <SongBank library={songLibrary} ready={libraryReady} saveStatus={saveStatus} onSave={saveBankSong} onUse={useLibrarySong} show={showFile} activeId={activeSongId} onAdd={addBankSong} onSelect={selectBankSong} onRename={renameBankSong} onMedia={attachBankMedia}/>}
         {showMode === 'cues' && <ResizableWorkspace className={`show-cue-layout ${cueTimelineSong!==null ? 'cue-with-timeline' : ''}`} storageKey="lumarig.cue-columns.v1" leftLabel="Rundown" rightLabel="Cue Inspector" leftDefault={250} rightDefault={245} rightEnabled={cueTimelineSong===null} centerMinimum={400}>

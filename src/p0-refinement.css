@@ -92,3 +92,10 @@
 .timeline-clip, .timeline-audio-block { scroll-margin-top:44px; }
 .console-app :is(button,input,select,textarea):disabled { opacity:1!important; color:var(--text-disabled)!important; }
 .console-app button:disabled { background:var(--surface-secondary)!important; border-color:var(--border-default)!important; box-shadow:none!important; }
+
+.live-cue-deck > .live-back { font-size:11px; padding:4px; }
+.fixture-bank-surface .console-fader-strip { height:300px; min-height:0; grid-template-rows:54px minmax(100px,1fr) 22px 32px 32px; }
+@media(max-width:700px) {
+  .show-console-v3 > .workspace-subtabs button { font-size:0!important; letter-spacing:0!important; overflow-wrap:normal; }
+  .show-console-v3 > .workspace-subtabs button::before { content:attr(data-compact-label); font-size:8px; letter-spacing:.02em; white-space:nowrap; }
+}
