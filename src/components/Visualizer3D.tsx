@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent, type WheelEvent as ReactWheelEvent } from 'react';
 import { fixtureGeometryState } from '../core/fixture-geometry';
-import { cameraBasis, cameraOrbitFromPose, intersectVisualizerRayWithYPlane, orbitVisualizerCamera, projectVisualizerPoint, screenRayFromVisualizerPoint, visualizerCameraPreset, visualizerFlybyCamera, type VisualizerCamera, type VisualizerCameraPreset } from '../core/visualizer-camera';
+import { cameraBasis, cameraOrbitFromPose, intersectVisualizerRayWithPlane, orbitVisualizerCamera, projectVisualizerPoint, screenRayFromVisualizerPoint, visualizerCameraPreset, visualizerFlybyCamera, type VisualizerCamera, type VisualizerCameraPreset } from '../core/visualizer-camera';
 import { pointAlongRay, type EulerDegrees, type StageDimensions, type Vec3 } from '../core/geometry';
 import { findMode, readFixtureParameter, type PatchedFixture } from '../lib/fixtures';
 import { mediaObjectUrl } from '../lib/media-library';
@@ -867,6 +867,7 @@ export default function Visualizer3D({
     startPosition?: Vec3;
     startRotation?: EulerDegrees;
     anchor?: Vec3;
+    planeAxis?: 'x' | 'y' | 'z';
   } | null>(null);
   const cameraRef = useRef<VisualizerCamera>(visualizerCameraPreset('foh', snapshot.dimensions));
   const flybyStartRef = useRef(0);
@@ -1104,7 +1105,16 @@ export default function Visualizer3D({
       if (mode === 'move') {
         const bounds = event.currentTarget.getBoundingClientRect();
         const ray = screenRayFromVisualizerPoint(event.clientX - bounds.left, event.clientY - bounds.top, bounds.width, bounds.height, cameraRef.current);
-        state.anchor = intersectVisualizerRayWithYPlane(ray, position.y) ?? undefined;
+        const direction = ray.direction;
+        const planeAxis: 'x' | 'y' | 'z' = cameraRef.current.orthographicScale
+          ? Math.abs(direction.x) >= Math.abs(direction.y) && Math.abs(direction.x) >= Math.abs(direction.z)
+            ? 'x'
+            : Math.abs(direction.z) >= Math.abs(direction.y)
+              ? 'z'
+              : 'y'
+          : 'y';
+        state.planeAxis = planeAxis;
+        state.anchor = intersectVisualizerRayWithPlane(ray, planeAxis, position[planeAxis]) ?? undefined;
       }
       setPlayingFlyby(false);
     }
@@ -1157,15 +1167,18 @@ export default function Visualizer3D({
 
     const bounds = event.currentTarget.getBoundingClientRect();
     const ray = screenRayFromVisualizerPoint(event.clientX - bounds.left, event.clientY - bounds.top, bounds.width, bounds.height, cameraRef.current);
-    const point = intersectVisualizerRayWithYPlane(ray, drag.startPosition.y);
+    const planeAxis = drag.planeAxis ?? 'y';
+    const point = intersectVisualizerRayWithPlane(ray, planeAxis, drag.startPosition[planeAxis]);
     if (!point || !drag.anchor) return;
-    onTransformElement(drag.elementId, {
-      position: {
-        x: drag.startPosition.x + point.x - drag.anchor.x,
-        y: drag.startPosition.y,
-        z: drag.startPosition.z + point.z - drag.anchor.z
-      }
-    });
+    const next = {
+      x: drag.startPosition.x + point.x - drag.anchor.x,
+      y: drag.startPosition.y + point.y - drag.anchor.y,
+      z: drag.startPosition.z + point.z - drag.anchor.z
+    };
+    if (planeAxis === 'y') next.y = drag.startPosition.y;
+    if (planeAxis === 'x') next.x = drag.startPosition.x;
+    if (planeAxis === 'z') next.z = drag.startPosition.z;
+    onTransformElement(drag.elementId, { position: next });
   }
 
   function endInteraction(event: ReactPointerEvent<HTMLCanvasElement>) {
