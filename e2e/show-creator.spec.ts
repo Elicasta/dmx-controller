@@ -370,6 +370,8 @@ test('LIVE remains bounded with all recipe assignments and audio drop avoids see
  expect(flash.y+flash.height).toBeLessThanOrEqual(faderArea.y+faderArea.height+1);
  await page.getByRole('button',{name:'ASSIGN',exact:true}).click();
  await page.locator('.desk-surface-label').first().click();
+ await expect(page.locator('.desk-assignment-view')).toHaveCount(0);
+ await expect(page.locator('.desk-assign-panel')).toHaveCSS('grid-template-rows', /.+/);
  await page.getByPlaceholder('Fixtures, groups, looks, effects…').fill('Row Chase');
  await expect(page.locator('.desk-assign-grid button').filter({hasText:'Row Chase'})).toHaveCount(1);
  await page.locator('.desk-assign-grid button').filter({hasText:'Row Chase'}).click();
