@@ -699,6 +699,17 @@ for (const width of [650,820]) test(`P0 workspaces stay bounded at ${width}px`, 
   for(const name of ['Show Creator','Cues','Timeline','Song Bank','Show Library']) {
     await page.getByRole('button',{name,exact:true}).click();
     expect(await page.locator('.show-console-v3').evaluate(e=>e.scrollWidth<=e.clientWidth+1), name).toBe(true);
+    if(name==='Show Creator') {
+      const contrast=await page.locator('.show-creator').evaluate(root=>{
+        const luminance=(rgb:number[])=>rgb.slice(0,3).map(v=>v/255).map(v=>v<=.04045?v/12.92:((v+.055)/1.055)**2.4).reduce((sum,v,i)=>sum+v*[.2126,.7152,.0722][i],0);
+        return [...root.querySelectorAll('input[type=text],button:disabled')].map(e=>{
+          const style=getComputedStyle(e), fg=luminance(style.color.match(/[\d.]+/g)!.map(Number)), bg=luminance(style.backgroundColor.match(/[\d.]+/g)!.map(Number));
+          return (Math.max(fg,bg)+.05)/(Math.min(fg,bg)+.05);
+        });
+      });
+      expect(contrast.length).toBeGreaterThan(0);
+      expect(Math.min(...contrast)).toBeGreaterThanOrEqual(4.5);
+    }
     expect(await page.locator('.show-console-v3 > .workspace-subtabs').evaluate(e=>e.scrollWidth<=e.clientWidth+1)).toBe(true);
     await page.screenshot({path:info.outputPath(`show-${name.replaceAll(' ','-')}-${width}.png`)});
   }
@@ -736,7 +747,7 @@ test('Creator, Cues and Timeline splitters resize and reset',async({page})=>{
 test('working songs and rig restart when compatibility storage is full or stale',async({page})=>{
   await seed(page); await page.goto('/');
   await page.getByRole('button',{name:'SHOW',exact:true}).click();
-  await page.getByRole('button',{name:'Song Bank',exact:true}).click();
+  await page.locator('.show-console-v3 > .workspace-subtabs').getByRole('button',{name:'Song Bank',exact:true}).click();
   await expect(page.getByRole('status')).toHaveText('Saved');
   await page.evaluate(()=>{Storage.prototype.setItem=function(){throw new DOMException('Simulated localStorage full','QuotaExceededError');};});
   await page.getByLabel('New song name').fill('Quota Song');
@@ -745,11 +756,11 @@ test('working songs and rig restart when compatibility storage is full or stale'
   await page.locator('.song-bank > .song-bank-list article').filter({has:page.getByLabel('Song name Quota Song')}).getByRole('button',{name:'Build song',exact:true}).click();
   await page.getByRole('button',{name:/Worship Song/}).click();
   await page.getByRole('button',{name:'Save Section Preset',exact:true}).click();
-  await page.getByRole('button',{name:'Song Bank',exact:true}).click();
+  await page.locator('.show-console-v3 > .workspace-subtabs').getByRole('button',{name:'Song Bank',exact:true}).click();
   await expect(page.getByRole('status')).toHaveText('Saved');
   await page.reload();
   await page.getByRole('button',{name:'SHOW',exact:true}).click();
-  await page.getByRole('button',{name:'Song Bank',exact:true}).click();
+  await page.locator('.show-console-v3 > .workspace-subtabs').getByRole('button',{name:'Song Bank',exact:true}).click();
   await expect(page.getByLabel('Song name Quota Song')).toBeVisible();
   await expect(page.getByRole('status')).toHaveText('Saved');
   await page.getByRole('button',{name:'Show Creator',exact:true}).click();

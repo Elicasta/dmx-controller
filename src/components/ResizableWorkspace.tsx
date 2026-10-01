@@ -1,4 +1,4 @@
-import { Children, useEffect, useRef, useState, type ReactNode, type CSSProperties } from 'react';
+import { Children, useEffect, useLayoutEffect, useRef, useState, type ReactNode, type CSSProperties } from 'react';
 
 type Layout = { left: number; right: number; hideLeft: boolean; hideRight: boolean };
 const defaults: Layout = { left:180, right:190, hideLeft:false, hideRight:false };
@@ -20,7 +20,7 @@ export default function ResizableWorkspace({children,className,storageKey='lumar
   const [layout,setLayout]=useState(()=>restore(storageKey,initial)), [width,setWidth]=useState(1280);
   const drag=useRef<{side:'left'|'right';x:number;size:number}|null>(null);
   const hasRight=rightEnabled ?? (Children.toArray(children).length>2);
-  useEffect(()=>{
+  useLayoutEffect(()=>{
     const element=ref.current;if(!element)return;
     const observer=new ResizeObserver(()=>setWidth(element.clientWidth));
     observer.observe(element);setWidth(element.clientWidth);

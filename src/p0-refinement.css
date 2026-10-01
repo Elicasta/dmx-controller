@@ -68,6 +68,7 @@
   .console-brand input { min-width:0; width:100%; }
   .connection-pill { min-width:0; width:32px; font-size:0; }
   .connection-pill i { margin:0; }
+  .console-header-status .connection-pill span { display:none; }
   .console-blackout { min-width:68px; }
   .status-connections button { font-size:0; gap:3px; }
   .status-connections button b { font-size:8px; }
@@ -90,3 +91,4 @@
 .timeline-scroll { scroll-padding-top:44px; }
 .timeline-clip, .timeline-audio-block { scroll-margin-top:44px; }
 .console-app :is(button,input,select,textarea):disabled { opacity:1!important; color:var(--text-disabled)!important; }
+.console-app button:disabled { background:var(--surface-secondary)!important; border-color:var(--border-default)!important; box-shadow:none!important; }
