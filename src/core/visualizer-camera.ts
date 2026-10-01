@@ -81,6 +81,15 @@ export function screenRayFromVisualizerPoint(
   const safeWidth = Math.max(1, width);
   const safeHeight = Math.max(1, height);
   const basis = cameraBasis(camera);
+  if (camera.orthographicScale && camera.orthographicScale > 0) {
+    const worldPerPixel = camera.orthographicScale / Math.min(safeWidth, safeHeight);
+    const horizontal = (x - safeWidth / 2) * worldPerPixel;
+    const vertical = (safeHeight / 2 - y) * worldPerPixel;
+    return {
+      origin: add(add(camera.position, scale(basis.right, horizontal)), scale(basis.up, vertical)),
+      direction: basis.forward
+    };
+  }
   const fov = Math.max(20, Math.min(100, camera.fovDegrees)) * Math.PI / 180;
   const focal = safeHeight / (2 * Math.tan(fov / 2));
   const horizontal = (x - safeWidth / 2) / focal;
