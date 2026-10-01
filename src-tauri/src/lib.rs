@@ -22,6 +22,25 @@ fn open_stage_monitor(app: tauri::AppHandle) -> Result<(), String> {
         .build().map(|_| ()).map_err(|e| e.to_string())
 }
 
+#[tauri::command]
+fn open_media_output(app: tauri::AppHandle, asset_id: String) -> Result<(), String> {
+    let label = "media-output";
+    if let Some(window) = app.get_webview_window(label) {
+        window.close().map_err(|e| e.to_string())?;
+    }
+    let encoded = urlencoding::encode(&asset_id);
+    tauri::WebviewWindowBuilder::new(
+        &app,
+        label,
+        tauri::WebviewUrl::App(format!("index.html?media-output={encoded}").into())
+    )
+        .title("LumaRig · Media Output")
+        .inner_size(1280.0, 720.0)
+        .min_inner_size(640.0, 360.0)
+        .decorations(false)
+        .build().map(|_| ()).map_err(|e| e.to_string())
+}
+
 
 #[tauri::command]
 fn list_udmx_devices(engine: State<'_, DmxEngine>) -> Result<Vec<UdmxDeviceInfo>, String> {
@@ -117,6 +136,7 @@ pub fn run() {
         .manage(updates::UpdateState::default())
         .invoke_handler(tauri::generate_handler![
             open_stage_monitor,
+            open_media_output,
             list_udmx_devices,
             connect_dmx,
             disconnect_dmx,
