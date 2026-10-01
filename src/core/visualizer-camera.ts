@@ -65,6 +65,36 @@ export function cameraBasis(camera: VisualizerCamera): CameraBasis {
   return { forward, right, up };
 }
 
+export type VisualizerRay = {
+  origin: Vec3;
+  direction: Vec3;
+};
+
+export function screenRayFromVisualizerPoint(
+  x: number,
+  y: number,
+  width: number,
+  height: number,
+  camera: VisualizerCamera
+): VisualizerRay {
+  const safeWidth = Math.max(1, width);
+  const safeHeight = Math.max(1, height);
+  const basis = cameraBasis(camera);
+  const fov = Math.max(20, Math.min(100, camera.fovDegrees)) * Math.PI / 180;
+  const focal = safeHeight / (2 * Math.tan(fov / 2));
+  const horizontal = (x - safeWidth / 2) / focal;
+  const vertical = (safeHeight / 2 - y) / focal;
+  const direction = normalize(add(add(basis.forward, scale(basis.right, horizontal)), scale(basis.up, vertical)));
+  return { origin: { ...camera.position }, direction };
+}
+
+export function intersectVisualizerRayWithYPlane(ray: VisualizerRay, y: number): Vec3 | null {
+  if (Math.abs(ray.direction.y) < EPSILON) return null;
+  const distance = (y - ray.origin.y) / ray.direction.y;
+  if (distance <= 0) return null;
+  return add(ray.origin, scale(ray.direction, distance));
+}
+
 export function projectVisualizerPoint(
   point: Vec3,
   camera: VisualizerCamera,
