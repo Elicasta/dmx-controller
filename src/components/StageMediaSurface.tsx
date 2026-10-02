@@ -8,21 +8,80 @@ export type StageVideoInputOption = {
   label: string;
 };
 
+export type StageVideoInputErrorCode =
+  | 'permission-denied'
+  | 'device-busy'
+  | 'no-device'
+  | 'unsupported'
+  | 'unknown';
+
+export class StageVideoInputError extends Error {
+  readonly code: StageVideoInputErrorCode;
+
+  constructor(code: StageVideoInputErrorCode, message: string) {
+    super(message);
+    this.name = 'StageVideoInputError';
+    this.code = code;
+  }
+}
+
+function describeVideoInputFailure(error: unknown): StageVideoInputError {
+  const name = error instanceof DOMException ? error.name : '';
+  const raw = error instanceof Error ? error.message : String(error ?? '');
+  const lower = raw.toLowerCase();
+
+  if (name === 'NotAllowedError' || name === 'SecurityError' || lower.includes('not allowed') || lower.includes('denied permission')) {
+    return new StageVideoInputError(
+      'permission-denied',
+      'Video input access is blocked. Allow LumaRig camera access in your system privacy settings, then quit and reopen LumaRig before scanning again.'
+    );
+  }
+  if (name === 'NotReadableError' || name === 'TrackStartError' || lower.includes('could not start video source') || lower.includes('in use')) {
+    return new StageVideoInputError(
+      'device-busy',
+      'The video input is busy or unavailable. Close any app using that camera or NDI virtual input, then scan again.'
+    );
+  }
+  if (name === 'NotFoundError' || name === 'DevicesNotFoundError') {
+    return new StageVideoInputError(
+      'no-device',
+      'No camera or virtual video input is available. Start your NDI Virtual Input/Webcam source, then scan again.'
+    );
+  }
+  return new StageVideoInputError(
+    'unknown',
+    raw || 'Video input scanning failed.'
+  );
+}
+
 export async function requestStageVideoInputs(): Promise<StageVideoInputOption[]> {
   if (!navigator.mediaDevices?.enumerateDevices || !navigator.mediaDevices?.getUserMedia) {
-    throw new Error('Video inputs are not available in this runtime.');
+    throw new StageVideoInputError(
+      'unsupported',
+      'Video inputs are not available in this runtime.'
+    );
   }
 
-  const permissionStream = await navigator.mediaDevices.getUserMedia({ video: true, audio: false });
-  permissionStream.getTracks().forEach((track) => track.stop());
+  let permissionStream: MediaStream | null = null;
+  try {
+    permissionStream = await navigator.mediaDevices.getUserMedia({ video: true, audio: false });
+  } catch (error) {
+    throw describeVideoInputFailure(error);
+  } finally {
+    permissionStream?.getTracks().forEach((track) => track.stop());
+  }
 
-  const devices = await navigator.mediaDevices.enumerateDevices();
-  return devices
-    .filter((device) => device.kind === 'videoinput')
-    .map((device, index) => ({
-      deviceId: device.deviceId,
-      label: device.label || `Video Input ${index + 1}`
-    }));
+  try {
+    const devices = await navigator.mediaDevices.enumerateDevices();
+    return devices
+      .filter((device) => device.kind === 'videoinput')
+      .map((device, index) => ({
+        deviceId: device.deviceId,
+        label: device.label || `Video Input ${index + 1}`
+      }));
+  } catch (error) {
+    throw describeVideoInputFailure(error);
+  }
 }
 
 export function StageMediaSurface({ source }: { source?: StageScreenSource }) {
