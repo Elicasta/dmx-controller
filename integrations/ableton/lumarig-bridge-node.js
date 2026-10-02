@@ -1,7 +1,7 @@
 const maxApi = require("max-api");
 const WebSocket = require("ws");
 
-const BRIDGE_URL = process.env.LUMARIG_BRIDGE_URL || "ws://127.0.0.1:47777";
+const BRIDGE_URL = process.env.LUMARIG_BRIDGE_URL || "ws://127.0.0.1:47777/studio";
 let socket = null;
 let reconnectTimer = null;
 let sequence = 0;
