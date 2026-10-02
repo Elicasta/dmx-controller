@@ -5338,18 +5338,35 @@ export default function App() {
             <label><span>Color</span><input className="inspector-color" type="color" value={selectedStageElement.color} onChange={(event) => updateStageElement(selectedStageElement.id, { color: event.target.value })} /></label>
             {selectedStageElement.type === 'led-screen' && <section className="screen-source-inspector">
               <header><span>SCREEN SOURCE</span><strong>Media / Timeline / NDI</strong></header>
-              <label><span>Source</span><select value={selectedStageElement.mediaSource?.kind ?? 'none'} onChange={(event) => updateStageElement(selectedStageElement.id, { mediaSource: event.target.value === 'timeline' ? {kind:'timeline',sourceName:'Timeline video',fit:'contain'} : event.target.value === 'ndi' ? { kind: 'ndi', sourceName: 'ProPresenter', fit: 'contain' } : { kind: 'none' } })}><option value="none">Static color</option><option value="ndi">NDI / video input</option><option value="timeline">Timeline video</option></select></label>
+              <label><span>Source</span><select value={selectedStageElement.mediaSource?.kind ?? 'none'} onChange={(event) => {
+                const previous=selectedStageElement.mediaSource?.kind!=='none' ? selectedStageElement.mediaSource : undefined;
+                updateStageElement(selectedStageElement.id, { mediaSource: event.target.value === 'timeline'
+                  ? {kind:'timeline',sourceName:'Timeline video',fit:previous && 'fit' in previous ? previous.fit??'contain':'contain',scale:previous && 'scale' in previous ? previous.scale??1:1,offsetX:previous && 'offsetX' in previous ? previous.offsetX??0:0,offsetY:previous && 'offsetY' in previous ? previous.offsetY??0:0}
+                  : event.target.value === 'ndi'
+                    ? {kind:'ndi',sourceName:'ProPresenter',fit:previous && 'fit' in previous ? previous.fit??'contain':'contain',scale:previous && 'scale' in previous ? previous.scale??1:1,offsetX:previous && 'offsetX' in previous ? previous.offsetX??0:0,offsetY:previous && 'offsetY' in previous ? previous.offsetY??0:0}
+                    : {kind:'none'} });
+              }}><option value="none">Static color</option><option value="ndi">NDI / video input</option><option value="timeline">Timeline video</option></select></label>
               <label>Import video to Timeline<input aria-label="Import screen video" type="file" accept="video/mp4,.mp4" onChange={e=>{const file=e.target.files?.[0];e.target.value='';if(file)void importScreenVideo(selectedStageElement.id,file).catch(error=>setMessage(String(error)));}} /></label>
               {selectedStageElement.mediaSource?.kind === 'ndi' && <>
                 <label><span>Input</span><select value={selectedStageElement.mediaSource.deviceId ?? ''} onChange={(event) => {
                   const input = stageVideoInputs.find((item) => item.deviceId === event.target.value);
                   updateStageElement(selectedStageElement.id, { mediaSource: { ...selectedStageElement.mediaSource!, kind: 'ndi', deviceId: event.target.value || undefined, sourceName: input?.label || 'ProPresenter' } });
                 }}><option value="">Select NDI / video input</option>{stageVideoInputs.map((input) => <option key={input.deviceId} value={input.deviceId}>{input.label}</option>)}</select></label>
-                <label><span>Fit</span><select value={selectedStageElement.mediaSource.fit ?? 'contain'} onChange={(event) => updateStageElement(selectedStageElement.id, { mediaSource: { ...selectedStageElement.mediaSource!, kind: 'ndi', fit: event.target.value as 'contain' | 'cover' } })}><option value="contain">Contain</option><option value="cover">Fill / crop</option></select></label>
                 <button onClick={() => void scanStageVideoInputs()}>Scan NDI / Video Inputs</button>
                 {stageVideoInputError && <small className="stage-source-error">{stageVideoInputError}</small>}
                 {stageVideoInputPermissionBlocked && <button className="video-permission-action" onClick={() => void openVideoInputPrivacySettings()}>Open Camera Privacy Settings</button>}
                 <small>Use ProPresenter NDI output through an NDI virtual video input. The selected feed is rendered on this screen in the stage view and pop-out monitor.</small>
+              </>}
+              {selectedStageElement.mediaSource && ['ndi','timeline','image'].includes(selectedStageElement.mediaSource.kind) && <>
+                <div className="screen-framing-pair">
+                  <label><span>Fit</span><select aria-label="Build screen video fit" value={'fit' in selectedStageElement.mediaSource ? selectedStageElement.mediaSource.fit ?? 'contain' : 'contain'} onChange={event=>updateScreenFraming(selectedStageElement.id,{fit:event.target.value as 'contain'|'cover'})}><option value="contain">Contain</option><option value="cover">Fill / crop</option></select></label>
+                  <label><span>Size · {Math.round((('scale' in selectedStageElement.mediaSource ? selectedStageElement.mediaSource.scale : 1) ?? 1)*100)}%</span><input aria-label="Build screen video size" type="range" min="25" max="300" step="1" value={(('scale' in selectedStageElement.mediaSource ? selectedStageElement.mediaSource.scale : 1) ?? 1)*100} onChange={event=>updateScreenFraming(selectedStageElement.id,{scale:Number(event.target.value)/100})}/></label>
+                </div>
+                <div className="screen-framing-pair">
+                  <label><span>X · {Math.round((('offsetX' in selectedStageElement.mediaSource ? selectedStageElement.mediaSource.offsetX : 0) ?? 0)*100)}%</span><input aria-label="Build screen video horizontal position" type="range" min="-100" max="100" step="1" value={(('offsetX' in selectedStageElement.mediaSource ? selectedStageElement.mediaSource.offsetX : 0) ?? 0)*100} onChange={event=>updateScreenFraming(selectedStageElement.id,{offsetX:Number(event.target.value)/100})}/></label>
+                  <label><span>Y · {Math.round((('offsetY' in selectedStageElement.mediaSource ? selectedStageElement.mediaSource.offsetY : 0) ?? 0)*100)}%</span><input aria-label="Build screen video vertical position" type="range" min="-100" max="100" step="1" value={(('offsetY' in selectedStageElement.mediaSource ? selectedStageElement.mediaSource.offsetY : 0) ?? 0)*100} onChange={event=>updateScreenFraming(selectedStageElement.id,{offsetY:Number(event.target.value)/100})}/></label>
+                </div>
+                <button onClick={()=>updateScreenFraming(selectedStageElement.id,{fit:'contain',scale:1,offsetX:0,offsetY:0})}>Reset Screen Framing</button>
               </>}
             </section>}
             <button className="danger-button stage-delete-button" onClick={() => removeStageElement(selectedStageElement.id)}>Delete Stage Object</button>
