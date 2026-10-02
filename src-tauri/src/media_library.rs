@@ -4,7 +4,7 @@ use std::{
     fs::{self, File, OpenOptions},
     io::{Read, Write},
     path::{Path, PathBuf},
-    sync::Mutex,
+    sync::{Arc, Mutex},
     time::{SystemTime, UNIX_EPOCH},
 };
 use tauri::{AppHandle, Manager, State};
@@ -19,7 +19,7 @@ const MAX_MANIFEST_BYTES: u64 = 64 * 1024 * 1024;
 
 #[derive(Default)]
 pub struct MediaLibraryState {
-    lock: Mutex<()>,
+    lock: Arc<Mutex<()>>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
