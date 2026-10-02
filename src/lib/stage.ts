@@ -25,12 +25,15 @@ export type StageAssetKind =
 
 export type StageScreenSource =
   | { kind: 'none' }
-  | { kind: 'timeline'; sourceName?: string; deviceId?: string; fit?: 'contain' | 'cover' }
+  | { kind: 'timeline'; sourceName?: string; deviceId?: string; fit?: 'contain' | 'cover'; scale?: number; offsetX?: number; offsetY?: number }
   | {
       kind: 'ndi';
       deviceId?: string;
       sourceName?: string;
       fit?: 'contain' | 'cover';
+      scale?: number;
+      offsetX?: number;
+      offsetY?: number;
     };
 
 export type StageElement = {
@@ -182,7 +185,10 @@ function isStageScreenSource(value: unknown): value is StageScreenSource {
   return (source.kind === 'ndi' || source.kind === 'timeline')
     && (source.deviceId === undefined || typeof source.deviceId === 'string')
     && (source.sourceName === undefined || typeof source.sourceName === 'string')
-    && (source.fit === undefined || source.fit === 'contain' || source.fit === 'cover');
+    && (source.fit === undefined || source.fit === 'contain' || source.fit === 'cover')
+    && (source.scale === undefined || (typeof source.scale === 'number' && Number.isFinite(source.scale) && source.scale >= .25 && source.scale <= 4))
+    && (source.offsetX === undefined || (typeof source.offsetX === 'number' && Number.isFinite(source.offsetX) && source.offsetX >= -1 && source.offsetX <= 1))
+    && (source.offsetY === undefined || (typeof source.offsetY === 'number' && Number.isFinite(source.offsetY) && source.offsetY >= -1 && source.offsetY <= 1));
 }
 
 function isVector(value: unknown): value is Vec3 {
