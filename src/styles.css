@@ -3278,3 +3278,8 @@ body,#root { min-width:0; width:100%; overflow:hidden; }
 .connection-registry-item.error{border-color:#69383e}
 .connection-registry-item.error b{color:#ff8994}
 @media(max-width:720px){.connection-registry-item{grid-template-columns:1fr}.connection-registry-item>span:last-child{text-align:left}}
+
+.lumalive-now{display:flex;align-items:center;justify-content:space-between;gap:10px;margin:9px 0;padding:9px 10px;border:1px solid #29343d;border-radius:8px;background:#0c1216}
+.lumalive-now strong{font-size:10px}.lumalive-now span{font-size:8px;color:#7f8c96}
+.lumalive-pair-row{display:grid;grid-template-columns:minmax(120px,1fr) auto;gap:7px;margin-top:9px}
+.lumalive-pair-row input{height:36px;padding:0 10px;border:1px solid #313b44;border-radius:7px;background:#090c0f;color:#eef3f6;font:700 14px ui-monospace,SFMono-Regular,Menlo,monospace;letter-spacing:3px}
