@@ -11,6 +11,7 @@ import {
   type PointerEvent,
 } from "react";
 import type { ShowCue } from "../lib/show";
+import type { TempoAnalysis } from '../lib/tempo-analysis';
 import {
   FX_RECIPES,
   barMs,
@@ -55,6 +56,8 @@ type Props = {
   onTempoLockChange: (locked: boolean) => void;
   masterBpm: number;
   onMasterBpmChange: (bpm: number) => void;
+  tempoAnalysis?: TempoAnalysis;
+  onDownbeatChange?: (downbeatMs:number)=>void;
 };
 type Drag = {
   kind: "move" | "resize" | "audio" | "trim-in" | "trim-out" | "playhead" | "video-move" | "video-resize" | "take-move" | "take-resize";
@@ -568,6 +571,14 @@ export default function ShowTimelineEditor(props: Props) {
           }} />
         </label>
         <button className="tempo-lock" aria-pressed={tempoLocked} onClick={() => onTempoLockChange(!tempoLocked)}>{tempoLocked ? "Tempo Locked" : "Lock Tempo"}</button>
+        {props.tempoAnalysis && <span className="timeline-tempo-analysis" title={`Analyzed ${new Date(props.tempoAnalysis.analyzedAt).toLocaleString()}`}>
+          <b>{props.tempoAnalysis.bpm} detected</b>
+          <small>{Math.round(props.tempoAnalysis.confidence*100)}% · downbeat {(props.tempoAnalysis.downbeatMs/1000).toFixed(2)}s{props.tempoAnalysis.manualDownbeat?' corrected':''}</small>
+        </span>}
+        <button disabled={!audioUrl || !props.onDownbeatChange} onClick={()=>{
+          const downbeatMs=Math.max(0,Math.round((audioRef.current?.currentTime ?? 0)*1000));
+          props.onDownbeatChange?.(downbeatMs);
+        }}>Set Downbeat Here</button>
         <label>
           Beats / bar
           <input
