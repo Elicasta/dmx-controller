@@ -990,7 +990,7 @@ test('cue and Timeline selection remain authoritative across editors', async ({ 
   await element.scrollIntoViewIfNeeded(); await element.click({position:{x:25,y:15}});
   await expect(element).toHaveClass(/selected/);
   await page.getByRole('button',{name:'Show Creator',exact:true}).click();
-  await expect(page.locator('.section-list>article.active .section-select')).toContainText(cue.name);
+  await expect(page.locator('.section-list>article.active .section-select')).toContainText(show.creatorSections.find((item:any)=>item.id===cue.sourceSectionId).name);
   await page.getByRole('button',{name:'Cues',exact:true}).click();
   await expect(page.locator('.cue-inspector-console')).toContainText(cue.name);
   await page.getByRole('button',{name:'Timeline',exact:true}).click();
@@ -1000,7 +1000,7 @@ test('cue and Timeline selection remain authoritative across editors', async ({ 
   const firstCue=show.cues.find((item:any)=>item.id===timeline.clips[0].cueId);
   await page.locator('.cue-line').filter({hasText:firstCue.name}).first().click();
   await page.getByRole('button',{name:'Show Creator',exact:true}).click();
-  await expect(page.locator('.section-list>article.active .section-select')).toContainText(firstCue.name);
+  await expect(page.locator('.section-list>article.active .section-select')).toContainText(show.creatorSections.find((item:any)=>item.id===firstCue.sourceSectionId).name);
   await page.getByRole('button',{name:'Timeline',exact:true}).click();
   await expect(page.getByRole('button',{name:`Timeline clip ${firstCue.name}`,exact:true})).toHaveClass(/selected/);
   expect(errors).toEqual([]);
