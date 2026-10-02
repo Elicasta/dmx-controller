@@ -3822,9 +3822,18 @@ export default function App() {
     setStageVideoInputError('');
     setStageVideoInputPermissionBlocked(false);
     try {
-      const inputs = await requestStageVideoInputs();
-      setStageVideoInputs(inputs);
-      setMessage(inputs.length ? `${inputs.length} video input${inputs.length === 1 ? '' : 's'} available for visualizer screens.` : 'No video inputs were found. Start NDI Virtual Input/Webcam, then scan again.');
+      const result = await requestStageVideoInputs();
+      setStageVideoInputs(result.inputs);
+      const limited = result.permission === 'limited';
+      setStageVideoInputPermissionBlocked(limited);
+      setStageVideoInputError(result.warning ?? '');
+      if (result.inputs.length) {
+        setMessage(limited
+          ? `${result.inputs.length} video input${result.inputs.length === 1 ? '' : 's'} found, but LumaRig still needs camera permission for names/live preview.`
+          : `${result.inputs.length} video input${result.inputs.length === 1 ? '' : 's'} available for visualizer screens.`);
+      } else {
+        setMessage('No video inputs were found. Start NDI Webcam Input / Virtual Input, then scan again.');
+      }
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       setStageVideoInputPermissionBlocked(error instanceof StageVideoInputError && error.code === 'permission-denied');
