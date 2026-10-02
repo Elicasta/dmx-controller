@@ -5406,15 +5406,22 @@ export default function App() {
             <label><span>Color</span><input className="inspector-color" type="color" value={selectedStageElement.color} onChange={(event) => updateStageElement(selectedStageElement.id, { color: event.target.value })} /></label>
             {selectedStageElement.type === 'led-screen' && <section className="screen-source-inspector">
               <header><span>SCREEN SOURCE</span><strong>Media / Timeline / NDI</strong></header>
-              <label><span>Source</span><select value={selectedStageElement.mediaSource?.kind ?? 'none'} onChange={(event) => {
-                const previous=selectedStageElement.mediaSource?.kind!=='none' ? selectedStageElement.mediaSource : undefined;
-                updateStageElement(selectedStageElement.id, { mediaSource: event.target.value === 'timeline'
-                  ? {kind:'timeline',sourceName:'Timeline video',fit:previous && 'fit' in previous ? previous.fit??'contain':'contain',scale:previous && 'scale' in previous ? previous.scale??1:1,offsetX:previous && 'offsetX' in previous ? previous.offsetX??0:0,offsetY:previous && 'offsetY' in previous ? previous.offsetY??0:0}
-                  : event.target.value === 'ndi'
-                    ? {kind:'ndi',sourceName:'ProPresenter',fit:previous && 'fit' in previous ? previous.fit??'contain':'contain',scale:previous && 'scale' in previous ? previous.scale??1:1,offsetX:previous && 'offsetX' in previous ? previous.offsetX??0:0,offsetY:previous && 'offsetY' in previous ? previous.offsetY??0:0}
-                    : {kind:'none'} });
-              }}><option value="none">Static color</option><option value="ndi">NDI / video input</option><option value="timeline">Timeline video</option></select></label>
+              <label><span>Source</span><select value={selectedStageElement.mediaSource?.kind ?? 'none'} onChange={(event)=>setScreenSourceKind(selectedStageElement.id,event.target.value as 'none'|'timeline'|'ndi'|'image'|'color'|'test-pattern')}>
+                <option value="none">Object / screen color</option>
+                <option value="color">Solid color source</option>
+                <option value="test-pattern">Test pattern</option>
+                <option value="image">Still image · Media Library</option>
+                <option value="ndi">NDI / video input</option>
+                <option value="timeline">Timeline video / MP4</option>
+              </select></label>
               <label>Import video to Timeline<input aria-label="Import screen video" type="file" accept="video/mp4,.mp4" onChange={e=>{const file=e.target.files?.[0];e.target.value='';if(file)void importScreenVideo(selectedStageElement.id,file).catch(error=>setMessage(String(error)));}} /></label>
+              {selectedStageElement.mediaSource?.kind==='color' && <label><span>Source Color</span><input className="inspector-color" type="color" value={selectedStageElement.mediaSource.color} onChange={event=>updateStageElement(selectedStageElement.id,{mediaSource:{...selectedStageElement.mediaSource!,kind:'color',color:event.target.value}})}/></label>}
+              {selectedStageElement.mediaSource?.kind==='test-pattern' && <label><span>Pattern</span><select value={selectedStageElement.mediaSource.pattern} onChange={event=>updateStageElement(selectedStageElement.id,{mediaSource:{...selectedStageElement.mediaSource!,kind:'test-pattern',pattern:event.target.value as 'bars'|'grid'|'checker'}})}><option value="bars">Color bars</option><option value="grid">Alignment grid</option><option value="checker">Checker</option></select></label>}
+              {selectedStageElement.mediaSource?.kind==='image' && <>
+                <label><span>Image Asset</span><select value={selectedStageElement.mediaSource.mediaId} onChange={event=>{const asset=screenImageAssets.find(item=>item.id===event.target.value);updateStageElement(selectedStageElement.id,{mediaSource:{...selectedStageElement.mediaSource!,kind:'image',mediaId:event.target.value,sourceName:asset?.name??'Still image'}})}}><option value="">Select Media Library image</option>{screenImageAssets.map(asset=><option key={asset.id} value={asset.id}>{asset.name}</option>)}</select></label>
+                <label className="file-button">Import Still Image<input aria-label="Import screen still image" type="file" accept="image/*,.png,.jpg,.jpeg,.webp,.gif,.bmp,.tif,.tiff" onChange={event=>{const file=event.target.files?.[0];event.target.value='';if(file)void importScreenImage(selectedStageElement.id,file).catch(error=>setMessage(String(error)));}}/></label>
+                <button onClick={()=>void refreshScreenImageAssets().catch(error=>setMessage(String(error)))}>Refresh Media Library Images</button>
+              </>}
               {selectedStageElement.mediaSource?.kind === 'ndi' && <>
                 <label><span>Input</span><select value={selectedStageElement.mediaSource.deviceId ?? ''} onChange={(event) => {
                   const input = stageVideoInputs.find((item) => item.deviceId === event.target.value);
@@ -5722,21 +5729,27 @@ export default function App() {
               </div>
               <label><span>Color</span><input className="inspector-color" type="color" value={selectedStageElement.color} onChange={(event) => updateStageElement(selectedStageElement.id, { color: event.target.value })}/></label>
               {selectedStageElement.type === 'led-screen' && <div className="visualizer-screen-route">
-                <label><span>Screen Source</span><select value={selectedStageElement.mediaSource?.kind ?? 'none'} onChange={(event) => {
-                  const previous=selectedStageElement.mediaSource?.kind!=='none' ? selectedStageElement.mediaSource : undefined;
-                  updateStageElement(selectedStageElement.id, { mediaSource: event.target.value === 'timeline'
-                    ? {kind:'timeline',sourceName:'Timeline video',fit:previous?.fit??'contain',scale:previous?.scale??1,offsetX:previous?.offsetX??0,offsetY:previous?.offsetY??0}
-                    : event.target.value === 'ndi'
-                      ? {kind:'ndi',sourceName:'ProPresenter',fit:previous?.fit??'contain',scale:previous?.scale??1,offsetX:previous?.offsetX??0,offsetY:previous?.offsetY??0}
-                      : {kind:'none'} });
-                }}><option value="none">Static</option><option value="ndi">NDI / Video Input</option><option value="timeline">Timeline video</option></select></label>
+                <label><span>Screen Source</span><select value={selectedStageElement.mediaSource?.kind ?? 'none'} onChange={(event)=>setScreenSourceKind(selectedStageElement.id,event.target.value as 'none'|'timeline'|'ndi'|'image'|'color'|'test-pattern')}>
+                  <option value="none">Object / screen color</option>
+                  <option value="color">Solid color</option>
+                  <option value="test-pattern">Test pattern</option>
+                  <option value="image">Still image</option>
+                  <option value="ndi">NDI / Video Input</option>
+                  <option value="timeline">Timeline video / MP4</option>
+                </select></label>
                 <label>Import video to Timeline<input aria-label="Import screen video" type="file" accept="video/mp4,.mp4" onChange={e=>{const file=e.target.files?.[0];e.target.value='';if(file)void importScreenVideo(selectedStageElement.id,file).catch(error=>setMessage(String(error)));}} /></label>
+                {selectedStageElement.mediaSource?.kind==='color' && <label><span>Source Color</span><input type="color" value={selectedStageElement.mediaSource.color} onChange={event=>updateStageElement(selectedStageElement.id,{mediaSource:{...selectedStageElement.mediaSource!,kind:'color',color:event.target.value}})}/></label>}
+                {selectedStageElement.mediaSource?.kind==='test-pattern' && <label><span>Pattern</span><select value={selectedStageElement.mediaSource.pattern} onChange={event=>updateStageElement(selectedStageElement.id,{mediaSource:{...selectedStageElement.mediaSource!,kind:'test-pattern',pattern:event.target.value as 'bars'|'grid'|'checker'}})}><option value="bars">Color bars</option><option value="grid">Alignment grid</option><option value="checker">Checker</option></select></label>}
+                {selectedStageElement.mediaSource?.kind==='image' && <>
+                  <label><span>Image Asset</span><select value={selectedStageElement.mediaSource.mediaId} onChange={event=>{const asset=screenImageAssets.find(item=>item.id===event.target.value);updateStageElement(selectedStageElement.id,{mediaSource:{...selectedStageElement.mediaSource!,kind:'image',mediaId:event.target.value,sourceName:asset?.name??'Still image'}})}}><option value="">Select Media Library image</option>{screenImageAssets.map(asset=><option key={asset.id} value={asset.id}>{asset.name}</option>)}</select></label>
+                  <label className="file-button">Import Still Image<input aria-label="Import visualizer screen still image" type="file" accept="image/*,.png,.jpg,.jpeg,.webp,.gif,.bmp,.tif,.tiff" onChange={event=>{const file=event.target.files?.[0];event.target.value='';if(file)void importScreenImage(selectedStageElement.id,file).catch(error=>setMessage(String(error)));}}/></label>
+                </>}
                 {selectedStageElement.mediaSource?.kind === 'ndi' && <label><span>Input</span><select value={selectedStageElement.mediaSource.deviceId ?? ''} onChange={(event) => {
                   const input=stageVideoInputs.find((item)=>item.deviceId===event.target.value);
                   const source=selectedStageElement.mediaSource?.kind==='ndi' ? selectedStageElement.mediaSource : {kind:'ndi' as const};
                   updateStageElement(selectedStageElement.id,{mediaSource:{...source,deviceId:event.target.value||undefined,sourceName:input?.label||'ProPresenter'}});
                 }}><option value="">Select input</option>{stageVideoInputs.map((input)=><option key={input.deviceId} value={input.deviceId}>{input.label}</option>)}</select></label>}
-                {selectedStageElement.mediaSource && selectedStageElement.mediaSource.kind !== 'none' && <>
+                {selectedStageElement.mediaSource && ['ndi','timeline','image'].includes(selectedStageElement.mediaSource.kind) && <>
                   <div className="screen-framing-pair">
                     <label><span>Fit</span><select value={selectedStageElement.mediaSource.fit ?? 'contain'} onChange={event=>updateScreenFraming(selectedStageElement.id,{fit:event.target.value as 'contain'|'cover'})}><option value="contain">Contain</option><option value="cover">Cover</option></select></label>
                     <label><span>Size · {Math.round((selectedStageElement.mediaSource.scale ?? 1)*100)}%</span><input aria-label="Screen video size" type="range" min="25" max="300" step="1" value={(selectedStageElement.mediaSource.scale ?? 1)*100} onChange={event=>updateScreenFraming(selectedStageElement.id,{scale:Number(event.target.value)/100})}/></label>
