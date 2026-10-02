@@ -177,11 +177,20 @@ export async function uploadCloudShowMedia(
   blob: Blob
 ) {
   const { client, userId } = await operatorClient(config);
+  const folder = `${userId}/${safeObjectSegment(showId)}`;
+  const objectName = safeObjectSegment(mediaId);
+  const existing = await client.storage.from(CLOUD_MEDIA_BUCKET).list(folder, {
+    limit: 2,
+    search: objectName
+  });
+  dbError(existing.error, 'Cloud media could not be checked.');
+  if ((existing.data ?? []).some((entry) => entry.name === objectName)) return;
+
   const result = await client.storage.from(CLOUD_MEDIA_BUCKET).upload(
-    cloudMediaPath(userId, showId, mediaId),
+    `${folder}/${objectName}`,
     blob,
     {
-      upsert: true,
+      upsert: false,
       contentType: blob.type || 'application/octet-stream',
       cacheControl: '3600'
     }
