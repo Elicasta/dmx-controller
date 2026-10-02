@@ -574,7 +574,7 @@ export default function ShowCreator({
                     >
                       ×
                     </button>
-                    {l.stepEditor&&l.customEffect&&<StepEditor effect={l.customEffect} onChange={customEffect=>layerChange(l.id,{customEffect})}/>}
+                    {l.stepEditor&&l.customEffect&&<StepEditor effect={l.customEffect} triggerOptions={recipes.filter(recipe=>recipe.id!==l.recipeId).map(recipe=>({id:recipe.id,name:recipe.name,effect:recipe.effect}))} onChange={customEffect=>layerChange(l.id,{customEffect})}/>}
                     <div className="layer-controls">
                       <label>Intensity %<input aria-label={`Layer ${index+1} intensity`} type="number" min={0} max={100} value={l.intensity ?? selected.intensity} onChange={e=>layerChange(l.id,{intensity:Math.max(0,Math.min(100,Number(e.target.value)))})} /></label>
                       <label>Color<input aria-label={`Layer ${index+1} color`} type="color" value={l.color ?? selected.color} onChange={e=>layerChange(l.id,{color:e.target.value})} /></label>
