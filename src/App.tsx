@@ -1170,7 +1170,7 @@ export default function App() {
         setMessage(lumaLiveConnection?'LumaLive detected. Checking paired transport…':'LumaLive detected. Enter its six-digit pairing code.');
       }else{
         connectionManagerRef.current!.disconnect('lumalive','LumaLive not detected on this computer');
-        connectionManagerRef.current!.disconnect('ableton','Waiting for LumaLive');
+        connectionManagerRef.current!.disconnect('ableton-lumalive','Waiting for LumaLive');
         refreshConnectionRecords();
         setMessage('LumaLive was not found on this computer. Open LumaLive, then scan again.');
       }
@@ -1222,7 +1222,7 @@ export default function App() {
     setLumaLiveError('');
     releaseSharedTransport('lumalive');
     connectionManagerRef.current!.disconnect('lumalive','Pairing removed');
-    connectionManagerRef.current!.disconnect('ableton','LumaLive pairing removed');
+    connectionManagerRef.current!.disconnect('ableton-lumalive','LumaLive pairing removed');
     refreshConnectionRecords();
     setMessage('LumaLive pairing removed from this LumaRig computer.');
   }
