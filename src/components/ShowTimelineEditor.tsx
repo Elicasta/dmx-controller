@@ -19,6 +19,11 @@ import {
   type TimelineClip,
 } from "../lib/show-design";
 type Props = {
+  selectedClipId?: string;
+  positionBar?: number;
+  onSelectClip?: (id: string, bar: number) => void;
+  onRelease?: () => void;
+  onReset?: () => void;
   onAddFx?: (recipeId:string,startBar:number,lane:number)=>void;
   fxTargetName?: string;
   initialBar?: number;
@@ -71,8 +76,14 @@ export default function ShowTimelineEditor(props: Props) {
   const audioStarting = useRef(false);
   const playAttempt = useRef(0);
   const [libraryMode,setLibraryMode]=useState<"cues"|"fx">("cues");
-  const [selectedId, setSelectedId] = useState("");
-  const [cursor, setCursor] = useState(props.initialBar ?? 0);
+  const [localSelectedId, setLocalSelectedId] = useState("");
+  const selectedId = props.selectedClipId ?? localSelectedId;
+  function setSelectedId(id: string) {
+    setLocalSelectedId(id);
+    const clip = latest.current.timeline.clips.find(item => item.id === id);
+    latest.current.onSelectClip?.(id, clip?.startBar ?? cursorRef.current);
+  }
+  const [cursor, setCursor] = useState(props.positionBar ?? props.initialBar ?? 0);
   const [playing, setPlaying] = useState(false);
   const [zoom, setZoom] = useState(36);
   const zoomRef = useRef(36);
@@ -87,7 +98,7 @@ export default function ShowTimelineEditor(props: Props) {
     redo = useRef<ShowTimeline[]>([]);
   const [historyVersion, setHistoryVersion] = useState(0);
   const latest = useRef(props);
-  const cursorRef = useRef(props.initialBar ?? 0),
+  const cursorRef = useRef(props.positionBar ?? props.initialBar ?? 0),
     playingRef = useRef(false),
     raf = useRef<number | null>(null),
     drag = useRef<Drag | null>(null);
@@ -107,6 +118,10 @@ export default function ShowTimelineEditor(props: Props) {
   const totalBars = Math.max(32, Math.ceil(endBar + 8));
   const laneCount = Math.max(lanes, ...timeline.clips.map((c) => c.lane + 1));
   const selected = timeline.clips.find((c) => c.id === selectedId);
+  useEffect(() => {
+    if (props.positionBar === undefined || Math.abs(props.positionBar-cursorRef.current)<0.00001) return;
+    cursorRef.current=props.positionBar; setCursor(props.positionBar);
+  }, [props.positionBar]);
   function checkpoint(before = latest.current.timeline) {
     undo.current = [...undo.current, structuredClone(before)].slice(-40);
     redo.current = [];
@@ -192,6 +207,7 @@ export default function ShowTimelineEditor(props: Props) {
     setCursor(0);
     if (audioRef.current) audioRef.current.currentTime = mediaWindow(latest.current.timeline, latest.current.audioDurationMs).startMs / 1000;
     latest.current.onStop();
+    latest.current.onReset?.();
   }
   function seek(bar: number) {
     const next = clamp(bar, 0, 100000);
@@ -273,7 +289,7 @@ export default function ShowTimelineEditor(props: Props) {
       playingRef.current = false;
       if (raf.current !== null) cancelAnimationFrame(raf.current);
       latest.current.audioRef.current?.pause();
-      latest.current.onStop();
+      (latest.current.onRelease ?? latest.current.onStop)();
     },
     [],
   );
@@ -325,6 +341,7 @@ export default function ShowTimelineEditor(props: Props) {
     e.stopPropagation();
     pause();
     setSelectedId(clip.id);
+    seek(clip.startBar);
     e.currentTarget.setPointerCapture(e.pointerId);
     drag.current = {
       kind,
@@ -717,7 +734,7 @@ export default function ShowTimelineEditor(props: Props) {
                             onPointerUp={endPointer}
                             onPointerCancel={cancelPointer}
                             onKeyDown={(e) => {
-                              if (e.key === "Enter") setSelectedId(c.id);
+                              if (e.key === "Enter") { setSelectedId(c.id); seek(c.startBar); }
                               if (
                                 e.key === "ArrowLeft" ||
                                 e.key === "ArrowRight"

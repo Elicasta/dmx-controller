@@ -1,3 +1,6 @@
+## 0.2.5 authoritative selection
+Cue and Timeline selection now share Song, Section, clip instance, playhead and editing/output context across screens. Navigation holds the selected lighting frame and pauses media. External linking remains last.
+
 # LumaRig refinement audit
 
 Reviewed against the 32-item refinement request and the 0.2.2 implementation. The 0.2.3 repair pass addresses preservation, reusable songs, tempo editing, panel resizing and the repeated layout failures. This is not a claim that all integrations, media outputs or rendering requests are finished.
@@ -13,6 +16,7 @@ Now implemented and regression checked:
 - Custom Programmer FX in the recipe browser, favorites, section notes and clipboard copy/paste.
 - Creator Save to Song Library rebuilds current programming before saving reusable masters.
 - True orthographic Top/Front/Side views through the existing Visualizer, with projection-preserving zoom.
+- Section Step Editor with musical subdivisions and per-step intensity, color, position and strobe attributes.
 - A native video output window that follows the main media element, preserves aspect ratio and supports fullscreen.
 
 Still open after this milestone:
@@ -20,7 +24,7 @@ Still open after this milestone:
 - Managed native media directories, copy/reference choice, missing-media detection and relink workflow.
 - Stage screen MP4/image/test source assignment.
 - Tempo analysis with confidence/downbeat and manual correction tools.
-- Beat-based Step Editor.
+- Per-step named preset/effect triggers beyond the implemented attribute Step Editor.
 - Recording pause/rewind/overdub and Timeline editing.
 - Volumetric beam/occlusion/surface spill and replacement crowd geometry.
 - Further Cues/Live polish, cross-rig fixture mapping and explicit Song master version handling.

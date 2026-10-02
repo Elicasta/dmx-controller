@@ -972,3 +972,36 @@ test('beat Step Editor renders hits and keeps the musical pattern in Song progra
   await page.getByRole('button',{name:'Show Creator',exact:true}).click();
   await expect(page.getByLabel('Beat Step Editor').locator('.beat-step-grid button')).toHaveCount(16);
 });
+
+test('cue and Timeline selection remain authoritative across editors', async ({ page }) => {
+  const errors:string[]=[]; page.on('pageerror',error=>errors.push(error.message));
+  await seed(page); await page.goto('/');
+  await page.getByRole('button',{name:'SHOW',exact:true}).click();
+  await page.getByRole('button',{name:'Show Creator',exact:true}).click();
+  await page.getByRole('button',{name:/Worship Song/}).click();
+  await page.getByRole('button',{name:'Build / Update 8 Sections',exact:true}).click();
+  await page.getByRole('button',{name:'Open Timeline ↗',exact:true}).click();
+  const clips=page.locator('.timeline-clip'); await expect(clips).toHaveCount(8);
+  const show=await readShow(page);
+  const timeline=show.timelineShows[0].timeline;
+  const target=timeline.clips[2];
+  const cue=show.cues.find((item:any)=>item.id===target.cueId);
+  const element=page.getByRole('button',{name:`Timeline clip ${cue.name}`,exact:true});
+  await element.scrollIntoViewIfNeeded(); await element.click({position:{x:25,y:15}});
+  await expect(element).toHaveClass(/selected/);
+  await page.getByRole('button',{name:'Show Creator',exact:true}).click();
+  await expect(page.locator('.section-list>article.active .section-select')).toContainText(show.creatorSections.find((item:any)=>item.id===cue.sourceSectionId).name);
+  await page.getByRole('button',{name:'Cues',exact:true}).click();
+  await expect(page.locator('.cue-inspector-console')).toContainText(cue.name);
+  await page.getByRole('button',{name:'Timeline',exact:true}).click();
+  await expect(page.getByRole('button',{name:`Timeline clip ${cue.name}`,exact:true})).toHaveClass(/selected/);
+  await expect(page.getByLabel('Clip starts at bar')).toHaveValue(String(target.startBar+1));
+  await page.getByRole('button',{name:'Cues',exact:true}).click();
+  const firstCue=show.cues.find((item:any)=>item.id===timeline.clips[0].cueId);
+  await page.locator('.cue-line').filter({hasText:firstCue.name}).first().click();
+  await page.getByRole('button',{name:'Show Creator',exact:true}).click();
+  await expect(page.locator('.section-list>article.active .section-select')).toContainText(show.creatorSections.find((item:any)=>item.id===firstCue.sourceSectionId).name);
+  await page.getByRole('button',{name:'Timeline',exact:true}).click();
+  await expect(page.getByRole('button',{name:`Timeline clip ${firstCue.name}`,exact:true})).toHaveClass(/selected/);
+  expect(errors).toEqual([]);
+});
