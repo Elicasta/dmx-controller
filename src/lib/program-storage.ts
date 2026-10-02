@@ -99,3 +99,67 @@ export function replaceProgramState(value: ProgramState): Promise<ProgramState> 
   pending = operation.catch(() => undefined);
   return operation;
 }
+
+
+export function mergeImportedSongProgram(state: ProgramState, value: SongProgram): { state: ProgramState; program: SongProgram; conflictCopy: boolean } {
+  const current = validateProgramState(state);
+  if (!isSongProgram(value)) throw Error('This LumaRig Song file is invalid.');
+  let incoming = structuredClone(value);
+  const existing = current.programs.find((program) => program.id === incoming.id);
+  if (existing && JSON.stringify(existing.show) === JSON.stringify(incoming.show)) {
+    return { state: current, program: existing, conflictCopy: false };
+  }
+  let conflictCopy = false;
+  if (existing) {
+    conflictCopy = true;
+    const id = crypto.randomUUID();
+    incoming = {
+      ...incoming,
+      id,
+      savedAt: new Date().toISOString(),
+      show: {
+        ...incoming.show,
+        songs: incoming.show.songs?.map((song, index) => index === 0 ? { ...song, libraryId: id } : song),
+      },
+    };
+    if (!isSongProgram(incoming)) throw Error('Imported Song conflict copy is invalid.');
+  }
+  return {
+    state: { ...current, programs: [incoming, ...current.programs] },
+    program: incoming,
+    conflictCopy,
+  };
+}
+
+/** Add a .lumarigsong package to the reusable Song Library without changing the active Show. */
+export function importSongProgram(value: SongProgram): Promise<{ state: ProgramState; program: SongProgram; conflictCopy: boolean }> {
+  const incoming = structuredClone(value);
+  if (!isSongProgram(incoming)) return Promise.reject(Error('This LumaRig Song file is invalid.'));
+  const operation = pending.then(async () => {
+    const db = await database();
+    try {
+      return await new Promise<{ state: ProgramState; program: SongProgram; conflictCopy: boolean }>((resolve, reject) => {
+        const tx = db.transaction('state', 'readwrite', { durability: 'strict' });
+        const store = tx.objectStore('state');
+        const request = store.get('current');
+        let merged: ReturnType<typeof mergeImportedSongProgram>;
+        let error: unknown;
+        request.onsuccess = () => {
+          try {
+            merged = mergeImportedSongProgram(validateProgramState(request.result), incoming);
+            store.put(merged.state, 'current');
+          } catch (reason) {
+            error = reason;
+            tx.abort();
+          }
+        };
+        tx.oncomplete = () => resolve(structuredClone(merged));
+        tx.onerror = tx.onabort = () => reject(error ?? tx.error ?? Error('Song import failed. Existing library data is intact.'));
+      });
+    } finally {
+      db.close();
+    }
+  });
+  pending = operation.catch(() => undefined);
+  return operation;
+}
