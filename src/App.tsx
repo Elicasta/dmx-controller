@@ -159,6 +159,19 @@ import { phaserStepValue, type PhaserStep } from './core/phaser-engine';
 import { makeSelectionGrid, moveFixtureInSelectionGrid, normalizeSelectionGrid, type SelectionGridTraversal } from './core/selection-grid';
 import { RemoteRelay, type RelayCommandEnvelope, type RemoteRelayConfig, type RemoteRelayStatus } from './core/remote-relay';
 import { StudioBridgeDispatcher } from './core/studio-bridge-dispatcher';
+import { QRCodeSVG } from 'qrcode.react';
+import {
+  createCloudShowFolder,
+  createControllerPairing,
+  fetchCloudShowLibrary,
+  listPairedControllers,
+  revokePairedController,
+  saveCloudShow,
+  type CloudShowDocument,
+  type CloudShowFolder,
+  type ControllerPairingSession,
+  type PairedController
+} from './core/cloud-services';
 import type { StudioBridgeCommand, StudioSongIdentity } from './core/studio-bridge-protocol';
 
 const ShowCreator = lazy(() => import('./components/ShowCreator'));
@@ -180,6 +193,8 @@ type ShowProjectSnapshot = {
   templateId?: string;
   revision?: number;
   lastEditor?: 'lumarig' | 'lumaviz';
+  cloudRevision?: number;
+  cloudFolderId?: string | null;
   show: ShowFile;
   patch: PatchedFixture[];
   stageElements: StageElement[];
@@ -284,6 +299,7 @@ const STAGE_BACKUP_STORAGE_KEY = 'dmx-controller.stage-elements.backup.v1';
 const STAGE_SETTINGS_STORAGE_KEY = 'dmx-controller.stage-settings.v2';
 const STAGE_PRESET_STORAGE_KEY = 'dmx-controller.stage-preset.v1';
 const REMOTE_RELAY_STORAGE_KEY = 'dmx-controller.remote-relay.v1';
+const REMOTE_APP_URL = import.meta.env.VITE_REMOTE_APP_URL || 'https://mycontroller.vercel.app';
 const FADE_TIMES = [0, 500, 1000, 2000, 5000] as const;
 
 const DEFAULT_SETTINGS: AppSettings = {
@@ -427,27 +443,30 @@ function loadShowFile(): ShowFile {
   return { ...EMPTY_SHOW, cues: [], groups: [], positionPalettes: [] };
 }
 
+function isShowProjectSnapshot(item: unknown): item is ShowProjectSnapshot {
+  if (!item || typeof item !== 'object') return false;
+  const candidate = item as Partial<ShowProjectSnapshot>;
+  return typeof candidate.id === 'string'
+    && typeof candidate.name === 'string'
+    && typeof candidate.savedAt === 'string'
+    && (candidate.status === 'template' || candidate.status === 'draft' || candidate.status === 'show')
+    && (candidate.cloudRevision === undefined || (typeof candidate.cloudRevision === 'number' && Number.isFinite(candidate.cloudRevision)))
+    && (candidate.cloudFolderId === undefined || candidate.cloudFolderId === null || typeof candidate.cloudFolderId === 'string')
+    && Boolean(candidate.show && isShowFile(candidate.show))
+    && Array.isArray(candidate.patch)
+    && candidate.patch.every(isPatchedFixture)
+    && Array.isArray(candidate.stageElements)
+    && candidate.stageElements.every(isStageElement)
+    && Array.isArray(candidate.looks)
+    && candidate.looks.every(isFixtureLook)
+    && Boolean(candidate.stageSettings && isStageSettings(candidate.stageSettings));
+}
+
 function loadShowLibrary(): ShowProjectSnapshot[] {
   if (typeof window === 'undefined') return [];
   try {
     const parsed: unknown = JSON.parse(window.localStorage.getItem(SHOW_LIBRARY_STORAGE_KEY) || '[]');
-    if (!Array.isArray(parsed)) return [];
-    return parsed.filter((item): item is ShowProjectSnapshot => {
-      if (!item || typeof item !== 'object') return false;
-      const candidate = item as Partial<ShowProjectSnapshot>;
-      return typeof candidate.id === 'string'
-        && typeof candidate.name === 'string'
-        && typeof candidate.savedAt === 'string'
-        && (candidate.status === 'template' || candidate.status === 'draft' || candidate.status === 'show')
-        && Boolean(candidate.show && isShowFile(candidate.show))
-        && Array.isArray(candidate.patch)
-        && candidate.patch.every(isPatchedFixture)
-        && Array.isArray(candidate.stageElements)
-        && candidate.stageElements.every(isStageElement)
-        && Array.isArray(candidate.looks)
-        && candidate.looks.every(isFixtureLook)
-        && Boolean(candidate.stageSettings);
-    }).slice(0, 40);
+    return Array.isArray(parsed) ? parsed.filter(isShowProjectSnapshot).slice(0, 40) : [];
   } catch {
     return [];
   }
@@ -668,6 +687,13 @@ export default function App() {
   showFileRef.current = showFile;
   const saveSequence = useRef(0);
   const [showLibrary, setShowLibrary] = useState<ShowProjectSnapshot[]>(loadShowLibrary);
+  const [cloudFolders, setCloudFolders] = useState<CloudShowFolder[]>([]);
+  const [cloudShows, setCloudShows] = useState<CloudShowDocument[]>([]);
+  const [cloudFolderId, setCloudFolderId] = useState('');
+  const [cloudFolderName, setCloudFolderName] = useState('');
+  const [cloudStatus, setCloudStatus] = useState<'offline' | 'loading' | 'synced' | 'error'>('offline');
+  const [cloudError, setCloudError] = useState('');
+  const [cloudBusy, setCloudBusy] = useState(false);
   const [liveBank, setLiveBank] = useState<LiveBank>('fixtures');
   const [liveProgrammerOpen, setLiveProgrammerOpen] = useState(false);
   const [livePaletteFamily, setLivePaletteFamily] = useState<LivePaletteFamily>('groups');
@@ -781,6 +807,11 @@ export default function App() {
   const [remoteRelayConfig, setRemoteRelayConfig] = useState<RemoteRelayConfig>(loadRemoteRelayConfig);
   const [remoteRelayStatus, setRemoteRelayStatus] = useState<RemoteRelayStatus>('disconnected');
   const [remoteRelayError, setRemoteRelayError] = useState('');
+  const [pairingSession, setPairingSession] = useState<ControllerPairingSession | null>(null);
+  const [pairingNow, setPairingNow] = useState(Date.now());
+  const [pairingBusy, setPairingBusy] = useState(false);
+  const [pairedControllers, setPairedControllers] = useState<PairedController[]>([]);
+  const [pairedControllersError, setPairedControllersError] = useState('');
   const remoteRelayRef = useRef<RemoteRelay | null>(null);
   const remoteCommandHandlerRef = useRef<((envelope: RelayCommandEnvelope) => void) | null>(null);
   const remoteSnapshotHandlerRef = useRef<(() => void) | null>(null);
