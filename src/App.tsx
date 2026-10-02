@@ -826,7 +826,11 @@ export default function App() {
     if (!pairingSession) return;
     setPairingNow(Date.now());
     const timer = window.setInterval(() => setPairingNow(Date.now()), 1000);
-    return () => window.clearInterval(timer);
+    const devicesTimer = window.setInterval(() => { void refreshPairedControllerList(); }, 3000);
+    return () => {
+      window.clearInterval(timer);
+      window.clearInterval(devicesTimer);
+    };
   }, [pairingSession]);
   useEffect(() => {
     if (remoteRelayStatus !== 'connected') return;
