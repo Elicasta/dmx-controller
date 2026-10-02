@@ -10,7 +10,6 @@ The operator should be able to build a track in Live, create locators for musica
 
 ```
 Ableton Arrangement
-  ├─ MIDI Clock / Transport ───────────────> LumaRig MIDI engine
   └─ Max for Live LiveAPI
        ├─ locator names + beat positions
        ├─ tempo + meter
@@ -18,7 +17,7 @@ Ableton Arrangement
              │
              v
       Node for Max WebSocket
-             │ ws://127.0.0.1:47777
+             │ ws://127.0.0.1:47777/studio
              v
       existing Studio Bridge
              │
@@ -73,7 +72,9 @@ Lightweight position correction sent while transport changes.
 
 - Locator data is runtime-only in the first integration pass. It does not mutate or pollute saved Show files.
 - Locator beat positions are converted to LumaRig bars using the current meter.
-- Ableton position drives the existing Timeline renderer. Timeline cues, takes, video and FX keep their existing behavior.
+- Ableton position enters LumaRig through the shared TransportEngine as the `ableton` source, then drives the existing Timeline renderer. Timeline cues, takes, video and FX keep their existing behavior.
+- The TransportEngine arbitrates Ableton, Timeline, MIDI, Studio and other sources so two transports cannot own the playhead simultaneously.
+- MIDI Clock remains a fallback DAW transport. Do not arm it as a second authority while the Max bridge owns playback.
 - LumaRig's Lighting Advance / Delay remains the timing offset for rendered lighting.
 - If tempo lock is off, Ableton tempo becomes the LumaRig master tempo.
 - A bridge disconnect holds current lighting output and returns control to the operator. It does not stop audio or force blackout.
