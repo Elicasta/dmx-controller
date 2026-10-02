@@ -1,4 +1,5 @@
-import { createClient, type SupabaseClient } from '@supabase/supabase-js';
+import type { SupabaseClient } from '@supabase/supabase-js';
+import { getLumaSupabaseClient } from './supabase-client';
 import { normalizeRoomCode, type RemoteRelayConfig } from './remote-relay';
 
 export type CloudShowFolder = {
@@ -45,10 +46,6 @@ export type PairedController = {
   lastSeenAt: string;
 };
 
-function storageKey(url: string) {
-  return `dmx-controller-relay-${new URL(url).hostname.replace(/[^a-z0-9]/gi, '-')}`;
-}
-
 function cleanConfig(config: RemoteRelayConfig) {
   const url = config.url.trim().replace(/\/$/, '');
   if (!/^https:\/\/[a-z0-9.-]+$/i.test(url)) throw new Error('Enter the HTTPS Supabase project URL.');
@@ -58,9 +55,7 @@ function cleanConfig(config: RemoteRelayConfig) {
 
 async function operatorClient(config: RemoteRelayConfig): Promise<{ client: SupabaseClient; userId: string }> {
   const { url, publishableKey } = cleanConfig(config);
-  const client = createClient(url, publishableKey, {
-    auth: { persistSession: true, storageKey: storageKey(url) }
-  });
+  const client = getLumaSupabaseClient(url, publishableKey);
   let session = (await client.auth.getSession()).data.session;
   const desiredEmail = config.email.trim().toLowerCase();
   if (!session || session.user.email?.toLowerCase() !== desiredEmail || session.user.is_anonymous) {
