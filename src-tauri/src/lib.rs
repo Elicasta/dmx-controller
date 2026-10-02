@@ -137,7 +137,9 @@ pub fn run() {
         .manage(MidiEngine::new())
         .manage(updates::UpdateState::default())
         .setup(|app| {
-            media_library::restore_asset_scopes(app.handle())?;
+            if let Err(error) = media_library::restore_asset_scopes(app.handle()) {
+                eprintln!("media scope restore warning: {error}");
+            }
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
