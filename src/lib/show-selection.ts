@@ -30,5 +30,6 @@ export function cueTargetIds(show: ShowFile, cue: ShowCue, fixtures: readonly Pa
   const staticTargets=fixtures.filter(fixture=>Array.from({length:findMode(fixture)?.channelCount ?? 1},(_,offset)=>fixture.address+offset).some(channel=>channels.has(channel))).map(item=>item.id);
   targets=[...new Set([...targets,...(group ? fixturesInGroup(fixtures,group).map(item=>item.id) : []),...staticTargets])];
   if (!targets.length && cue.universe?.length===512) targets=fixtures.map(item=>item.id);
-  return targets;
+  const targetSet=new Set(targets);
+  return fixtures.filter(item=>targetSet.has(item.id)).map(item=>item.id);
 }

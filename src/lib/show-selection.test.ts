@@ -19,5 +19,6 @@ describe('cue target authority',()=>{
   it('includes every enabled FX layer but ignores stale and disabled targets',()=>expect(cueTargetIds(show,{effectStack:[{targetIds:['gone','b']},{targetIds:['a'],enabled:false}]} as ShowCue,fixtures,[])).toEqual(['b']));
   it('includes static targets alongside independently targeted FX',()=>expect(cueTargetIds(show,{changes:[[7,255]],effectStack:[{targetIds:['a']}]} as unknown as ShowCue,fixtures,[])).toEqual(['a','b']));
   it('selects the patch for a full legacy frame',()=>expect(cueTargetIds(show,{universe:Array(512).fill(0)} as ShowCue,fixtures,[])).toEqual(['a','b']));
+  it('keeps primary fixture focus stable when FX layer order changes',()=>expect(cueTargetIds(show,{effectStack:[{targetIds:['b']},{targetIds:['a']}]} as unknown as ShowCue,fixtures,[])).toEqual(['a','b']));
   it('clears target selection for a cue with no fixture instructions',()=>expect(cueTargetIds(show,{changes:[]} as unknown as ShowCue,fixtures,[])).toEqual([]));
 });
