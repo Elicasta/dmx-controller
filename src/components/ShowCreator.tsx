@@ -16,6 +16,8 @@ import {
   type FxRecipe,
 } from "../lib/show-design";
 type Props = {
+  selectedSectionId?: string;
+  onSelectSection?: (id: string) => void;
   customEffects?: CustomEffect[];
   onSaveSong?: () => void;
   songName?: string;
@@ -38,6 +40,7 @@ type Props = {
   onMasterBpmChange: (bpm: number) => void;
 };
 export default function ShowCreator({
+  selectedSectionId, onSelectSection,
   customEffects = [], onSaveSong,
   songName,
   onRenameSong,
@@ -75,7 +78,9 @@ export default function ShowCreator({
   const [groupId, setGroupId] = useState(
     sections[0]?.groupId ?? groups[0]?.id ?? "",
   );
-  const [selectedId, setSelectedId] = useState(sections[0]?.id ?? "");
+  const [localSelectedId, setLocalSelectedId] = useState(sections[0]?.id ?? "");
+  const selectedId = selectedSectionId || localSelectedId;
+  const setSelectedId = (id: string) => { setLocalSelectedId(id); onSelectSection?.(id); };
   const [dragId, setDragId] = useState("");
   const [previewingId, setPreviewingId] = useState("");
   const [query, setQuery] = useState("");

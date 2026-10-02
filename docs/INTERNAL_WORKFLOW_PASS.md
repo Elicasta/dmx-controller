@@ -40,3 +40,10 @@ Per-step triggering of arbitrary named presets/effects is not yet supported; dir
 
 ## Still to complete
 Managed native media/relink workflow, stage screen file/image assignment, beam/surface rendering, per-step preset triggers and Recording editing/overdub remain in the ordered refinement backlog. External linking comes last.
+
+
+## Authoritative editing context
+
+Cue clicks now resolve the owning Song and timeline, tempo lock, source Section and earliest timeline instance. Timeline clip selection retains the exact instance when a cue appears more than once. Timeline seeking updates the same cue/section inspector context. Section Design and both Timeline placements consume shared selection and playhead state. Navigation pauses media and holds the selected lighting frame. It does not start media playback. Older delayed cue launches and asynchronous media loads cannot replace a newer selection.
+
+Validation covers context resolution and cross-editor navigation. Physical output and native multi-window checks remain separate hardware validation.
