@@ -167,6 +167,7 @@ import { StudioBridgeDispatcher } from './core/studio-bridge-dispatcher';
 import { abletonTimelineMarkers, abletonTimelinePositionBar, activeAbletonLocator, sanitizeAbletonSnapshot, type AbletonLiveSnapshot } from './core/ableton-live-sync';
 import { TransportEngine, type TransportSource, type TransportUpdate } from './core/transport-engine';
 import { ConnectionManager, type ConnectionRecord } from './core/connection-manager';
+import { lumaLivePositionMs, loadLumaLiveConnection, pairLumaLive, readLumaLiveState, saveLumaLiveConnection, scanLumaLive, sendLumaLiveCommand, type LumaLiveConnection, type LumaLiveEndpoint, type LumaLiveState } from './core/lumalive-client';
 import { QRCodeSVG } from 'qrcode.react';
 import {
   createCloudShowFolder,
@@ -747,6 +748,13 @@ export default function App() {
   const [sharedTransport, setSharedTransport] = useState(() => transportEngineRef.current!.snapshot());
   const [connectionRecords, setConnectionRecords] = useState<ConnectionRecord[]>(() => connectionManagerRef.current!.snapshot());
   const refreshConnectionRecords = () => setConnectionRecords(connectionManagerRef.current!.snapshot());
+  const [lumaLiveConnection, setLumaLiveConnection] = useState<LumaLiveConnection | null>(loadLumaLiveConnection);
+  const [lumaLiveEndpoint, setLumaLiveEndpoint] = useState<LumaLiveEndpoint | null>(null);
+  const [lumaLivePairCode, setLumaLivePairCode] = useState('');
+  const [lumaLiveState, setLumaLiveState] = useState<LumaLiveState | null>(null);
+  const [lumaLiveBusy, setLumaLiveBusy] = useState(false);
+  const [lumaLiveError, setLumaLiveError] = useState('');
+  const lumaLiveLastPositionRef = useRef(0);
 
   const [studioBridgeStatus, setStudioBridgeStatus] = useState<StudioBridgeStatus>({ listening: false, port: 47777, connectedClients: 0 });
   const [abletonSnapshot, setAbletonSnapshot] = useState<AbletonLiveSnapshot | null>(null);
@@ -1136,6 +1144,93 @@ export default function App() {
     });
   }
 
+  async function detectLumaLive() {
+    setLumaLiveBusy(true);
+    setLumaLiveError('');
+    try {
+      const endpoint=await scanLumaLive();
+      setLumaLiveEndpoint(endpoint);
+      if(endpoint){
+        connectionManagerRef.current!.upsert({
+          id:'lumalive',kind:'lumalive',name:'LumaLive',status:lumaLiveConnection?'connected':'connecting',
+          capabilities:['transport','song-recall','performance'],lastSeenAt:Date.now(),
+          detail:`v${endpoint.version} · ${endpoint.baseUrl}`
+        });
+        refreshConnectionRecords();
+        setMessage(lumaLiveConnection?'LumaLive detected. Checking paired transport…':'LumaLive detected. Enter its six-digit pairing code.');
+      }else{
+        connectionManagerRef.current!.disconnect('lumalive','LumaLive not detected on this computer');
+        connectionManagerRef.current!.disconnect('ableton','Waiting for LumaLive');
+        refreshConnectionRecords();
+        setMessage('LumaLive was not found on this computer. Open LumaLive, then scan again.');
+      }
+    } catch(error) {
+      const message=error instanceof Error?error.message:String(error);
+      setLumaLiveError(message);
+      connectionManagerRef.current!.fail('lumalive',message);
+      refreshConnectionRecords();
+    } finally {
+      setLumaLiveBusy(false);
+    }
+  }
+
+  async function pairDetectedLumaLive() {
+    if(!lumaLiveEndpoint) return setLumaLiveError('Scan for LumaLive first.');
+    setLumaLiveBusy(true);
+    setLumaLiveError('');
+    try {
+      const paired=await pairLumaLive(
+        lumaLiveEndpoint.baseUrl,
+        lumaLivePairCode,
+        `LumaRig · ${desktopDeviceId().replace(/-/g,'').slice(-4).toUpperCase()}`
+      );
+      const connection={baseUrl:paired.baseUrl,token:paired.token,version:lumaLiveEndpoint.version};
+      saveLumaLiveConnection(connection);
+      setLumaLiveConnection(connection);
+      setLumaLivePairCode('');
+      connectionManagerRef.current!.upsert({
+        id:'lumalive',kind:'lumalive',name:'LumaLive',status:'connected',
+        capabilities:['transport','song-recall','performance'],lastSeenAt:Date.now(),
+        detail:`Paired · v${lumaLiveEndpoint.version}`
+      });
+      refreshConnectionRecords();
+      setMessage('LumaLive paired. Ableton-backed transport can now drive LumaRig.');
+    } catch(error) {
+      const message=error instanceof Error?error.message:String(error);
+      setLumaLiveError(message);
+      connectionManagerRef.current!.fail('lumalive',message);
+      refreshConnectionRecords();
+    } finally {
+      setLumaLiveBusy(false);
+    }
+  }
+
+  function forgetLumaLive() {
+    saveLumaLiveConnection(null);
+    setLumaLiveConnection(null);
+    setLumaLiveState(null);
+    setLumaLiveError('');
+    releaseSharedTransport('lumalive');
+    connectionManagerRef.current!.disconnect('lumalive','Pairing removed');
+    connectionManagerRef.current!.disconnect('ableton','LumaLive pairing removed');
+    refreshConnectionRecords();
+    setMessage('LumaLive pairing removed from this LumaRig computer.');
+  }
+
+  async function controlLumaLive(type:'start_playback'|'stop_playback') {
+    if(!lumaLiveConnection) return setLumaLiveError('Pair LumaLive first.');
+    try {
+      await sendLumaLiveCommand(lumaLiveConnection,type);
+      setMessage(type==='start_playback'?'LumaLive / Ableton playback started.':'LumaLive / Ableton playback stopped.');
+    } catch(error) {
+      const message=error instanceof Error?error.message:String(error);
+      setLumaLiveError(message);
+      connectionManagerRef.current!.fail('lumalive',message,true);
+      refreshConnectionRecords();
+    }
+  }
+
+
   const [newProfileId, setNewProfileId] = useState(FIXTURE_LIBRARY[0].id);
   const [newModeId, setNewModeId] = useState(FIXTURE_LIBRARY[0].modes[0].id);
   const [newFixtureName, setNewFixtureName] = useState('');
@@ -1236,6 +1331,65 @@ export default function App() {
   const activeRecordingPlayback = showFile.recordings?.find((recording) => recording.id === playingRecordingId) ?? null;
   const externalTrack = showFile.externalTrack ?? DEFAULT_EXTERNAL_TRACK_SYNC;
   const externalTrackRecording = showFile.recordings?.find((recording) => recording.id === externalTrack.recordingId) ?? null;
+  useEffect(() => {
+    if (!lumaLiveConnection) return;
+    let cancelled=false;
+    const poll=async()=>{
+      try{
+        const state=await readLumaLiveState(lumaLiveConnection);
+        if(cancelled)return;
+        const positionMs=lumaLivePositionMs(state);
+        const previousPosition=lumaLiveLastPositionRef.current;
+        const previousPlaying=externalTransportRunningRef.current;
+        lumaLiveLastPositionRef.current=positionMs;
+        setLumaLiveState(state);
+        connectionManagerRef.current!.upsert({
+          id:'lumalive',kind:'lumalive',name:'LumaLive',status:'connected',
+          capabilities:['transport','song-recall','performance'],lastSeenAt:Date.now(),lastError:'',
+          detail:[state.currentSongTitle,state.currentSectionName].filter(Boolean).join(' · ') || `v${lumaLiveConnection.version || 'connected'}`
+        });
+        connectionManagerRef.current!.upsert({
+          id:'ableton',kind:'ableton',name:'Ableton Live',status:state.bridgeConnected?'connected':'degraded',
+          capabilities:['transport','tempo','song-position'],lastSeenAt:state.bridgeConnected?Date.now():null,
+          lastError:state.bridgeConnected?'':'LumaLive is running but its Ableton adapter is offline.',
+          detail:state.bridgeConnected?`${state.tempo.toFixed(1)} BPM · ${state.playing?'Playing':'Stopped'}`:'Open Ableton with the Luma Live Max adapter'
+        });
+        refreshConnectionRecords();
+
+        const result=applySharedTransport({
+          source:'lumalive',
+          playing:state.playing,
+          positionMs,
+          bpm:state.tempo,
+          claim:state.playing,
+          release:!state.playing
+        });
+        if(!result.accepted)return;
+
+        if(externalTrack.armed && externalTrackRecording){
+          const lightingPositionMs=applyLightingOffset(positionMs,externalTrack.lightingOffsetMs);
+          const jumped=Math.abs(positionMs-previousPosition)>500;
+          const wrongTake=playingRecordingIdRef.current!==externalTrackRecording.id;
+          if(state.playing && (!previousPlaying || jumped || wrongTake)){
+            playShowRecording(externalTrackRecording,{external:true,positionMs:lightingPositionMs});
+          }else if(!state.playing && recordingPlaybackExternalRef.current){
+            stopRecordedShowPlayback(false);
+          }
+        }
+      }catch(error){
+        if(cancelled)return;
+        const message=error instanceof Error?error.message:String(error);
+        setLumaLiveError(message);
+        connectionManagerRef.current!.fail('lumalive',message,true);
+        connectionManagerRef.current!.disconnect('ableton','LumaLive state unavailable');
+        refreshConnectionRecords();
+      }
+    };
+    void poll();
+    const timer=window.setInterval(()=>void poll(),250);
+    return()=>{cancelled=true;window.clearInterval(timer);};
+  }, [lumaLiveConnection?.baseUrl,lumaLiveConnection?.token,externalTrack.armed,externalTrack.recordingId,externalTrack.lightingOffsetMs,externalTrackRecording?.id]);
+
   const selectedInfo = devices.find((device) => device.device_key === selectedDevice);
   const newProfile = findProfile(newProfileId) ?? FIXTURE_LIBRARY[0];
   const stageFixture = patch.find((fixture) => fixture.id === stageFixtureId) ?? patch[0];
@@ -6051,6 +6205,23 @@ export default function App() {
         {showMode === 'sync' && <div className="show-sync-v3">
           <section className="console-panel sync-status-card transport-engine-card"><header><div><span>TRANSPORT ENGINE</span><h2>Shared Playhead Authority</h2></div><b className={sharedTransport.playing?'healthy':''}>{sharedTransport.playing?'RUNNING':'READY'}</b></header><div className="sync-metrics"><span><small>OWNER</small><strong>{sharedTransport.source.toUpperCase()}</strong></span><span><small>POSITION</small><strong>{formatShowTime(sharedTransport.positionMs)}</strong></span><span><small>BPM</small><strong>{sharedTransport.bpm.toFixed(1)}</strong></span><span><small>REVISION</small><strong>R{sharedTransport.revision}</strong></span></div><p>One transport authority now arbitrates Timeline, Studio, MIDI, Ableton, LumaLive, Tracks, and ProPresenter. Local/Timeline control wins immediately; external sources cannot silently steal a live playhead lease.</p><button onClick={()=>{const result=transportEngineRef.current!.forceLocal({playing:false,positionMs:externalSongPositionMsRef.current,bpm:masterTempoBpm});setSharedTransport(result.state);setExternalTransportRunning(false);externalTransportRunningRef.current=false;setMessage('Transport authority returned to LumaRig.');}}>Take Local Authority</button></section>
           <section className="console-panel sync-status-card connection-manager-card"><header><div><span>CONNECTION MANAGER</span><h2>Inputs + Integrations</h2></div><b>{connectionRecords.filter(item=>item.status==='connected').length} LIVE</b></header><div className="connection-registry-list">{connectionRecords.map(item=><article key={item.id} className={'connection-registry-item '+item.status}><span><strong>{item.name}</strong><small>{item.capabilities.join(' · ')}</small></span><span><b>{item.status.toUpperCase()}</b><small>{item.detail || item.lastError || 'Not connected'}</small></span></article>)}</div></section>
+          <section className="console-panel sync-status-card lumalive-sync-card">
+            <header><div><span>LUMALIVE · ABLETON</span><h2>Paired Transport</h2></div><b className={lumaLiveConnection && !lumaLiveError?'healthy':''}>{lumaLiveConnection ? lumaLiveError ? 'DEGRADED' : 'PAIRED' : lumaLiveEndpoint ? 'FOUND' : 'OFFLINE'}</b></header>
+            <div className="sync-metrics">
+              <span><small>LUMALIVE</small><strong>{lumaLiveState ? 'CONNECTED' : lumaLiveConnection ? 'CHECKING' : '—'}</strong></span>
+              <span><small>ABLETON</small><strong>{lumaLiveState?.bridgeConnected ? 'CONNECTED' : lumaLiveConnection ? 'OFFLINE' : '—'}</strong></span>
+              <span><small>BPM</small><strong>{lumaLiveState?.tempo?.toFixed(1) ?? '—'}</strong></span>
+              <span><small>POSITION</small><strong>{lumaLiveState ? formatShowTime(lumaLivePositionMs(lumaLiveState)) : '—'}</strong></span>
+            </div>
+            {lumaLiveState && <div className="lumalive-now"><strong>{lumaLiveState.currentSongTitle || 'Ableton transport'}</strong><span>{lumaLiveState.currentSectionName || (lumaLiveState.playing ? 'Playing' : 'Stopped')}</span></div>}
+            {!lumaLiveConnection && <>
+              <div className="settings-actions"><button disabled={lumaLiveBusy} onClick={()=>void detectLumaLive()}>{lumaLiveBusy?'Scanning…':'Detect LumaLive'}</button></div>
+              {lumaLiveEndpoint && <div className="lumalive-pair-row"><input inputMode="numeric" maxLength={6} value={lumaLivePairCode} placeholder="6-digit code" onChange={event=>setLumaLivePairCode(event.target.value.replace(/\D/g,'').slice(0,6))}/><button className="console-primary" disabled={lumaLiveBusy||lumaLivePairCode.length!==6} onClick={()=>void pairDetectedLumaLive()}>Pair</button></div>}
+            </>}
+            {lumaLiveConnection && <div className="settings-actions"><button className="console-primary" onClick={()=>void controlLumaLive('start_playback')}>Play Ableton</button><button onClick={()=>void controlLumaLive('stop_playback')}>Stop Ableton</button><button onClick={()=>void detectLumaLive()}>Rescan</button><button className="danger-outline" onClick={forgetLumaLive}>Forget Pairing</button></div>}
+            {lumaLiveError && <p className="artnet-error">{lumaLiveError}</p>}
+            <small>LumaLive remains the Ableton owner. LumaRig follows its authenticated transport instead of creating a second competing LiveAPI controller.</small>
+          </section>
           <section className="console-panel sync-status-card ableton-sync-card"><header><div><span>ABLETON LIVE</span><h2>{abletonSnapshot?.setName || 'Locator Bridge'}</h2></div><b className={abletonConnected?'healthy':''}>{abletonConnected?'LINKED':'WAITING'}</b></header><div className="sync-metrics"><span><small>LOCATORS</small><strong>{abletonSnapshot?.locators.length ?? 0}</strong></span><span><small>SECTION</small><strong>{abletonSnapshot ? (activeAbletonLocator(abletonSnapshot)?.name ?? 'Pre-roll') : '—'}</strong></span><span><small>POSITION</small><strong>{abletonSnapshot ? `B${abletonSnapshot.currentBeat.toFixed(1)}` : '—'}</strong></span><span><small>AUTHORITY</small><strong>{sharedTransport.source === 'ableton' ? 'ABLETON' : sharedTransport.source.toUpperCase()}</strong></span></div><p>Arrangement locators are mirrored onto LumaRig Timeline. Live supplies musical position; LumaRig resolves the lighting show.</p></section>
           <section className="console-panel sync-status-card"><header><div><span>LUMASTUDIO</span><h2>Transport Authority</h2></div><b className={studioBridgeStatus.connectedClients>0?'healthy':''}>{studioBridgeStatus.connectedClients>0?'CONNECTED':studioBridgeStatus.listening?'READY':'OFFLINE'}</b></header><div className="sync-metrics"><span><small>PORT</small><strong>{studioBridgeStatus.port}</strong></span><span><small>CLIENTS</small><strong>{studioBridgeStatus.connectedClients}</strong></span><span><small>TRANSPORT</small><strong>{externalTransportRunning?'FOLLOWING':'LOCAL'}</strong></span><span><small>AUTHORITY</small><strong>RIG LIGHTING</strong></span></div><p>Studio controls transport and song position. LumaRig keeps authority over cue execution, FX and DMX output.</p></section>
           <section className="console-panel sync-status-card"><header><div><span>MIDI</span><h2>Clock + Transport</h2></div><b className={midiStatus.connected?'healthy':''}>{midiStatus.connected?'CONNECTED':'OFFLINE'}</b></header><div className="sync-metrics"><span><small>INPUT</small><strong>{midiStatus.input_name || '—'}</strong></span><span><small>CLOCK</small><strong>{midiClockSeen?'SEEN':'WAITING'}</strong></span><span><small>BPM</small><strong>{midiBpm || effectBpm}</strong></span><span><small>MESSAGES</small><strong>{midiStatus.messages_received}</strong></span></div><button onClick={()=>{setWorkspace('build');setSetupView('settings');}}>Open Connections</button></section>
