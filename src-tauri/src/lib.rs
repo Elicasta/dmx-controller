@@ -3,6 +3,7 @@ mod midi;
 mod media_library;
 mod lumalive;
 mod output;
+mod propresenter;
 mod studio_bridge;
 mod updates;
 mod video_export;
@@ -181,6 +182,8 @@ pub fn run() {
             lumalive::pair_lumalive,
             lumalive::lumalive_state,
             lumalive::lumalive_command,
+            propresenter::propresenter_status,
+            propresenter::propresenter_command,
             media_library::media_library_snapshot,
             media_library::media_create_folder,
             media_library::media_rename_folder,
