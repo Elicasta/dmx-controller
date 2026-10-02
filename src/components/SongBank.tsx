@@ -15,6 +15,8 @@ type Props = {
   onRename: (id: string, name: string) => void;
   onMedia: (song: SongRecord, file: File) => Promise<void>;
   onOpenMediaLibrary: (song: SongRecord) => void;
+  onExport: (song: SongRecord | SongProgram) => void;
+  onImport: () => void;
 };
 export default function SongBank(p: Props) {
   const [query, setQuery] = useState(""),
@@ -45,7 +47,7 @@ export default function SongBank(p: Props) {
             its timeline. File imports are copied into managed desktop storage.
           </p>
         </div>
-        <div><b>{songs.length} songs in this Show</b><p role="status">{p.saveStatus}</p></div>
+        <div><b>{songs.length} songs in this Show</b><p role="status">{p.saveStatus}</p><button type="button" onClick={p.onImport}>Import .lumarigsong</button></div>
       </header>
       <form
         onSubmit={(e) => {
@@ -137,6 +139,7 @@ export default function SongBank(p: Props) {
                     />
                   </label>
                   <button onClick={() => p.onOpenMediaLibrary(song)}>Media Library</button>
+                  <button onClick={() => p.onExport(song)}>Export Song</button>
                   <button disabled={!p.ready} onClick={() => void p.onSave(song)}>Save Song</button>
                   <button onClick={() => p.onSelect(song, "creator")}>
                     Build song
@@ -155,7 +158,7 @@ export default function SongBank(p: Props) {
           {p.library.filter(item => item.show.name.toLowerCase().includes(query.toLowerCase())).map(item => (
             <article key={item.id}>
               <div><strong>{item.show.name}</strong><small>{item.show.songs?.[0]?.bpm} BPM{item.show.songs?.[0]?.musicalKey ? ` · ${item.show.songs[0].musicalKey}` : ''}{item.show.songs?.[0]?.artist ? ` · ${item.show.songs[0].artist}` : ''} · {item.show.creatorSections?.length ?? 0} sections · {item.show.cues.length} cues · R{item.revision}</small>{item.show.songs?.[0]?.arrangement?.length ? <span className="song-arrangement">{item.show.songs[0].arrangement!.join(' → ')}</span> : <span>{item.show.songs?.[0]?.mediaName ?? 'No linked media'}</span>}</div>
-              <button disabled={!p.ready} onClick={() => p.onUse(item)}>Add to Show</button>
+              <div className="song-bank-actions"><button onClick={() => p.onExport(item)}>Export Song</button><button disabled={!p.ready} onClick={() => p.onUse(item)}>Add to Show</button></div>
             </article>
           ))}
         </div>
