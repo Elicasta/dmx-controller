@@ -45,6 +45,17 @@ export type PortableBackupImport = {
   restoreToken: string;
 };
 
+export type PortablePackageFormat = 'lumarig-song' | 'lumarig-show';
+
+export type PortablePackageManifest<T = unknown> = {
+  format: PortablePackageFormat;
+  version: 1;
+  exportedAt: string;
+  payload: T;
+  mediaFolders: MediaFolder[];
+  media: Array<Pick<MediaAsset, 'id' | 'name' | 'folderId' | 'kind'>>;
+};
+
 const EMPTY_LIBRARY: MediaLibrarySnapshot = { version: 1, folders: [], assets: [] };
 const CHUNK_BYTES = 1024 * 1024;
 
@@ -219,6 +230,72 @@ export async function importPortableBackup() {
     throw new Error('This file is not a supported LumaRig portable backup.');
   }
   return { ...result, manifest: candidate as PortableBackupManifest };
+}
+
+function packageFolderClosure(library: MediaLibrarySnapshot, assets: readonly MediaAsset[]) {
+  const wanted = new Set(assets.flatMap((asset) => asset.folderId ? [asset.folderId] : []));
+  let changed = true;
+  while (changed) {
+    changed = false;
+    for (const folder of library.folders) {
+      if (!wanted.has(folder.id) || !folder.parentId || wanted.has(folder.parentId)) continue;
+      wanted.add(folder.parentId);
+      changed = true;
+    }
+  }
+  return library.folders.filter((folder) => wanted.has(folder.id));
+}
+
+export async function exportPortablePackage<T>(
+  format: PortablePackageFormat,
+  payload: T,
+  mediaIds: string[],
+  suggestedName: string,
+) {
+  requireNativeMediaLibrary();
+  const library = await readMediaLibrary();
+  const uniqueIds = [...new Set(mediaIds)];
+  const assets = uniqueIds.map((id) => {
+    const asset = library.assets.find((candidate) => candidate.id === id);
+    if (!asset) throw new Error(`Media ${id} is not in the native Media Library.`);
+    if (asset.missing) throw new Error(`Relink missing media before export: ${asset.name}`);
+    return asset;
+  });
+  const manifest: PortablePackageManifest<T> = {
+    format,
+    version: 1,
+    exportedAt: new Date().toISOString(),
+    payload,
+    mediaFolders: packageFolderClosure(library, assets),
+    media: assets.map(({ id, name, folderId, kind }) => ({ id, name, folderId, kind })),
+  };
+  return invoke<string | null>('media_export_portable_package', {
+    manifestJson: JSON.stringify(manifest),
+    mediaIds: uniqueIds,
+    suggestedName,
+    packageFormat: format,
+  });
+}
+
+export async function importPortablePackage<T = unknown>(format: PortablePackageFormat) {
+  requireNativeMediaLibrary();
+  const result = await invoke<PortableBackupImport | null>('media_import_portable_package', {
+    packageFormat: format,
+  });
+  if (!result) return null;
+  let manifest: unknown;
+  try {
+    manifest = JSON.parse(result.manifestJson);
+  } catch {
+    await cancelPortableBackupRestore(result.restoreToken).catch(() => {});
+    throw new Error('Portable package manifest could not be parsed after import.');
+  }
+  const candidate = manifest as Partial<PortablePackageManifest<T>>;
+  if (candidate.format !== format || candidate.version !== 1 || !('payload' in candidate)) {
+    await cancelPortableBackupRestore(result.restoreToken).catch(() => {});
+    throw new Error('This file is not the expected LumaRig package type.');
+  }
+  return { ...result, manifest: candidate as PortablePackageManifest<T> };
 }
 
 export async function commitPortableBackupRestore(restoreToken: string) {
