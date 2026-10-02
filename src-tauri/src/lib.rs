@@ -11,6 +11,7 @@ use midi::{MidiEngine, MidiEvent, MidiInputInfo, MidiStatus};
 use output::{artnet::ArtNetEngine, lumaviz_direct::LumaVizDirectEngine, udmx::UdmxDeviceInfo};
 use studio_bridge::{StudioBridge, StudioBridgeEnvelope, StudioBridgeResponse, StudioBridgeStatus};
 use tauri::{State, Manager};
+use tauri::webview::{PermissionKind, PermissionResponse};
 
 #[tauri::command]
 fn open_media_output(app: tauri::AppHandle) -> Result<(), String> {
@@ -153,6 +154,10 @@ fn reply_studio_bridge(
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
+        .on_permission_request(|_, kind| match kind {
+            PermissionKind::Camera | PermissionKind::Microphone => PermissionResponse::Allow,
+            _ => PermissionResponse::Default,
+        })
         .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_dialog::init())
         .manage(DmxEngine::new())
