@@ -819,6 +819,20 @@ export default function App() {
   const remoteFlashLeaseRef = useRef<Map<string, number>>(new Map());
   const remoteEffectLeaseRef = useRef<Map<string, number>>(new Map());
   if (!remoteRelayRef.current) remoteRelayRef.current = new RemoteRelay();
+  const pairingSecondsRemaining = pairingSession
+    ? Math.max(0, Math.ceil((new Date(pairingSession.expiresAt).getTime() - pairingNow) / 1000))
+    : 0;
+  useEffect(() => {
+    if (!pairingSession) return;
+    setPairingNow(Date.now());
+    const timer = window.setInterval(() => setPairingNow(Date.now()), 1000);
+    return () => window.clearInterval(timer);
+  }, [pairingSession]);
+  useEffect(() => {
+    if (remoteRelayStatus !== 'connected') return;
+    void refreshCloudLibrary();
+    void refreshPairedControllerList();
+  }, [remoteRelayStatus]);
   const [message, setMessage] = useState('Control station ready. Connect DMX when you want physical output.');
   const [appVersion, setAppVersion] = useState('0.2.7');
   const [updateStatus, setUpdateStatus] = useState<UpdateStatus>('idle');
@@ -1947,11 +1961,6 @@ export default function App() {
   }
 
   async function refreshCloudLibrary() {
-    if (remoteRelayStatus !== 'connected') {
-      setCloudStatus('offline');
-      setCloudError('Connect Secure Cloud Relay to use Cloud Shows.');
-      return;
-    }
     setCloudStatus('loading');
     setCloudError('');
     try {
@@ -3011,6 +3020,44 @@ export default function App() {
     } catch (error) { setMessage(`MIDI disconnect failed: ${String(error)}`); }
   }
 
+  async function refreshPairedControllerList() {
+    setPairedControllersError('');
+    try {
+      setPairedControllers(await listPairedControllers(remoteRelayConfig));
+    } catch (error) {
+      setPairedControllersError(error instanceof Error ? error.message : String(error));
+    }
+  }
+
+  async function startControllerPairing() {
+    if (remoteRelayStatus !== 'connected') {
+      setRemoteRelayError('Connect Secure Cloud Relay before pairing an iPad.');
+      return;
+    }
+    setPairingBusy(true);
+    setRemoteRelayError('');
+    try {
+      const session = await createControllerPairing(remoteRelayConfig, REMOTE_APP_URL);
+      setPairingSession(session);
+      setPairingNow(Date.now());
+      setMessage('Controller pairing opened for two minutes. Scan the QR or enter the six-digit code on the iPad.');
+    } catch (error) {
+      setRemoteRelayError(error instanceof Error ? error.message : String(error));
+    } finally {
+      setPairingBusy(false);
+    }
+  }
+
+  async function revokeControllerPairing(deviceId: string) {
+    try {
+      await revokePairedController(remoteRelayConfig, deviceId);
+      await refreshPairedControllerList();
+      setMessage('Controller access revoked. Its next relay authorization will be denied.');
+    } catch (error) {
+      setPairedControllersError(error instanceof Error ? error.message : String(error));
+    }
+  }
+
   async function connectRemoteRelay() {
     setRemoteRelayError('');
     try {
@@ -3023,7 +3070,9 @@ export default function App() {
         },
         () => remoteSnapshotHandlerRef.current?.()
       );
-      setMessage('Remote relay connected. Paired web controllers now use the same ShowRuntime command path.');
+      setMessage('Remote relay connected. Cloud Shows and paired controllers are available.');
+      void refreshCloudLibrary();
+      void refreshPairedControllerList();
     } catch (error) {
       setRemoteRelayStatus('error');
       setRemoteRelayError(String(error));
@@ -3036,7 +3085,9 @@ export default function App() {
     clearAllRemoteFlashLeases(true);
     await remoteRelayRef.current?.disconnect();
     setRemoteRelayStatus('disconnected');
-    setMessage('Remote relay disconnected. Local lighting output continues unchanged.');
+    setPairingSession(null);
+    setCloudStatus('offline');
+    setMessage('Remote relay disconnected. Local lighting output and local Show saves continue unchanged.');
   }
 
   function beginMidiAssignment(target = newMidiTarget) {
