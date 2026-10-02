@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   abletonBeatToBar,
+  abletonTimelineElapsedMs,
   abletonTimelineMarkers,
   abletonTimelinePositionBar,
   activeAbletonLocator,
@@ -8,10 +9,11 @@ import {
 } from './ableton-live-sync';
 
 describe('Ableton Live synchronization', () => {
-  it('maps Live beats to LumaRig bars without an off-by-one shift', () => {
+  it('maps Live quarter-note beats to LumaRig bars without an off-by-one shift', () => {
     expect(abletonBeatToBar(0, 4)).toBe(0);
     expect(abletonBeatToBar(4, 4)).toBe(1);
-    expect(abletonBeatToBar(9, 3)).toBe(3);
+    expect(abletonBeatToBar(6, 3)).toBe(2); // 6/8 = 3 quarter notes per bar
+    expect(abletonBeatToBar(7, 3.5)).toBe(2); // 7/8 = 3.5 quarter notes per bar
   });
 
   it('sanitizes malformed snapshots and sorts locators by arrangement time', () => {
@@ -28,7 +30,7 @@ describe('Ableton Live synchronization', () => {
       ],
     });
     expect(snapshot.bpm).toBe(300);
-    expect(snapshot.beatsPerBar).toBe(1);
+    expect(snapshot.beatsPerBar).toBe(0.25);
     expect(snapshot.currentBeat).toBe(0);
     expect(snapshot.playing).toBe(true);
     expect(snapshot.locators.map((locator) => locator.name)).toEqual(['Intro', 'Locator 3', 'Chorus']);
@@ -65,5 +67,31 @@ describe('Ableton Live synchronization', () => {
     });
     expect(activeAbletonLocator(snapshot)?.name).toBe('Chorus');
     expect(abletonTimelinePositionBar(snapshot)).toBe(8);
+  });
+
+  it('maps an odd-meter Live bar onto the current LumaRig Timeline bar coordinate', () => {
+    const snapshot = sanitizeAbletonSnapshot({
+      bpm: 120,
+      beatsPerBar: 3.5,
+      signatureNumerator: 7,
+      signatureDenominator: 8,
+      currentBeat: 7,
+      playing: true,
+      locators: [],
+    });
+    // Beat 7 is bar 2 in 7/8. A 4/4 LumaRig Timeline at 100 BPM is 2400 ms/bar.
+    expect(abletonTimelineElapsedMs(snapshot, 4, 100)).toBe(4800);
+  });
+
+  it('applies the lighting offset in Ableton musical time before mapping into LumaRig bars', () => {
+    const snapshot = sanitizeAbletonSnapshot({
+      bpm: 120,
+      beatsPerBar: 4,
+      currentBeat: 8,
+      playing: true,
+      locators: [],
+    });
+    // Bar 2 + 500 ms at 120 BPM (quarter bar) => 2.25 bars.
+    expect(abletonTimelineElapsedMs(snapshot, 4, 120, 500)).toBe(4500);
   });
 });
