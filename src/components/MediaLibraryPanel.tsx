@@ -206,9 +206,9 @@ export default function MediaLibraryPanel(p: Props) {
                 {library.folders.map((folder) => <option key={folder.id} value={folder.id}>{'  '.repeat(folderDepth(folder.id, library))}{folder.name}</option>)}
               </select></label>
               <div className="media-asset-actions">
-                <button disabled={!p.activeSong || asset.missing || !!busy} onClick={() => void run(`attach-${asset.id}`, async () => {
+                <button disabled={!p.activeSong || asset.missing || asset.kind === 'image' || !!busy} onClick={() => void run(`attach-${asset.id}`, async () => {
                   await p.onAttachToActiveSong(asset);
-                })}>{p.activeSong ? `Use on ${p.activeSong.name}` : 'Select a Song first'}</button>
+                })}>{asset.kind === 'image' ? 'Screen asset' : p.activeSong ? `Use on ${p.activeSong.name}` : 'Select a Song first'}</button>
                 <button className={asset.missing ? 'console-primary' : ''} disabled={!!busy} onClick={() => void run(`relink-${asset.id}`, async () => {
                   const updated = await relinkMediaAsset(asset.id);
                   if (updated) p.onAssetChanged(updated);
