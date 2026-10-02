@@ -4315,7 +4315,18 @@ export default function App() {
 
   async function exportSongPackage(songOrProgram: SongRecord | SongProgram) {
     try {
-      const program = 'show' in songOrProgram ? structuredClone(songOrProgram) : extractSongProgram(showFileRef.current, songOrProgram);
+      const program: SongProgram = 'show' in songOrProgram
+        ? structuredClone(songOrProgram)
+        : (() => {
+            const id = programId(showFileRef.current, songOrProgram);
+            const existing = songLibrary.find((item) => item.id === id);
+            return {
+              id,
+              savedAt: new Date().toISOString(),
+              revision: existing?.revision ?? 1,
+              show: extractSongProgram(showFileRef.current, songOrProgram),
+            };
+          })();
       const name = program.show.name || program.show.songs?.[0]?.name || 'Song';
       setMessage('Preparing ' + name + '.lumarigsong…');
       const mediaIds = await ensurePortableMedia(program);
