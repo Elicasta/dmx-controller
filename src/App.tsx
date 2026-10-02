@@ -167,6 +167,7 @@ import { StudioBridgeDispatcher } from './core/studio-bridge-dispatcher';
 import { TransportEngine, type TransportSource, type TransportUpdate } from './core/transport-engine';
 import { ConnectionManager, type ConnectionRecord } from './core/connection-manager';
 import { lumaLivePositionMs, loadLumaLiveConnection, pairLumaLive, readLumaLiveState, saveLumaLiveConnection, scanLumaLive, sendLumaLiveCommand, type LumaLiveConnection, type LumaLiveEndpoint, type LumaLiveState } from './core/lumalive-client';
+import { loadProPresenterUrl, proPresenterSummary, readProPresenterStatus, saveProPresenterUrl, sendProPresenterCommand, type ProPresenterStatus } from './core/propresenter-client';
 import { QRCodeSVG } from 'qrcode.react';
 import {
   createCloudShowFolder,
@@ -754,6 +755,11 @@ export default function App() {
   const [lumaLiveBusy, setLumaLiveBusy] = useState(false);
   const [lumaLiveError, setLumaLiveError] = useState('');
   const lumaLiveLastPositionRef = useRef(0);
+  const [proPresenterUrl, setProPresenterUrl] = useState(loadProPresenterUrl);
+  const [proPresenterStatus, setProPresenterStatus] = useState<ProPresenterStatus | null>(null);
+  const [proPresenterWatching, setProPresenterWatching] = useState(false);
+  const [proPresenterBusy, setProPresenterBusy] = useState(false);
+  const [proPresenterError, setProPresenterError] = useState('');
 
   const [studioBridgeStatus, setStudioBridgeStatus] = useState<StudioBridgeStatus>({ listening: false, port: 47777, connectedClients: 0 });
   useEffect(() => {
@@ -1204,6 +1210,82 @@ export default function App() {
       refreshConnectionRecords();
     }
   }
+
+  async function detectProPresenter() {
+    setProPresenterBusy(true);
+    setProPresenterError('');
+    try {
+      const clean=proPresenterUrl.trim().replace(/\/$/,'');
+      const status=await readProPresenterStatus(clean);
+      saveProPresenterUrl(clean);
+      setProPresenterUrl(clean);
+      setProPresenterStatus(status);
+      setProPresenterWatching(true);
+      const summary=proPresenterSummary(status);
+      connectionManagerRef.current!.upsert({
+        id:'propresenter',kind:'propresenter',name:'ProPresenter',status:'connected',
+        capabilities:['cue-trigger','transport','media'],lastSeenAt:Date.now(),lastError:'',
+        detail:summary.presentation || summary.current || clean
+      });
+      refreshConnectionRecords();
+      setMessage('ProPresenter API connected. Slide and presentation transport controls are available.');
+    } catch(error) {
+      const message=error instanceof Error?error.message:String(error);
+      setProPresenterError(message);
+      setProPresenterWatching(false);
+      setProPresenterStatus(null);
+      connectionManagerRef.current!.fail('propresenter',message);
+      refreshConnectionRecords();
+    } finally {
+      setProPresenterBusy(false);
+    }
+  }
+
+  async function controlProPresenter(operation:'next'|'previous'|'retrigger'|'play'|'pause'|'timeline-play'|'timeline-pause'|'timeline-rewind') {
+    setProPresenterError('');
+    try {
+      await sendProPresenterCommand(proPresenterUrl,operation);
+      const status=await readProPresenterStatus(proPresenterUrl);
+      setProPresenterStatus(status);
+      const summary=proPresenterSummary(status);
+      connectionManagerRef.current!.heartbeat('propresenter',summary.presentation || summary.current || operation);
+      refreshConnectionRecords();
+      setMessage(`ProPresenter · ${operation.replace(/-/g,' ')}.`);
+    } catch(error) {
+      const message=error instanceof Error?error.message:String(error);
+      setProPresenterError(message);
+      connectionManagerRef.current!.fail('propresenter',message,true);
+      refreshConnectionRecords();
+    }
+  }
+
+  useEffect(() => {
+    if(!proPresenterWatching)return;
+    let cancelled=false;
+    const poll=async()=>{
+      try{
+        const status=await readProPresenterStatus(proPresenterUrl);
+        if(cancelled)return;
+        setProPresenterStatus(status);
+        const summary=proPresenterSummary(status);
+        connectionManagerRef.current!.upsert({
+          id:'propresenter',kind:'propresenter',name:'ProPresenter',status:'connected',
+          capabilities:['cue-trigger','transport','media'],lastSeenAt:Date.now(),lastError:'',
+          detail:summary.presentation || summary.current || proPresenterUrl
+        });
+        refreshConnectionRecords();
+      }catch(error){
+        if(cancelled)return;
+        const message=error instanceof Error?error.message:String(error);
+        setProPresenterError(message);
+        connectionManagerRef.current!.fail('propresenter',message,true);
+        refreshConnectionRecords();
+      }
+    };
+    void poll();
+    const timer=window.setInterval(()=>void poll(),750);
+    return()=>{cancelled=true;window.clearInterval(timer);};
+  },[proPresenterWatching,proPresenterUrl]);
 
 
   const [newProfileId, setNewProfileId] = useState(FIXTURE_LIBRARY[0].id);
