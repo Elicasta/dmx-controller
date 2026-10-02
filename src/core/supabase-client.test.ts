@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { classifyDesktopPlatform, desktopDeviceId } from './supabase-client';
+import { classifyDesktopPlatform } from './supabase-client';
 
 describe('desktop platform identity', () => {
   it('detects Windows WebView/desktop user agents', () => {
@@ -14,7 +14,7 @@ describe('desktop platform identity', () => {
     expect(classifyDesktopPlatform('Linux x86_64')).toBe('linux');
   });
 
-  it('uses a safe generic desktop id outside a browser', () => {
-    expect(desktopDeviceId()).toBe('lumarig-desktop');
+  it('falls back safely for unknown desktop platforms', () => {
+    expect(classifyDesktopPlatform('unknown runtime')).toBe('desktop');
   });
 });
