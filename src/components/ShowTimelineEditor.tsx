@@ -106,6 +106,11 @@ export default function ShowTimelineEditor(props: Props) {
   const [playing, setPlaying] = useState(false);
   const [zoom, setZoom] = useState(36);
   const zoomRef = useRef(36);
+  const [trackHeight,setTrackHeight]=useState(()=>{
+    const saved=Number(window.localStorage.getItem('lumarig.timeline-track-height.v1') || 80);
+    return clamp(saved,44,140);
+  });
+  useEffect(()=>{window.localStorage.setItem('lumarig.timeline-track-height.v1',String(trackHeight));},[trackHeight]);
   const [snap, setSnap] = useState(1);
   const [followPlayhead, setFollowPlayhead] = useState(true);
   const followPlayheadRef = useRef(true);
@@ -497,7 +502,7 @@ export default function ShowTimelineEditor(props: Props) {
     .map((p, i) => `M ${i} ${24 - p * 22} L ${i} ${24 + p * 22}`)
     .join(" ");
   return (
-    <div className="show-bar-timeline" data-history={historyVersion}
+    <div className="show-bar-timeline" data-history={historyVersion} data-track-compact={trackHeight < 64 ? 'true' : 'false'} style={{'--timeline-track-height':`${trackHeight}px`} as import('react').CSSProperties}
       onDragOver={(e) => { if (e.dataTransfer.types.includes("Files")) { e.preventDefault(); e.dataTransfer.dropEffect = "copy"; } }}
       onDrop={(e) => {
         const file = e.dataTransfer.files?.[0];
@@ -604,6 +609,23 @@ export default function ShowTimelineEditor(props: Props) {
             onChange={(e) => setZoom(Number(e.target.value))}
           />
         </label>
+        <label>
+          Track height · {Math.round(trackHeight)} px
+          <input
+            aria-label="Timeline track height"
+            type="range"
+            min={44}
+            max={140}
+            step={2}
+            value={trackHeight}
+            onChange={(e)=>setTrackHeight(clamp(Number(e.target.value),44,140))}
+          />
+        </label>
+        <div className="track-height-presets" role="group" aria-label="Timeline track height presets">
+          <button aria-pressed={trackHeight===48} onClick={()=>setTrackHeight(48)}>Compact</button>
+          <button aria-pressed={trackHeight===80} onClick={()=>setTrackHeight(80)}>Normal</button>
+          <button aria-pressed={trackHeight===120} onClick={()=>setTrackHeight(120)}>Tall</button>
+        </div>
         <button onClick={() => { const width = Math.max(320, (scrollRef.current?.clientWidth ?? 900) - 120); setZoom(clamp(width / Math.max(1, totalBars), 4, 400)); }}>Fit</button>
         <button className={followPlayhead ? "active" : ""} aria-pressed={followPlayhead} onClick={() => setFollowPlayhead((value) => !value)}>Follow {followPlayhead ? "On" : "Off"}</button>
         <label className="file-button">
