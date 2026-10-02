@@ -80,7 +80,7 @@ export default function SongBank(p: Props) {
       <div className="song-bank-list">
         {songs
           .filter((s) =>
-            `${s.name} ${s.mediaName ?? ""}`
+            `${s.name} ${s.artist ?? ""} ${s.musicalKey ?? ""} ${s.arrangement?.join(' ') ?? ""} ${s.mediaName ?? ""}`
               .toLowerCase()
               .includes(query.toLowerCase()),
           )
@@ -109,9 +109,10 @@ export default function SongBank(p: Props) {
                     }}
                   />
                   <small>
-                    {song.bpm} BPM · {sections.length} sections · {cues.length}{" "}
+                    {song.bpm} BPM{song.musicalKey ? ` · ${song.musicalKey}` : ''}{song.artist ? ` · ${song.artist}` : ''} · {sections.length} sections · {cues.length}{" "}
                     cues
                   </small>
+                  {song.arrangement?.length ? <span className="song-arrangement">{song.arrangement.join(' → ')}</span> : null}
                   <span>
                     {song.mediaName || "Drop audio or MP4 here, or link media"}
                   </span>
@@ -153,7 +154,7 @@ export default function SongBank(p: Props) {
         <div className="song-bank-list">
           {p.library.filter(item => item.show.name.toLowerCase().includes(query.toLowerCase())).map(item => (
             <article key={item.id}>
-              <div><strong>{item.show.name}</strong><small>{item.show.songs?.[0]?.bpm} BPM · {item.show.creatorSections?.length ?? 0} sections · {item.show.cues.length} cues · R{item.revision}</small><span>{item.show.songs?.[0]?.mediaName ?? 'No linked media'}</span></div>
+              <div><strong>{item.show.name}</strong><small>{item.show.songs?.[0]?.bpm} BPM{item.show.songs?.[0]?.musicalKey ? ` · ${item.show.songs[0].musicalKey}` : ''}{item.show.songs?.[0]?.artist ? ` · ${item.show.songs[0].artist}` : ''} · {item.show.creatorSections?.length ?? 0} sections · {item.show.cues.length} cues · R{item.revision}</small>{item.show.songs?.[0]?.arrangement?.length ? <span className="song-arrangement">{item.show.songs[0].arrangement!.join(' → ')}</span> : <span>{item.show.songs?.[0]?.mediaName ?? 'No linked media'}</span>}</div>
               <button disabled={!p.ready} onClick={() => p.onUse(item)}>Add to Show</button>
             </article>
           ))}
