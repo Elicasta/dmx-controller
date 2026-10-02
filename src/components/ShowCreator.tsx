@@ -3,7 +3,7 @@ import StepEditor from "./StepEditor";
 import { createStepProgram } from "../lib/step-program";
 import ResizableWorkspace from './ResizableWorkspace';
 import TempoInput from './TempoInput';
-import { useEffect, useMemo, useState, type Dispatch, type SetStateAction } from "react";
+import { useEffect, useMemo, useState, useRef, type Dispatch, type SetStateAction } from "react";
 import type { PatchedFixture } from "../lib/fixtures";
 import type { FixtureGroup } from "../lib/show";
 import type { CustomEffect } from "../lib/effects";
@@ -86,15 +86,18 @@ export default function ShowCreator({
   const [songFilter,setSongFilter]=useState("");
   const [sectionSearch,setSectionSearch]=useState("");
   const [category, setCategory] = useState("All");
+  const [allSectionsSelected,setAllSectionsSelected]=useState(false);
+  const sectionClipboard=useRef<ShowSection[]>([]);
   const selected = sections.find((s) => s.id === selectedId) ?? sections[0];
   useEffect(()=>{
     const keydown=(event:KeyboardEvent)=>{
       const target=event.target as HTMLElement|null;
       if(target?.closest('input,textarea,select,[contenteditable="true"]') || !(event.ctrlKey||event.metaKey))return;
-      if(event.key.toLowerCase()==='c' && selected){event.preventDefault();setCopiedSection(structuredClone(selected));}
-      if(event.key.toLowerCase()==='v' && copiedSection && sections.length<200){event.preventDefault();add(cloneSection(copiedSection));}
+      if(event.key.toLowerCase()==='a'){event.preventDefault();setAllSectionsSelected(true);}
+      if(event.key.toLowerCase()==='c' && selected){event.preventDefault();sectionClipboard.current=structuredClone(allSectionsSelected?sections:[selected]);setCopiedSection(structuredClone(selected));}
+      if(event.key.toLowerCase()==='v' && (sectionClipboard.current.length || copiedSection)){event.preventDefault();const sources=sectionClipboard.current.length?sectionClipboard.current:copiedSection?[copiedSection]:[];if(sections.length+sources.length>200)return;setSections(all=>[...all,...sources.map(source=>cloneSection(source))]);setAllSectionsSelected(false);}
     };window.addEventListener('keydown',keydown);return()=>window.removeEventListener('keydown',keydown);
-  },[selected,copiedSection,sections.length,song]);
+  },[selected,copiedSection,sections,song,allSectionsSelected]);
   const songStats = useMemo(() => [...new Set(sections.map((section) => section.song))].map((name) => {
     const items = sections.filter((section) => section.song === name);
     return { name, count: items.length, bars: items.reduce((sum, section) => sum + section.bars, 0) };
@@ -286,7 +289,7 @@ export default function ShowCreator({
                       } else move(dragId, s.id);
                       setDragId("");
                     }}
-                    className={selected?.id === s.id ? "active" : ""}
+                    className={selected?.id === s.id || allSectionsSelected ? "active" : ""}
                     style={
                       {
                         "--section-color": s.color,
@@ -295,7 +298,7 @@ export default function ShowCreator({
                   >
                     <button
                       className="section-select"
-                      onClick={() => setSelectedId(s.id)}
+                      onClick={() => {setAllSectionsSelected(false);setSelectedId(s.id);}}
                     >
                       <b>{String(index + 1).padStart(2, "0")}</b>
                       <div>

@@ -69,11 +69,13 @@ export type TimelineMediaClip = {
   durationMs:number; trimInMs:number; trimOutMs:number; enabled:boolean;
 };
 export type TimelineTakeClip = {
+  mode?: 'base' | 'override';
   id:string; name:string; recordingId:string; startBar:number; lengthBars:number;
   durationMs:number; trimInMs:number; trimOutMs:number; enabled:boolean;
   frames:Array<{timeMs:number;updates:DmxUpdate[]}>;
 };
 export type ShowTimeline = {
+  mutedLanes?: number[];
   videoClips?: TimelineMediaClip[];
   takeClips?: TimelineTakeClip[];
   bpm: number;
@@ -554,6 +556,7 @@ export function activeTimelineCueId(
     .filter(
       (clip) =>
         clip.enabled &&
+        !(timeline.mutedLanes??[]).includes(clip.lane) &&
         validCueIds.has(clip.cueId) &&
         position >= clip.startBar &&
         position < clip.startBar + clip.lengthBars,
@@ -581,6 +584,7 @@ export function renderShowTimeline(
     .filter(
       (c) =>
         c.enabled &&
+        !(timeline.mutedLanes??[]).includes(c.lane) &&
         position >= c.startBar &&
         position < c.startBar + c.lengthBars,
     )
@@ -588,11 +592,12 @@ export function renderShowTimeline(
       (a, b) =>
         a.lane - b.lane || a.startBar - b.startBar || a.id.localeCompare(b.id),
     );
-  for(const clip of timeline.takeClips ?? []) {
+  const applyTake=(clip:TimelineTakeClip)=>{
     const local=elapsedMs-clip.startBar*duration+clip.trimInMs;
-    if(!clip.enabled || position<clip.startBar || position>=clip.startBar+clip.lengthBars || local>=clip.trimOutMs)continue;
+    if(!clip.enabled || position<clip.startBar || position>=clip.startBar+clip.lengthBars || local>=clip.trimOutMs)return;
     for(const frame of clip.frames){if(frame.timeMs>local)break;for(const [channel,value] of frame.updates)updates.set(channel,value);}
-  }
+  };
+  for(const clip of timeline.takeClips ?? [])if(clip.mode!=='override')applyTake(clip);
   for (const clip of active) {
     const cue = cues.find((c) => c.id === clip.cueId);
     if (!cue) continue;
@@ -611,6 +616,7 @@ export function renderShowTimeline(
       timeline.bpm,
     ).forEach(([c, v]) => updates.set(c, v));
   }
+  for(const clip of timeline.takeClips ?? [])if(clip.mode==='override')applyTake(clip);
   return [...updates.entries()];
 }
 const finite = (v: unknown, min: number, max: number) =>
@@ -798,7 +804,7 @@ function validAssetClip(value:unknown): value is TimelineMediaClip {
 function validTakeClip(value:unknown): value is TimelineTakeClip {
   if(!validAssetClip(value))return false;
   const c=value as unknown as TimelineTakeClip;
-  return typeof c.recordingId==='string' && Array.isArray(c.frames) && c.frames.length<=30000 && c.frames.every((frame,index)=>
+  return (c.mode===undefined || ['base','override'].includes(c.mode)) && typeof c.recordingId==='string' && Array.isArray(c.frames) && c.frames.length<=30000 && c.frames.every((frame,index)=>
     frame && finite(frame.timeMs,0,c.durationMs) && (!index || frame.timeMs>=c.frames[index-1].timeMs) && Array.isArray(frame.updates) && frame.updates.length<=512 && frame.updates.every(u=>Array.isArray(u) && u.length===2 && Number.isInteger(u[0]) && finite(u[0],1,512) && finite(u[1],0,255)));
 }
 export function isShowTimeline(value: unknown): value is ShowTimeline {
@@ -806,6 +812,7 @@ export function isShowTimeline(value: unknown): value is ShowTimeline {
   const t = value as ShowTimeline;
   return (
     (t.videoClips===undefined || (Array.isArray(t.videoClips) && t.videoClips.length<=100 && t.videoClips.every(c=>validAssetClip(c) && typeof c.mediaId==='string'))) &&
+    (t.mutedLanes===undefined || (Array.isArray(t.mutedLanes) && t.mutedLanes.length<=16 && t.mutedLanes.every(l=>Number.isInteger(l)&&l>=0&&l<16))) &&
     (t.takeClips===undefined || (Array.isArray(t.takeClips) && t.takeClips.length<=24 && t.takeClips.every(validTakeClip))) &&
     finite(t.bpm, 20, 300) &&
     finite(t.beatsPerBar, 1, 12) &&

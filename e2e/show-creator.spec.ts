@@ -1117,3 +1117,29 @@ test('recorded takes become independent Song versions with editable lighting fra
   await expect.poll(async()=>{const show=await readShow(page);return show.timelineShows?.find((t:any)=>t.name.includes('Take One'))?.timeline.takeClips?.[0]?.frames[0]?.updates.find((u:any)=>u[0]===1)?.[1];}).toBe(88);
   const show=await readShow(page);expect(show.songs.find((s:any)=>s.sourceRecordingId==='take').versionOf).toBe('song-master');expect(show.recordings[0].frames[0].updates[0][1]).toBe(100);expect(show.songs.find((s:any)=>s.id==='song').name).toBe('Hineh Ma Tov');
 });
+
+for(const mode of ['Record','Overdub'])test(`Timeline ${mode} writes directly at playhead and preserves existing clips`,async({page})=>{
+  await seed(page);await page.addInitScript(()=>localStorage.setItem('dmx-controller.show.v1',JSON.stringify({version:4,name:'Direct record',cues:[{id:'base',number:1,name:'Base',fadeMs:0,values:{red:255,green:0,blue:0,uv:0,dimmer:255},changes:[[2,180]]}],timeline:{bpm:120,beatsPerBar:4,audioOffsetBars:0,clips:[{id:'base-clip',cueId:'base',startBar:0,lengthBars:16,lane:0,enabled:true}]}})));
+  await page.goto('/');await page.getByRole('button',{name:'SHOW',exact:true}).click();await page.getByRole('button',{name:'Timeline',exact:true}).click();
+  await page.locator('.bar-ruler').click({position:{x:72,y:20}});await page.getByRole('button',{name:`● ${mode}`,exact:true}).click();
+  await expect(page.locator('.console-recording-bar')).toContainText(mode==='Overdub'?'TIMELINE OVERDUB':'TIMELINE RECORD');
+  await page.getByRole('button',{name:'Fixtures',exact:true}).click();await page.getByLabel('Wash 1 brightness').fill('80');
+  await expect.poll(()=>page.locator('.console-recording-bar').textContent()).not.toContain('00:00.0');
+  await page.getByRole('button',{name:'Pause recording',exact:true}).click();const paused=await page.locator('.console-recording-bar small').textContent();await page.waitForTimeout(150);expect(await page.locator('.console-recording-bar small').textContent()).toBe(paused);
+  await page.getByRole('button',{name:'Resume recording',exact:true}).click();await page.waitForTimeout(100);await page.getByRole('button',{name:'Stop + save',exact:true}).click();
+  await expect(page.locator('.take-lane, .asset-clip').first()).toBeVisible();
+  await expect.poll(async()=>((await readShow(page)).timeline?.takeClips??[]).length).toBe(1);
+  const show=await readShow(page),take=show.timeline.takeClips[0];expect(take.startBar).toBe(2);expect(take.mode).toBe('override');expect(show.timeline.clips).toHaveLength(1);expect(show.recordings).toHaveLength(1);
+  expect(take.frames.some((f:any)=>f.updates.some((u:any)=>u[1]===204))).toBe(true);
+  if(mode==='Overdub')expect(take.frames.flatMap((f:any)=>f.updates).every((u:any)=>u[0]!==2)).toBe(true);
+  await page.reload();await page.getByRole('button',{name:'SHOW',exact:true}).click();await page.getByRole('button',{name:'Timeline',exact:true}).click();await expect(page.locator('.asset-clip')).toHaveCount(1);
+});
+
+test('FX lanes mute persistently, target insertion and select-all arrangement copying',async({page})=>{
+  await seed(page);await page.goto('/');await page.getByRole('button',{name:'SHOW',exact:true}).click();await page.getByRole('button',{name:'Timeline',exact:true}).click();
+  await page.getByRole('button',{name:'Select FX lane 2',exact:true}).click();await page.getByRole('button',{name:'FX recipes',exact:true}).click();await page.locator('.timeline-fx-recipe').first().click();
+  await expect.poll(async()=>((await readShow(page)).timeline?.clips??[])[0]?.lane).toBe(1);
+  await page.getByRole('button',{name:'Mute FX lane 2',exact:true}).click();await expect(page.getByRole('button',{name:'Mute FX lane 2',exact:true})).toHaveAttribute('aria-pressed','true');
+  await page.locator('.show-bar-timeline').press('Control+a');await page.keyboard.press('Control+c');await page.keyboard.press('Control+v');await expect(page.locator('.timeline-clip')).toHaveCount(2);await page.keyboard.press('Control+z');await expect(page.locator('.timeline-clip')).toHaveCount(1);
+  await page.reload();await page.getByRole('button',{name:'SHOW',exact:true}).click();await page.getByRole('button',{name:'Timeline',exact:true}).click();await expect(page.getByRole('button',{name:'Mute FX lane 2',exact:true})).toHaveAttribute('aria-pressed','true');
+});
