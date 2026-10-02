@@ -1,4 +1,4 @@
-import { cueContext } from './lib/show-selection';
+import { cueContext, cueTargetIds } from './lib/show-selection';
 import { mediaWindow, mediaPosition } from './lib/timeline-media';
 import { useMediaOutputPublisher } from "./components/MediaOutput";
 import { readProgramState, saveProgramState, type Recovery } from './lib/program-storage';
@@ -1726,6 +1726,18 @@ export default function App() {
     setMessage(`${name} captured as a tracked cue with ${cue.changes?.length ?? 0} channel instruction${cue.changes?.length === 1 ? '' : 's'}.`);
   }
 
+  function selectCueTargets(cue: ShowCue) {
+    const layers=cue.effectStack?.filter(layer=>layer.enabled !== false) ?? [];
+    const section=showFile.creatorSections?.find(item=>item.id===cue.sourceSectionId);
+    const group=fixtureGroups.find(item=>item.id===section?.groupId);
+    const targets=cueTargetIds(showFile,cue,patchRef.current,fixtureGroups);
+    void dispatchControl({type:'fixture.select',fixtureIds:targets,mode:'replace'});
+    const first=patchRef.current.find(item=>item.id===targets[0]);
+    if (first) { setStageFixtureId(first.id); setOrganizerDraft(first); setSelectedStageElementId(null); }
+    const targetGroup=group ?? fixtureGroups.find(item=>fixturesInGroup(patchRef.current,item).some(fixture=>fixture.id===first?.id));
+    setSelectedGroupId(targetGroup?.id ?? null);
+    if (layers[0]) { setFxEditor(structuredClone(layers[0].effect)); setSelectedFxBankId(layers[0].effect.id); }
+  }
   function adoptCueContext(cue: ShowCue, clipId?: string, position?: number) {
     const context = cueContext(showFile, cue.id, timelineShowId, clipId);
     const song = songsForShow(showFile).find(item => item.name === cue.trackName);
@@ -1748,10 +1760,7 @@ export default function App() {
       audio.currentTime = (source ?? (Number.isFinite(boundary) ? boundary : bounds.startMs)) / 1000;
     }
     timelineContextCueRef.current=cue.id;
-    const layers = cue.effectStack?.filter(layer => layer.enabled !== false) ?? [];
-    const targets = [...new Set(layers.flatMap(layer => layer.targetIds))];
-    if (targets.length) void dispatchControl({ type:'fixture.select', fixtureIds:targets, mode:'replace' });
-    if (layers[0]) setFxEditor(structuredClone(layers[0].effect));
+    selectCueTargets(cue);
   }
   function selectTimelineClip(clipId: string, bar: number) {
     const clip = editingTimeline.clips.find(item => item.id === clipId);
@@ -3751,10 +3760,7 @@ export default function App() {
     if (timelineContextCueRef.current !== (timelineCueId ?? '')) {
       timelineContextCueRef.current=timelineCueId ?? '';
       const cue=showFile.cues.find(item=>item.id===timelineCueId);
-      const layers=cue?.effectStack?.filter(layer=>layer.enabled !== false) ?? [];
-      const targets=[...new Set(layers.flatMap(layer=>layer.targetIds))];
-      if (targets.length) void dispatchControl({type:'fixture.select',fixtureIds:targets,mode:'replace'});
-      if (layers[0]) setFxEditor(structuredClone(layers[0].effect));
+      if (cue) selectCueTargets(cue);
     }
     setActiveCueId(timelineCueId ?? null);
     setActiveSectionId(showFile.cues.find(cue=>cue.id===timelineCueId)?.sourceSectionId ?? '');
