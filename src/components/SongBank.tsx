@@ -14,6 +14,8 @@ type Props = {
   onSelect: (song: SongRecord, mode: "creator" | "timeline") => void;
   onRename: (id: string, name: string) => void;
   onMedia: (song: SongRecord, file: File) => Promise<void>;
+  onAnalyzeTempo: (song: SongRecord) => Promise<void>;
+  onApplyTempo: (song: SongRecord, bpm: number) => void;
   onOpenMediaLibrary: (song: SongRecord) => void;
   onExport: (song: SongRecord | SongProgram) => void;
   onImport: () => void;
@@ -22,6 +24,7 @@ export default function SongBank(p: Props) {
   const [query, setQuery] = useState(""),
     [name, setName] = useState(""),
     [busy, setBusy] = useState(""),
+    [tempoBusy, setTempoBusy] = useState(""),
     [error, setError] = useState("");
   const songs = songsForShow(p.show);
   async function attach(song: SongRecord, file?: File) {
@@ -118,6 +121,14 @@ export default function SongBank(p: Props) {
                   <span>
                     {song.mediaName || "Drop audio or MP4 here, or link media"}
                   </span>
+                  {song.tempoAnalysis ? <div className="song-tempo-analysis">
+                    <span><b>{song.tempoAnalysis.bpm} BPM detected</b><small>{Math.round(song.tempoAnalysis.confidence*100)}% confidence · downbeat {(song.tempoAnalysis.downbeatMs/1000).toFixed(2)}s{song.tempoAnalysis.manualDownbeat ? ' · corrected' : ''}</small></span>
+                    <div>
+                      <button disabled={tempoBusy===song.id} onClick={()=>p.onApplyTempo(song,song.tempoAnalysis!.bpm)}>Use {song.tempoAnalysis.bpm}</button>
+                      {song.tempoAnalysis.halfBpm && <button disabled={tempoBusy===song.id} onClick={()=>p.onApplyTempo(song,song.tempoAnalysis!.halfBpm!)}>½ · {song.tempoAnalysis.halfBpm}</button>}
+                      {song.tempoAnalysis.doubleBpm && <button disabled={tempoBusy===song.id} onClick={()=>p.onApplyTempo(song,song.tempoAnalysis!.doubleBpm!)}>2× · {song.tempoAnalysis.doubleBpm}</button>}
+                    </div>
+                  </div> : null}
                 </div>
                 <div className="song-bank-actions">
                   <label className="file-button">
@@ -138,6 +149,11 @@ export default function SongBank(p: Props) {
                       }}
                     />
                   </label>
+                  <button disabled={!song.mediaId || !!tempoBusy} onClick={()=>void (async()=>{
+                    if(tempoBusy)return;setTempoBusy(song.id);setError('');
+                    try{await p.onAnalyzeTempo(song)}catch(error){setError(error instanceof Error?error.message:String(error))}
+                    finally{setTempoBusy('')}
+                  })()}>{tempoBusy===song.id?'Analyzing…':song.tempoAnalysis?'Re-analyze Tempo':'Analyze Tempo'}</button>
                   <button onClick={() => p.onOpenMediaLibrary(song)}>Media Library</button>
                   <button onClick={() => p.onExport(song)}>Export Song</button>
                   <button disabled={!p.ready} onClick={() => void p.onSave(song)}>Save Song</button>
