@@ -166,6 +166,7 @@ import { desktopDeviceId } from './core/supabase-client';
 import { StudioBridgeDispatcher } from './core/studio-bridge-dispatcher';
 import { TransportEngine, type TransportSource, type TransportUpdate } from './core/transport-engine';
 import { ConnectionManager, type ConnectionRecord } from './core/connection-manager';
+import { lumaLivePositionMs, loadLumaLiveConnection, pairLumaLive, readLumaLiveState, saveLumaLiveConnection, scanLumaLive, sendLumaLiveCommand, type LumaLiveConnection, type LumaLiveEndpoint, type LumaLiveState } from './core/lumalive-client';
 import { QRCodeSVG } from 'qrcode.react';
 import {
   createCloudShowFolder,
@@ -746,6 +747,13 @@ export default function App() {
   const [sharedTransport, setSharedTransport] = useState(() => transportEngineRef.current!.snapshot());
   const [connectionRecords, setConnectionRecords] = useState<ConnectionRecord[]>(() => connectionManagerRef.current!.snapshot());
   const refreshConnectionRecords = () => setConnectionRecords(connectionManagerRef.current!.snapshot());
+  const [lumaLiveConnection, setLumaLiveConnection] = useState<LumaLiveConnection | null>(loadLumaLiveConnection);
+  const [lumaLiveEndpoint, setLumaLiveEndpoint] = useState<LumaLiveEndpoint | null>(null);
+  const [lumaLivePairCode, setLumaLivePairCode] = useState('');
+  const [lumaLiveState, setLumaLiveState] = useState<LumaLiveState | null>(null);
+  const [lumaLiveBusy, setLumaLiveBusy] = useState(false);
+  const [lumaLiveError, setLumaLiveError] = useState('');
+  const lumaLiveLastPositionRef = useRef(0);
 
   const [studioBridgeStatus, setStudioBridgeStatus] = useState<StudioBridgeStatus>({ listening: false, port: 47777, connectedClients: 0 });
   useEffect(() => {
@@ -1110,6 +1118,151 @@ export default function App() {
       release:true
     });
   }
+
+  async function detectLumaLive() {
+    setLumaLiveBusy(true);
+    setLumaLiveError('');
+    try {
+      const endpoint=await scanLumaLive();
+      setLumaLiveEndpoint(endpoint);
+      if(endpoint){
+        connectionManagerRef.current!.upsert({
+          id:'lumalive',kind:'lumalive',name:'LumaLive',status:lumaLiveConnection?'connected':'connecting',
+          capabilities:['transport','song-recall','performance'],lastSeenAt:Date.now(),
+          detail:`v${endpoint.version} · ${endpoint.baseUrl}`
+        });
+        refreshConnectionRecords();
+        setMessage(lumaLiveConnection?'LumaLive detected. Checking paired transport…':'LumaLive detected. Enter its six-digit pairing code.');
+      }else{
+        connectionManagerRef.current!.disconnect('lumalive','LumaLive not detected on this computer');
+        connectionManagerRef.current!.disconnect('ableton','Waiting for LumaLive');
+        refreshConnectionRecords();
+        setMessage('LumaLive was not found on this computer. Open LumaLive, then scan again.');
+      }
+    } catch(error) {
+      const message=error instanceof Error?error.message:String(error);
+      setLumaLiveError(message);
+      connectionManagerRef.current!.fail('lumalive',message);
+      refreshConnectionRecords();
+    } finally {
+      setLumaLiveBusy(false);
+    }
+  }
+
+  async function pairDetectedLumaLive() {
+    if(!lumaLiveEndpoint) return setLumaLiveError('Scan for LumaLive first.');
+    setLumaLiveBusy(true);
+    setLumaLiveError('');
+    try {
+      const paired=await pairLumaLive(
+        lumaLiveEndpoint.baseUrl,
+        lumaLivePairCode,
+        `LumaRig · ${desktopDeviceId().replace(/-/g,'').slice(-4).toUpperCase()}`
+      );
+      const connection={baseUrl:paired.baseUrl,token:paired.token,version:lumaLiveEndpoint.version};
+      saveLumaLiveConnection(connection);
+      setLumaLiveConnection(connection);
+      setLumaLivePairCode('');
+      connectionManagerRef.current!.upsert({
+        id:'lumalive',kind:'lumalive',name:'LumaLive',status:'connected',
+        capabilities:['transport','song-recall','performance'],lastSeenAt:Date.now(),
+        detail:`Paired · v${lumaLiveEndpoint.version}`
+      });
+      refreshConnectionRecords();
+      setMessage('LumaLive paired. Ableton-backed transport can now drive LumaRig.');
+    } catch(error) {
+      const message=error instanceof Error?error.message:String(error);
+      setLumaLiveError(message);
+      connectionManagerRef.current!.fail('lumalive',message);
+      refreshConnectionRecords();
+    } finally {
+      setLumaLiveBusy(false);
+    }
+  }
+
+  function forgetLumaLive() {
+    saveLumaLiveConnection(null);
+    setLumaLiveConnection(null);
+    setLumaLiveState(null);
+    setLumaLiveError('');
+    releaseSharedTransport('lumalive');
+    connectionManagerRef.current!.disconnect('lumalive','Pairing removed');
+    connectionManagerRef.current!.disconnect('ableton','LumaLive pairing removed');
+    refreshConnectionRecords();
+    setMessage('LumaLive pairing removed from this LumaRig computer.');
+  }
+
+  async function controlLumaLive(type:'start_playback'|'stop_playback') {
+    if(!lumaLiveConnection) return setLumaLiveError('Pair LumaLive first.');
+    try {
+      await sendLumaLiveCommand(lumaLiveConnection,type);
+      setMessage(type==='start_playback'?'LumaLive / Ableton playback started.':'LumaLive / Ableton playback stopped.');
+    } catch(error) {
+      const message=error instanceof Error?error.message:String(error);
+      setLumaLiveError(message);
+      connectionManagerRef.current!.fail('lumalive',message,true);
+      refreshConnectionRecords();
+    }
+  }
+
+  useEffect(() => {
+    if (!lumaLiveConnection) return;
+    let cancelled=false;
+    const poll=async()=>{
+      try{
+        const state=await readLumaLiveState(lumaLiveConnection);
+        if(cancelled)return;
+        const positionMs=lumaLivePositionMs(state);
+        const previousPosition=lumaLiveLastPositionRef.current;
+        const previousPlaying=externalTransportRunningRef.current;
+        lumaLiveLastPositionRef.current=positionMs;
+        setLumaLiveState(state);
+        connectionManagerRef.current!.upsert({
+          id:'lumalive',kind:'lumalive',name:'LumaLive',status:'connected',
+          capabilities:['transport','song-recall','performance'],lastSeenAt:Date.now(),lastError:'',
+          detail:[state.currentSongTitle,state.currentSectionName].filter(Boolean).join(' · ') || `v${lumaLiveConnection.version || 'connected'}`
+        });
+        connectionManagerRef.current!.upsert({
+          id:'ableton',kind:'ableton',name:'Ableton Live',status:state.bridgeConnected?'connected':'degraded',
+          capabilities:['transport','tempo','song-position'],lastSeenAt:state.bridgeConnected?Date.now():null,
+          lastError:state.bridgeConnected?'':'LumaLive is running but its Ableton adapter is offline.',
+          detail:state.bridgeConnected?`${state.tempo.toFixed(1)} BPM · ${state.playing?'Playing':'Stopped'}`:'Open Ableton with the Luma Live Max adapter'
+        });
+        refreshConnectionRecords();
+
+        const result=applySharedTransport({
+          source:'lumalive',
+          playing:state.playing,
+          positionMs,
+          bpm:state.tempo,
+          claim:state.playing,
+          release:!state.playing
+        });
+        if(!result.accepted)return;
+
+        if(externalTrack.armed && externalTrackRecording){
+          const lightingPositionMs=applyLightingOffset(positionMs,externalTrack.lightingOffsetMs);
+          const jumped=Math.abs(positionMs-previousPosition)>500;
+          const wrongTake=playingRecordingIdRef.current!==externalTrackRecording.id;
+          if(state.playing && (!previousPlaying || jumped || wrongTake)){
+            playShowRecording(externalTrackRecording,{external:true,positionMs:lightingPositionMs});
+          }else if(!state.playing && recordingPlaybackExternalRef.current){
+            stopRecordedShowPlayback(false);
+          }
+        }
+      }catch(error){
+        if(cancelled)return;
+        const message=error instanceof Error?error.message:String(error);
+        setLumaLiveError(message);
+        connectionManagerRef.current!.fail('lumalive',message,true);
+        connectionManagerRef.current!.disconnect('ableton','LumaLive state unavailable');
+        refreshConnectionRecords();
+      }
+    };
+    void poll();
+    const timer=window.setInterval(()=>void poll(),250);
+    return()=>{cancelled=true;window.clearInterval(timer);};
+  }, [lumaLiveConnection?.baseUrl,lumaLiveConnection?.token,externalTrack.armed,externalTrack.recordingId,externalTrack.lightingOffsetMs,externalTrackRecording?.id]);
 
   const [newProfileId, setNewProfileId] = useState(FIXTURE_LIBRARY[0].id);
   const [newModeId, setNewModeId] = useState(FIXTURE_LIBRARY[0].modes[0].id);
