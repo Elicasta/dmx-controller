@@ -5355,7 +5355,7 @@ export default function App() {
                 <button onClick={() => void scanStageVideoInputs()}>Scan NDI / Video Inputs</button>
                 {stageVideoInputError && <small className="stage-source-error">{stageVideoInputError}</small>}
                 {stageVideoInputPermissionBlocked && <button className="video-permission-action" onClick={() => void openVideoInputPrivacySettings()}>Open Camera Privacy Settings</button>}
-                <small>Use ProPresenter NDI output through an NDI virtual video input. The selected feed is rendered on this screen in the stage view and pop-out monitor.</small>
+                <small>Use ProPresenter NDI through NDI Webcam Input or another virtual camera/video-input bridge. LumaRig scans operating-system video inputs here, not raw NDI network sources.</small>
               </>}
               {selectedStageElement.mediaSource && ['ndi','timeline','image'].includes(selectedStageElement.mediaSource.kind) && <>
                 <div className="screen-framing-pair">
