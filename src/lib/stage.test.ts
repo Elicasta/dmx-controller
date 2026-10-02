@@ -41,6 +41,30 @@ describe('stage design helpers', () => {
     expect(isStageElement({ ...framed, mediaSource: { ...framed.mediaSource, offsetY: -1.1 } })).toBe(false);
   });
 
+  it('validates still image, color, and test-pattern screen sources', () => {
+    const screen = makeStageElement('led-screen', 0);
+    expect(isStageElement({
+      ...screen,
+      mediaSource: { kind: 'image', mediaId: 'asset-image-1', sourceName: 'Logo.png', fit: 'contain', scale: 1.2, offsetX: 0, offsetY: .1 }
+    })).toBe(true);
+    expect(isStageElement({
+      ...screen,
+      mediaSource: { kind: 'color', color: '#112233' }
+    })).toBe(true);
+    expect(isStageElement({
+      ...screen,
+      mediaSource: { kind: 'test-pattern', pattern: 'grid' }
+    })).toBe(true);
+    expect(isStageElement({
+      ...screen,
+      mediaSource: { kind: 'color', color: 'red' }
+    })).toBe(false);
+    expect(isStageElement({
+      ...screen,
+      mediaSource: { kind: 'test-pattern', pattern: 'unknown' }
+    })).toBe(false);
+  });
+
   it('creates independent warehouse instances', () => {
     const first = makeStageWarehouseElement('screen-16x9', 0);
     const second = makeStageWarehouseElement('screen-16x9', 1);

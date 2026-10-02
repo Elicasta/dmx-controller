@@ -19,7 +19,7 @@ import MediaLibraryPanel from './components/MediaLibraryPanel';
 import { buildSong, songsForShow, renameSong, storeSongMedia, readSongMedia, type SongRecord } from './lib/song-bank';
 import { waveformForBlob } from './lib/media-waveform';
 import { analyzeTempo, correctedDownbeat } from './lib/tempo-analysis';
-import { cancelPortableBackupRestore, collectMediaIds, commitPortableBackupRestore, countMediaIds, exportPortableBackup, exportPortablePackage, importPortableBackup, importPortablePackage, mediaNameForId, persistManagedMedia, readMediaAsset, type MediaAsset } from './lib/media-library';
+import { cancelPortableBackupRestore, collectMediaIds, commitPortableBackupRestore, countMediaIds, exportPortableBackup, exportPortablePackage, importPortableBackup, importPortablePackage, mediaNameForId, persistManagedMedia, readMediaAsset, readMediaLibrary, type MediaAsset } from './lib/media-library';
 import ResizableWorkspace from './components/ResizableWorkspace';
 import DraggablePanelDeck from './components/DraggablePanelDeck';
 import StageMonitor, { openStageWindow, useStagePublisher } from './components/StageMonitor';
@@ -1067,6 +1067,15 @@ export default function App() {
   const [stageVideoInputs, setStageVideoInputs] = useState<StageVideoInputOption[]>([]);
   const [stageVideoInputError, setStageVideoInputError] = useState('');
   const [stageVideoInputPermissionBlocked, setStageVideoInputPermissionBlocked] = useState(false);
+  const [screenImageAssets, setScreenImageAssets] = useState<MediaAsset[]>([]);
+  useEffect(() => {
+    let active = true;
+    void readMediaLibrary().then((library) => {
+      if (!active) return;
+      setScreenImageAssets(library.assets.filter((asset) => asset.kind === 'image' && !asset.missing));
+    }).catch(() => {});
+    return () => { active = false; };
+  }, []);
   const [stageMonitorOpen,setStageMonitorOpen]=useState(false);
   const [midiMapOpen,setMidiMapOpen]=useState(false);
   const [timelineShowId,setTimelineShowId]=useState('');
@@ -2873,7 +2882,6 @@ export default function App() {
       effectBpmRef.current = snapshot.bpm;
     }
 
-    // Live owns position while linked. LumaRig still owns cue, FX and DMX resolution.
     renderTimelineFrame(lightingPositionMs);
   }
 
@@ -2978,7 +2986,7 @@ export default function App() {
         setExternalTransportRunning(playing);
         externalTransportRunningRef.current = playing;
         if (!tempoLockedRef.current) { setEffectBpm(bpm); effectBpmRef.current = bpm; }
-      },
+      ,
       syncAbletonSnapshot: (snapshot) => applyAbletonRuntimeSnapshot(snapshot),
       syncAbletonTransport: (playing, currentBeat, bpm, beatsPerBar) => {
         const current = abletonSnapshotRef.current;
@@ -3847,6 +3855,56 @@ export default function App() {
   async function importScreenVideo(screenId:string,file:File) {
     if(!/\.mp4$/i.test(file.name)){setMessage('Choose an MP4 video file.');return;}
     await loadShowAudioFile(file);routeTimelineVideo(screenId);
+  }
+  async function refreshScreenImageAssets() {
+    const library = await readMediaLibrary();
+    setScreenImageAssets(library.assets.filter((asset) => asset.kind === 'image' && !asset.missing));
+  }
+
+  async function importScreenImage(screenId:string,file:File) {
+    if(!file.type.startsWith('image/') && !/\.(png|jpe?g|webp|gif|bmp|tiff?)$/i.test(file.name)) {
+      throw Error('Choose a still image file.');
+    }
+    const mediaId=crypto.randomUUID();
+    const asset=await persistManagedMedia(mediaId,file,file.name,null,'image');
+    if(!asset) throw Error('Still-image screen assets require the installed LumaRig desktop app.');
+    setScreenImageAssets(current=>[asset,...current.filter(item=>item.id!==asset.id)]);
+    setStageElements(current=>current.map(element=>{
+      if(element.id!==screenId || element.type!=='led-screen')return element;
+      const previous=element.mediaSource?.kind!=='none' ? element.mediaSource : undefined;
+      return {...element,mediaSource:{
+        kind:'image',
+        mediaId:asset.id,
+        sourceName:asset.name,
+        fit:previous?.fit ?? 'contain',
+        scale:previous?.scale ?? 1,
+        offsetX:previous?.offsetX ?? 0,
+        offsetY:previous?.offsetY ?? 0
+      }};
+    }));
+    setMessage(`${asset.name} added to the shared Media Library and routed to this screen.`);
+  }
+
+  function setScreenSourceKind(screenId:string,kind:'none'|'timeline'|'ndi'|'image'|'color'|'test-pattern') {
+    setStageElements(current=>current.map(element=>{
+      if(element.id!==screenId || element.type!=='led-screen')return element;
+      const previous=element.mediaSource?.kind!=='none' ? element.mediaSource : undefined;
+      const framing={
+        fit:previous?.fit ?? 'contain',
+        scale:previous?.scale ?? 1,
+        offsetX:previous?.offsetX ?? 0,
+        offsetY:previous?.offsetY ?? 0
+      };
+      if(kind==='timeline')return {...element,mediaSource:{kind:'timeline',sourceName:'Timeline video',...framing}};
+      if(kind==='ndi')return {...element,mediaSource:{kind:'ndi',sourceName:'ProPresenter',...framing}};
+      if(kind==='image'){
+        const asset=screenImageAssets[0];
+        return {...element,mediaSource:{kind:'image',mediaId:asset?.id ?? '',sourceName:asset?.name ?? 'Still image',...framing}};
+      }
+      if(kind==='color')return {...element,mediaSource:{kind:'color',color:element.color || '#000000'}};
+      if(kind==='test-pattern')return {...element,mediaSource:{kind:'test-pattern',pattern:'bars'}};
+      return {...element,mediaSource:{kind:'none'}};
+    }));
   }
   function loadStagePreset(presetId: StagePresetId) {
     const preset = instantiateStagePreset(presetId);
@@ -5389,15 +5447,22 @@ export default function App() {
             <label><span>Color</span><input className="inspector-color" type="color" value={selectedStageElement.color} onChange={(event) => updateStageElement(selectedStageElement.id, { color: event.target.value })} /></label>
             {selectedStageElement.type === 'led-screen' && <section className="screen-source-inspector">
               <header><span>SCREEN SOURCE</span><strong>Media / Timeline / NDI</strong></header>
-              <label><span>Source</span><select value={selectedStageElement.mediaSource?.kind ?? 'none'} onChange={(event) => {
-                const previous=selectedStageElement.mediaSource?.kind!=='none' ? selectedStageElement.mediaSource : undefined;
-                updateStageElement(selectedStageElement.id, { mediaSource: event.target.value === 'timeline'
-                  ? {kind:'timeline',sourceName:'Timeline video',fit:previous && 'fit' in previous ? previous.fit??'contain':'contain',scale:previous && 'scale' in previous ? previous.scale??1:1,offsetX:previous && 'offsetX' in previous ? previous.offsetX??0:0,offsetY:previous && 'offsetY' in previous ? previous.offsetY??0:0}
-                  : event.target.value === 'ndi'
-                    ? {kind:'ndi',sourceName:'ProPresenter',fit:previous && 'fit' in previous ? previous.fit??'contain':'contain',scale:previous && 'scale' in previous ? previous.scale??1:1,offsetX:previous && 'offsetX' in previous ? previous.offsetX??0:0,offsetY:previous && 'offsetY' in previous ? previous.offsetY??0:0}
-                    : {kind:'none'} });
-              }}><option value="none">Static color</option><option value="ndi">NDI / video input</option><option value="timeline">Timeline video</option></select></label>
+              <label><span>Source</span><select value={selectedStageElement.mediaSource?.kind ?? 'none'} onChange={(event)=>setScreenSourceKind(selectedStageElement.id,event.target.value as 'none'|'timeline'|'ndi'|'image'|'color'|'test-pattern')}>
+                <option value="none">Object / screen color</option>
+                <option value="color">Solid color source</option>
+                <option value="test-pattern">Test pattern</option>
+                <option value="image">Still image · Media Library</option>
+                <option value="ndi">NDI / video input</option>
+                <option value="timeline">Timeline video / MP4</option>
+              </select></label>
               <label>Import video to Timeline<input aria-label="Import screen video" type="file" accept="video/mp4,.mp4" onChange={e=>{const file=e.target.files?.[0];e.target.value='';if(file)void importScreenVideo(selectedStageElement.id,file).catch(error=>setMessage(String(error)));}} /></label>
+              {selectedStageElement.mediaSource?.kind==='color' && <label><span>Source Color</span><input className="inspector-color" type="color" value={selectedStageElement.mediaSource.color} onChange={event=>updateStageElement(selectedStageElement.id,{mediaSource:{...selectedStageElement.mediaSource!,kind:'color',color:event.target.value}})}/></label>}
+              {selectedStageElement.mediaSource?.kind==='test-pattern' && <label><span>Pattern</span><select value={selectedStageElement.mediaSource.pattern} onChange={event=>updateStageElement(selectedStageElement.id,{mediaSource:{...selectedStageElement.mediaSource!,kind:'test-pattern',pattern:event.target.value as 'bars'|'grid'|'checker'}})}><option value="bars">Color bars</option><option value="grid">Alignment grid</option><option value="checker">Checker</option></select></label>}
+              {selectedStageElement.mediaSource?.kind==='image' && <>
+                <label><span>Image Asset</span><select value={selectedStageElement.mediaSource.mediaId} onChange={event=>{const asset=screenImageAssets.find(item=>item.id===event.target.value);updateStageElement(selectedStageElement.id,{mediaSource:{...selectedStageElement.mediaSource!,kind:'image',mediaId:event.target.value,sourceName:asset?.name??'Still image'}})}}><option value="">Select Media Library image</option>{screenImageAssets.map(asset=><option key={asset.id} value={asset.id}>{asset.name}</option>)}</select></label>
+                <label className="file-button">Import Still Image<input aria-label="Import screen still image" type="file" accept="image/*,.png,.jpg,.jpeg,.webp,.gif,.bmp,.tif,.tiff" onChange={event=>{const file=event.target.files?.[0];event.target.value='';if(file)void importScreenImage(selectedStageElement.id,file).catch(error=>setMessage(String(error)));}}/></label>
+                <button onClick={()=>void refreshScreenImageAssets().catch(error=>setMessage(String(error)))}>Refresh Media Library Images</button>
+              </>}
               {selectedStageElement.mediaSource?.kind === 'ndi' && <>
                 <label><span>Input</span><select value={selectedStageElement.mediaSource.deviceId ?? ''} onChange={(event) => {
                   const input = stageVideoInputs.find((item) => item.deviceId === event.target.value);
@@ -5705,21 +5770,27 @@ export default function App() {
               </div>
               <label><span>Color</span><input className="inspector-color" type="color" value={selectedStageElement.color} onChange={(event) => updateStageElement(selectedStageElement.id, { color: event.target.value })}/></label>
               {selectedStageElement.type === 'led-screen' && <div className="visualizer-screen-route">
-                <label><span>Screen Source</span><select value={selectedStageElement.mediaSource?.kind ?? 'none'} onChange={(event) => {
-                  const previous=selectedStageElement.mediaSource?.kind!=='none' ? selectedStageElement.mediaSource : undefined;
-                  updateStageElement(selectedStageElement.id, { mediaSource: event.target.value === 'timeline'
-                    ? {kind:'timeline',sourceName:'Timeline video',fit:previous?.fit??'contain',scale:previous?.scale??1,offsetX:previous?.offsetX??0,offsetY:previous?.offsetY??0}
-                    : event.target.value === 'ndi'
-                      ? {kind:'ndi',sourceName:'ProPresenter',fit:previous?.fit??'contain',scale:previous?.scale??1,offsetX:previous?.offsetX??0,offsetY:previous?.offsetY??0}
-                      : {kind:'none'} });
-                }}><option value="none">Static</option><option value="ndi">NDI / Video Input</option><option value="timeline">Timeline video</option></select></label>
+                <label><span>Screen Source</span><select value={selectedStageElement.mediaSource?.kind ?? 'none'} onChange={(event)=>setScreenSourceKind(selectedStageElement.id,event.target.value as 'none'|'timeline'|'ndi'|'image'|'color'|'test-pattern')}>
+                  <option value="none">Object / screen color</option>
+                  <option value="color">Solid color</option>
+                  <option value="test-pattern">Test pattern</option>
+                  <option value="image">Still image</option>
+                  <option value="ndi">NDI / Video Input</option>
+                  <option value="timeline">Timeline video / MP4</option>
+                </select></label>
                 <label>Import video to Timeline<input aria-label="Import screen video" type="file" accept="video/mp4,.mp4" onChange={e=>{const file=e.target.files?.[0];e.target.value='';if(file)void importScreenVideo(selectedStageElement.id,file).catch(error=>setMessage(String(error)));}} /></label>
+                {selectedStageElement.mediaSource?.kind==='color' && <label><span>Source Color</span><input type="color" value={selectedStageElement.mediaSource.color} onChange={event=>updateStageElement(selectedStageElement.id,{mediaSource:{...selectedStageElement.mediaSource!,kind:'color',color:event.target.value}})}/></label>}
+                {selectedStageElement.mediaSource?.kind==='test-pattern' && <label><span>Pattern</span><select value={selectedStageElement.mediaSource.pattern} onChange={event=>updateStageElement(selectedStageElement.id,{mediaSource:{...selectedStageElement.mediaSource!,kind:'test-pattern',pattern:event.target.value as 'bars'|'grid'|'checker'}})}><option value="bars">Color bars</option><option value="grid">Alignment grid</option><option value="checker">Checker</option></select></label>}
+                {selectedStageElement.mediaSource?.kind==='image' && <>
+                  <label><span>Image Asset</span><select value={selectedStageElement.mediaSource.mediaId} onChange={event=>{const asset=screenImageAssets.find(item=>item.id===event.target.value);updateStageElement(selectedStageElement.id,{mediaSource:{...selectedStageElement.mediaSource!,kind:'image',mediaId:event.target.value,sourceName:asset?.name??'Still image'}})}}><option value="">Select Media Library image</option>{screenImageAssets.map(asset=><option key={asset.id} value={asset.id}>{asset.name}</option>)}</select></label>
+                  <label className="file-button">Import Still Image<input aria-label="Import visualizer screen still image" type="file" accept="image/*,.png,.jpg,.jpeg,.webp,.gif,.bmp,.tif,.tiff" onChange={event=>{const file=event.target.files?.[0];event.target.value='';if(file)void importScreenImage(selectedStageElement.id,file).catch(error=>setMessage(String(error)));}}/></label>
+                </>}
                 {selectedStageElement.mediaSource?.kind === 'ndi' && <label><span>Input</span><select value={selectedStageElement.mediaSource.deviceId ?? ''} onChange={(event) => {
                   const input=stageVideoInputs.find((item)=>item.deviceId===event.target.value);
                   const source=selectedStageElement.mediaSource?.kind==='ndi' ? selectedStageElement.mediaSource : {kind:'ndi' as const};
                   updateStageElement(selectedStageElement.id,{mediaSource:{...source,deviceId:event.target.value||undefined,sourceName:input?.label||'ProPresenter'}});
                 }}><option value="">Select input</option>{stageVideoInputs.map((input)=><option key={input.deviceId} value={input.deviceId}>{input.label}</option>)}</select></label>}
-                {selectedStageElement.mediaSource && selectedStageElement.mediaSource.kind !== 'none' && <>
+                {selectedStageElement.mediaSource && ['ndi','timeline','image'].includes(selectedStageElement.mediaSource.kind) && <>
                   <div className="screen-framing-pair">
                     <label><span>Fit</span><select value={selectedStageElement.mediaSource.fit ?? 'contain'} onChange={event=>updateScreenFraming(selectedStageElement.id,{fit:event.target.value as 'contain'|'cover'})}><option value="contain">Contain</option><option value="cover">Cover</option></select></label>
                     <label><span>Size · {Math.round((selectedStageElement.mediaSource.scale ?? 1)*100)}%</span><input aria-label="Screen video size" type="range" min="25" max="300" step="1" value={(selectedStageElement.mediaSource.scale ?? 1)*100} onChange={event=>updateScreenFraming(selectedStageElement.id,{scale:Number(event.target.value)/100})}/></label>
@@ -5769,7 +5840,7 @@ export default function App() {
           const next = typeof action === 'function' ? action(editing) : action;
           return {...current,creatorSections:creatorSong ? [...all.filter(section => section.song !== creatorSong.name), ...next.map(section => ({...section,song:creatorSong.name}))] : next};
         })} groups={showFile.groups ?? []} fixtures={patch} masterBpm={masterTempoBpm} onMasterBpmChange={setMasterTempo} tempoLocked={tempoLocked} onTempoLockChange={changeTempoLock} onBuild={buildCreatorSections} onPreview={previewCreatorSection} onStop={() => { stopFade(); stopEffect(); }} onTimeline={() => { if (creatorSong) void selectBankSong(creatorSong, 'timeline'); else setShowMode('timeline'); }} onEditFx={(effect) => { setFxEditor(effect); setWorkspace('create'); setProgramMode('fx'); }}/></Suspense>}
-        {showMode === 'timeline' && <div className="timeline-workspace"><label className="timeline-show-select">Timeline show <select aria-label="Timeline show" value={timelineShowId} onChange={e=>{window.dispatchEvent(new Event('lumarig-stop-timeline'));stopTimeline();const item=showFile.timelineShows?.find(t=>t.id===e.target.value);const song=songBank.find(s=>s.name===item?.name);if(song)void selectBankSong(song,'timeline');else{++mediaLoadToken.current;setActiveSongId('');setTimelineShowId(e.target.value);showTrackAudioRef.current?.pause();}}}><option value="">Current show</option>{(showFile.timelineShows??[]).map(item=><option key={item.id} value={item.id}>{item.name}</option>)}</select></label><Suspense fallback={<p>Loading Timeline…</p>}><ShowTimelineEditor onRecord={recordIntoTimeline} keepMediaOnRelease={()=>Boolean(timelineRecordingOrigin.current && showRecordingActiveRef.current)} onExportVideo={exportTimelineVideo} onImportVideoClip={importTimelineVideoClip} onPlayingChange={changeTimelinePlaying} fxRecipes={fxLibrary(customEffects)} screens={stageElements.filter(e=>e.type==='led-screen')} displayId={stageElements.find(e=>e.mediaSource?.kind==='timeline')?.id ?? ''} onDisplayChange={routeTimelineVideo} selectedClipId={activeTimelineClipId} positionBar={timelinePositionBar} onSelectClip={selectTimelineClip} onRelease={releaseTimeline} onReset={() => { commitUniverse(makeUniverse()); timelinePositionRef.current=0; setTimelinePositionBar(0); activeTimelineClipRef.current=''; setActiveTimelineClipId(''); setActiveCueId(null); setActiveSectionId(''); }} key={timelineShowId} timeline={editingTimeline} cues={showFile.cues.filter(c => !timelineShowId || c.trackName === showFile.timelineShows?.find(t => t.id === timelineShowId)?.name)} audioRef={showTrackAudioRef} audioUrl={editingTimeline.audioName===showTrackName?showTrackUrl:''} audioName={editingTimeline.audioName??''} audioDurationMs={editingTimeline.audioName===showTrackName?showTrackDurationMs:0} masterBpm={masterTempoBpm} onMasterBpmChange={setMasterTempo} tempoLocked={tempoLocked} onTempoLockChange={changeTempoLock} tempoAnalysis={creatorSong?.tempoAnalysis} onDownbeatChange={correctActiveSongDownbeat} onOpenStepEditor={openTimelineStepEditor} onLoadAudio={loadShowAudioFile} onChange={updateEditingTimeline} onAddFx={addTimelineFx} fxTargetName={selectedGroup?.name??'All patched fixtures'} onFrame={renderTimelineFrame} onStop={stopTimeline} onCreator={() => changeShowMode('creator')}/></Suspense></div>}
+        {showMode === 'timeline' && <div className="timeline-workspace"><label className="timeline-show-select">Timeline show <select aria-label="Timeline show" value={timelineShowId} onChange={e=>{window.dispatchEvent(new Event('lumarig-stop-timeline'));stopTimeline();const item=showFile.timelineShows?.find(t=>t.id===e.target.value);const song=songBank.find(s=>s.name===item?.name);if(song)void selectBankSong(song,'timeline');else{++mediaLoadToken.current;setActiveSongId('');setTimelineShowId(e.target.value);showTrackAudioRef.current?.pause();}}}><option value="">Current show</option>{(showFile.timelineShows??[]).map(item=><option key={item.id} value={item.id}>{item.name}</option>)}</select></label><Suspense fallback={<p>Loading Timeline…</p>}><ShowTimelineEditor externalSourceLabel={abletonSnapshot ? 'Ableton Live' : undefined} externalMarkers={abletonSnapshot ? abletonTimelineMarkers(abletonSnapshot) : undefined} onRecord={recordIntoTimeline} keepMediaOnRelease={()=>Boolean(timelineRecordingOrigin.current && showRecordingActiveRef.current)} onExportVideo={exportTimelineVideo} onImportVideoClip={importTimelineVideoClip} onPlayingChange={changeTimelinePlaying} fxRecipes={fxLibrary(customEffects)} screens={stageElements.filter(e=>e.type==='led-screen')} displayId={stageElements.find(e=>e.mediaSource?.kind==='timeline')?.id ?? ''} onDisplayChange={routeTimelineVideo} selectedClipId={activeTimelineClipId} positionBar={timelinePositionBar} onSelectClip={selectTimelineClip} onRelease={releaseTimeline} onReset={() => { commitUniverse(makeUniverse()); timelinePositionRef.current=0; setTimelinePositionBar(0); activeTimelineClipRef.current=''; setActiveTimelineClipId(''); setActiveCueId(null); setActiveSectionId(''); }} key={timelineShowId} timeline={editingTimeline} cues={showFile.cues.filter(c => !timelineShowId || c.trackName === showFile.timelineShows?.find(t => t.id === timelineShowId)?.name)} audioRef={showTrackAudioRef} audioUrl={editingTimeline.audioName===showTrackName?showTrackUrl:''} audioName={editingTimeline.audioName??''} audioDurationMs={editingTimeline.audioName===showTrackName?showTrackDurationMs:0} masterBpm={masterTempoBpm} onMasterBpmChange={setMasterTempo} tempoLocked={tempoLocked} onTempoLockChange={changeTempoLock} tempoAnalysis={creatorSong?.tempoAnalysis} onDownbeatChange={correctActiveSongDownbeat} onOpenStepEditor={openTimelineStepEditor} onLoadAudio={loadShowAudioFile} onChange={updateEditingTimeline} onAddFx={addTimelineFx} fxTargetName={selectedGroup?.name??'All patched fixtures'} onFrame={renderTimelineFrame} onStop={stopTimeline} onCreator={() => changeShowMode('creator')}/></Suspense></div>}
 
         {showMode === 'tracks' && <div className="tracks-console tracks-console-v3">
           <section className="console-panel track-source"><header><div><span>LOCAL AUDIO TRACK</span><h2>{showTrackName || 'No track loaded'}</h2></div><label className="file-button"><input type="file" accept="audio/*" onChange={loadShowTrack}/>{showTrackName?'Change Track':'Load Track'}</label></header><div className="track-timeline"><span>{formatShowTime(showTrackPositionMs)}</span><input type="range" min="0" max={Math.max(1,showTrackDurationMs)} value={Math.min(showTrackPositionMs,Math.max(1,showTrackDurationMs))} onChange={(event)=>{const next=Number(event.target.value);if(showTrackAudioRef.current)showTrackAudioRef.current.currentTime=next/1000;setShowTrackPositionMs(next);}}/><span>{formatShowTime(showTrackDurationMs)}</span></div><div className="track-actions"><button onClick={toggleShowTrackPreview}>Play / Pause</button><button onClick={()=>setShowMode('timeline')}>Open Timeline</button></div></section>
@@ -5797,7 +5868,7 @@ export default function App() {
         </div>}
 
         {showMode === 'sync' && <div className="show-sync-v3">
-          <section className="console-panel sync-status-card ableton-sync-card"><header><div><span>ABLETON LIVE</span><h2>{abletonSnapshot?.setName || 'Locator Bridge'}</h2></div><b className={abletonSnapshot && studioBridgeStatus.connectedClients>0?'healthy':''}>{abletonSnapshot && studioBridgeStatus.connectedClients>0?'LINKED':'WAITING'}</b></header><div className="sync-metrics"><span><small>LOCATORS</small><strong>{abletonSnapshot?.locators.length ?? 0}</strong></span><span><small>SECTION</small><strong>{abletonSnapshot ? activeAbletonLocator(abletonSnapshot)?.name || 'Before first locator' : '—'}</strong></span><span><small>POSITION</small><strong>{abletonSnapshot ? `B${abletonSnapshot.currentBeat.toFixed(1)}` : '—'}</strong></span><span><small>BPM</small><strong>{abletonSnapshot?.bpm ?? '—'}</strong></span></div><p>Arrangement locators are mirrored onto LumaRig Timeline. Live supplies musical position; LumaRig resolves the lighting show.</p></section>
+          <section className="console-panel sync-status-card ableton-sync-card"><header><div><span>ABLETON LIVE</span><h2>{abletonSnapshot?.setName || 'Locator Bridge'}</h2></div><b className={abletonSnapshot && studioBridgeStatus.connectedClients>0?'healthy':''}>{abletonSnapshot && studioBridgeStatus.connectedClients>0?'LINKED':'WAITING'}</b></header><div className="sync-metrics"><span><small>LOCATORS</small><strong>{abletonSnapshot?.locators.length ?? 0}</strong></span><span><small>SECTION</small><strong>{abletonSnapshot ? (activeAbletonLocator(abletonSnapshot)?.name ?? 'Pre-roll') : '—'}</strong></span><span><small>POSITION</small><strong>{abletonSnapshot ? `B${abletonSnapshot.currentBeat.toFixed(1)}` : '—'}</strong></span><span><small>BPM</small><strong>{abletonSnapshot?.bpm ?? '—'}</strong></span></div><p>Arrangement locators are mirrored onto LumaRig Timeline. Live supplies musical position; LumaRig resolves the lighting show.</p></section>
           <section className="console-panel sync-status-card"><header><div><span>LUMASTUDIO</span><h2>Transport Authority</h2></div><b className={studioBridgeStatus.connectedClients>0?'healthy':''}>{studioBridgeStatus.connectedClients>0?'CONNECTED':studioBridgeStatus.listening?'READY':'OFFLINE'}</b></header><div className="sync-metrics"><span><small>PORT</small><strong>{studioBridgeStatus.port}</strong></span><span><small>CLIENTS</small><strong>{studioBridgeStatus.connectedClients}</strong></span><span><small>TRANSPORT</small><strong>{externalTransportRunning?'FOLLOWING':'LOCAL'}</strong></span><span><small>AUTHORITY</small><strong>RIG LIGHTING</strong></span></div><p>Studio controls transport and song position. LumaRig keeps authority over cue execution, FX and DMX output.</p></section>
           <section className="console-panel sync-status-card"><header><div><span>MIDI</span><h2>Clock + Transport</h2></div><b className={midiStatus.connected?'healthy':''}>{midiStatus.connected?'CONNECTED':'OFFLINE'}</b></header><div className="sync-metrics"><span><small>INPUT</small><strong>{midiStatus.input_name || '—'}</strong></span><span><small>CLOCK</small><strong>{midiClockSeen?'SEEN':'WAITING'}</strong></span><span><small>BPM</small><strong>{midiBpm || effectBpm}</strong></span><span><small>MESSAGES</small><strong>{midiStatus.messages_received}</strong></span></div><button onClick={()=>{setWorkspace('build');setSetupView('settings');}}>Open Connections</button></section>
           <section className="console-panel sync-status-card"><header><div><span>LUMAVIZ</span><h2>Preview + Shared Show</h2></div><b className={directStatus.clients>0?'healthy':''}>{directStatus.clients>0?'CONNECTED':directStatus.listening?'READY':'OFFLINE'}</b></header><div className="sync-metrics"><span><small>DIRECT PORT</small><strong>{directStatus.port}</strong></span><span><small>CLIENTS</small><strong>{directStatus.clients}</strong></span><span><small>FRAMES</small><strong>{directStatus.framesSent}</strong></span><span><small>LOCATION</small><strong>{activeLocation?.name || '—'}</strong></span></div></section>

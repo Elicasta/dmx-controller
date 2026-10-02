@@ -1,4 +1,5 @@
 import { followTimelineVideo } from '../lib/timeline-video';
+import { readNativeMediaBlob } from '../lib/media-library';
 import { useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent, type WheelEvent as ReactWheelEvent } from 'react';
 import { fixtureGeometryState } from '../core/fixture-geometry';
 import { intersectBeamWithStage, type BeamSurface } from '../core/beam-intersection';
@@ -20,7 +21,7 @@ type CameraSelection = VisualizerCameraPreset | 'custom';
 
 type MediaEntry = {
   deviceId: string;
-  video: HTMLVideoElement;
+  source: HTMLVideoElement | HTMLImageElement;
   stream?: MediaStream;
   dispose?: ()=>void;
   visible?: boolean;
@@ -747,6 +748,58 @@ function drawFixtureBodies(ctx: CanvasRenderingContext2D, snapshot: VisualizerSn
   });
 }
 
+function mediaEntryReady(entry: MediaEntry | undefined) {
+  if (!entry || entry.visible === false) return false;
+  if (entry.source instanceof HTMLVideoElement) {
+    return entry.source.readyState >= 2 && entry.source.videoWidth > 0;
+  }
+  return entry.source.complete && entry.source.naturalWidth > 0;
+}
+
+function drawScreenTestPattern(
+  ctx: CanvasRenderingContext2D,
+  points: readonly Projected[],
+  pattern: 'bars' | 'grid' | 'checker'
+) {
+  const minX=Math.min(...points.map(point=>point.x));
+  const maxX=Math.max(...points.map(point=>point.x));
+  const minY=Math.min(...points.map(point=>point.y));
+  const maxY=Math.max(...points.map(point=>point.y));
+  const width=Math.max(1,maxX-minX),height=Math.max(1,maxY-minY);
+  ctx.save();
+  polygon(ctx,points);
+  ctx.clip();
+
+  if(pattern==='bars'){
+    const colors=['#d8d8d8','#d8d84a','#49d8d8','#49d849','#d849d8','#d84949','#4949d8'];
+    colors.forEach((color,index)=>{
+      ctx.fillStyle=color;
+      ctx.fillRect(minX+width*index/colors.length,minY,width/colors.length+1,height);
+    });
+  }else if(pattern==='checker'){
+    const cells=8;
+    const size=Math.max(4,width/cells);
+    for(let y=minY,row=0;y<maxY;y+=size,row++){
+      for(let x=minX,col=0;x<maxX;x+=size,col++){
+        ctx.fillStyle=(row+col)%2===0?'#e8edf0':'#11161a';
+        ctx.fillRect(x,y,size+1,size+1);
+      }
+    }
+  }else{
+    ctx.fillStyle='#101820';
+    ctx.fillRect(minX,minY,width,height);
+    ctx.strokeStyle='rgba(110,231,255,.75)';
+    ctx.lineWidth=1;
+    const step=Math.max(10,Math.min(width,height)/8);
+    for(let x=minX;x<=maxX;x+=step){ctx.beginPath();ctx.moveTo(x,minY);ctx.lineTo(x,maxY);ctx.stroke();}
+    for(let y=minY;y<=maxY;y+=step){ctx.beginPath();ctx.moveTo(minX,y);ctx.lineTo(maxX,y);ctx.stroke();}
+    ctx.strokeStyle='rgba(255,255,255,.65)';
+    ctx.beginPath();ctx.moveTo((minX+maxX)/2,minY);ctx.lineTo((minX+maxX)/2,maxY);ctx.stroke();
+    ctx.beginPath();ctx.moveTo(minX,(minY+maxY)/2);ctx.lineTo(maxX,(minY+maxY)/2);ctx.stroke();
+  }
+  ctx.restore();
+}
+
 function drawFaces(
   ctx: CanvasRenderingContext2D,
   faces: Face[],
@@ -764,13 +817,20 @@ function drawFaces(
     ctx.stroke();
 
     if (face.screenElement) {
+      const screenSource=face.screenElement.mediaSource;
       const entry = media.get(face.screenElement.id);
-      if (entry?.visible !== false && entry?.video.readyState && entry.video.videoWidth > 0) {
-        const framed=framedScreenQuad(entry.video,face.screenElement,face.points);
+      if (screenSource?.kind==='color') {
+        polygon(ctx,face.points);
+        ctx.fillStyle=screenSource.color;
+        ctx.fill();
+      } else if (screenSource?.kind==='test-pattern') {
+        drawScreenTestPattern(ctx,face.points,screenSource.pattern);
+      } else if (mediaEntryReady(entry)) {
+        const framed=framedScreenQuad(entry!.source,face.screenElement,face.points);
         ctx.save();
         polygon(ctx, face.points);
         ctx.clip();
-        drawImageQuad(ctx, entry.video, framed);
+        drawImageQuad(ctx, entry!.source, framed);
         ctx.restore();
         polygon(ctx, face.points);
         ctx.strokeStyle = 'rgba(228,239,244,.58)';
@@ -778,7 +838,7 @@ function drawFaces(
       } else {
         polygon(ctx, face.points);
         const glow = quality !== 'fast' ? .32 : .18;
-        ctx.fillStyle = face.screenElement.mediaSource?.kind==='timeline' ? '#000' : `rgba(210,230,240,${glow})`;
+        ctx.fillStyle = screenSource?.kind==='timeline' || screenSource?.kind==='image' ? '#000' : `rgba(210,230,240,${glow})`;
         ctx.fill();
       }
     }
@@ -1067,60 +1127,75 @@ export default function Visualizer3D({
     const desired = new Map<string, string>();
     for (const element of snapshot.elements) {
       const source = element.mediaSource;
-      if(element.type==='led-screen' && source?.kind==='timeline')desired.set(element.id,'timeline');
-      if (element.type === 'led-screen' && source?.kind === 'ndi' && source.deviceId) {
-        desired.set(element.id, source.deviceId);
-      }
+      if (element.type !== 'led-screen' || !source) continue;
+      if (source.kind === 'timeline') desired.set(element.id, 'timeline');
+      if (source.kind === 'ndi' && source.deviceId) desired.set(element.id, 'ndi:' + source.deviceId);
+      if (source.kind === 'image' && source.mediaId) desired.set(element.id, 'image:' + source.mediaId);
     }
 
     for (const [id, entry] of mediaRef.current) {
       if (desired.get(id) === entry.deviceId) continue;
       entry.dispose?.();
-      entry.stream?.getTracks().forEach((track) => track.stop());
-      entry.video.srcObject = null;
+      entry.stream?.getTracks().forEach(track => track.stop());
+      if (entry.source instanceof HTMLVideoElement) entry.source.srcObject = null;
       mediaRef.current.delete(id);
     }
 
     let cancelled=false;
 
-    for (const [id, deviceId] of desired) {
+    for (const [id, sourceKey] of desired) {
       if (mediaRef.current.has(id)) continue;
-      if(deviceId==='timeline'){
+      if (sourceKey === 'timeline') {
         const video=document.createElement('video');
-        const entry:MediaEntry={deviceId,video,visible:false};
+        const entry:MediaEntry={deviceId:sourceKey,source:video,visible:false};
         entry.dispose=followTimelineVideo(video,visible=>{entry.visible=visible;});
-        mediaRef.current.set(id,entry);setMediaRevision(v=>v+1);continue;
+        mediaRef.current.set(id,entry);
+        setMediaRevision(value=>value+1);
+        continue;
       }
-      if(!navigator.mediaDevices?.getUserMedia)continue;
+      if (sourceKey.startsWith('image:')) {
+        const mediaId=sourceKey.slice('image:'.length);
+        void readNativeMediaBlob(mediaId).then(blob=>{
+          if(cancelled || !blob)return;
+          const url=URL.createObjectURL(blob);
+          const image=new Image();
+          image.onload=()=>{
+            if(cancelled){URL.revokeObjectURL(url);return;}
+            mediaRef.current.set(id,{
+              deviceId:sourceKey,
+              source:image,
+              dispose:()=>URL.revokeObjectURL(url)
+            });
+            setMediaRevision(value=>value+1);
+          };
+          image.onerror=()=>{URL.revokeObjectURL(url);setMediaRevision(value=>value+1);};
+          image.src=url;
+        }).catch(()=>setMediaRevision(value=>value+1));
+        continue;
+      }
+      if(!sourceKey.startsWith('ndi:') || !navigator.mediaDevices?.getUserMedia)continue;
+      const deviceId=sourceKey.slice('ndi:'.length);
       void navigator.mediaDevices.getUserMedia({
         video: { deviceId: { exact: deviceId } },
         audio: false
-      }).then(async (stream) => {
+      }).then(async stream => {
         if(cancelled){stream.getTracks().forEach(track=>track.stop());return;}
-        const video = document.createElement('video');
-        video.autoplay = true;
-        video.muted = true;
-        video.playsInline = true;
-        video.srcObject = stream;
-        try { await video.play(); } catch { /* redraw will show the screen fallback */ }
+        const video=document.createElement('video');
+        video.autoplay=true;video.muted=true;video.playsInline=true;video.srcObject=stream;
+        try{await video.play();}catch{}
         if(cancelled){stream.getTracks().forEach(track=>track.stop());video.srcObject=null;return;}
-        mediaRef.current.set(id, { deviceId, video, stream });
-        setMediaRevision((value) => value + 1);
-      }).catch(() => {
-        setMediaRevision((value) => value + 1);
-      });
+        mediaRef.current.set(id,{deviceId:sourceKey,source:video,stream});
+        setMediaRevision(value=>value+1);
+      }).catch(()=>setMediaRevision(value=>value+1));
     }
 
-    return () => {
-      cancelled=true;
-    };
+    return () => { cancelled=true; };
   }, [snapshot.elements]);
-
   useEffect(() => () => {
     for (const entry of mediaRef.current.values()) {
       entry.dispose?.();
       entry.stream?.getTracks().forEach((track) => track.stop());
-      entry.video.srcObject = null;
+      if (entry.source instanceof HTMLVideoElement) entry.source.srcObject = null;
     }
     mediaRef.current.clear();
   }, []);
