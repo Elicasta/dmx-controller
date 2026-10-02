@@ -7,7 +7,7 @@ This folder is the Max for Live side of the LumaRig Ableton integration.
 - Reads Ableton Arrangement locators through LiveAPI.
 - Mirrors locator names and beat positions to LumaRig.
 - Sends Live play/stop, current beat, tempo and time-signature numerator.
-- Uses LumaRig's existing semantic WebSocket bridge on `127.0.0.1:47777`.
+- Uses LumaRig's existing semantic WebSocket bridge on `ws://127.0.0.1:47777/studio`.
 - Never sends DMX. LumaRig remains the lighting authority.
 
 ## Install for development
@@ -23,9 +23,11 @@ This folder is the Max for Live side of the LumaRig Ableton integration.
 
 ## Timing
 
-The Max device sends exact musical position as a drift correction. For the tightest live timing, also route Ableton MIDI Clock/Transport into LumaRig's MIDI input. LumaRig already understands MIDI Clock, Start, Continue, Stop and Song Position.
+The Max bridge is the Ableton transport authority while it is actively playing. It sends exact musical position at 20 Hz and LumaRig runs those updates through the shared transport engine before rendering Timeline output.
 
-The Max bridge carries the information MIDI cannot express cleanly: locator names, locator beat positions, Live Set identity and musical transport metadata.
+MIDI Clock remains available as a fallback DAW transport, but it should not be armed as a second authority at the same time. The transport engine prevents Ableton, MIDI, Timeline and Studio from fighting over the playhead.
+
+The Max bridge also carries the information MIDI cannot express cleanly: locator names, locator beat positions, Live Set identity and musical transport metadata.
 
 ## Failure behavior
 
