@@ -198,6 +198,12 @@ fn file_modified_ms(path: &Path) -> u64 {
 
 fn read_registry(app: &AppHandle) -> Result<MediaRegistry, String> {
     let path = registry_path(app)?;
+    let root = library_root(app)?;
+    let backup = root.join("registry.json.bak");
+    if !path.exists() && backup.exists() {
+        fs::rename(&backup, &path)
+            .map_err(|error| io_error("Media registry recovery failed", error))?;
+    }
     if !path.exists() {
         return Ok(MediaRegistry::default());
     }
@@ -296,6 +302,19 @@ fn allow_asset(app: &AppHandle, path: &Path) -> Result<(), String> {
 }
 
 pub fn restore_asset_scopes(app: &AppHandle) -> Result<(), String> {
+    let root = library_root(app)?;
+    // Incomplete writes/restores are never authoritative. Clear them after a
+    // restart so a crash cannot leave gigabytes of orphaned staging data.
+    for stale in [root.join(".incoming"), root.join(".restore")] {
+        if stale.exists() {
+            let _ = fs::remove_dir_all(stale);
+        }
+    }
+    let temp = root.join("registry.json.tmp");
+    if temp.exists() {
+        let _ = fs::remove_file(temp);
+    }
+
     let registry = read_registry(app)?;
     for asset in registry.assets {
         let path = PathBuf::from(asset.path);
@@ -379,6 +398,9 @@ pub fn media_rename_folder(
     let clean = name.trim();
     if clean.is_empty() {
         return Err("Folder name is required.".to_string());
+    }
+    if clean.chars().count() > 120 {
+        return Err("Folder names are limited to 120 characters.".to_string());
     }
     let _guard = state.lock.lock().map_err(|_| "Media library lock failed.".to_string())?;
     let mut registry = read_registry(&app)?;
