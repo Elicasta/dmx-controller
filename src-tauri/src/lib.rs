@@ -30,6 +30,32 @@ fn toggle_media_output_fullscreen(app: tauri::AppHandle) -> Result<(), String> {
     window.set_fullscreen(!fullscreen).map_err(|e| e.to_string())
 }
 #[tauri::command]
+fn open_video_input_privacy_settings() -> Result<(), String> {
+    #[cfg(target_os = "macos")]
+    {
+        let status = std::process::Command::new("open")
+            .arg("x-apple.systempreferences:com.apple.preference.security?Privacy_Camera")
+            .status()
+            .map_err(|error| error.to_string())?;
+        return if status.success() { Ok(()) } else { Err("Could not open macOS Camera privacy settings.".into()) };
+    }
+
+    #[cfg(target_os = "windows")]
+    {
+        let status = std::process::Command::new("cmd")
+            .args(["/C", "start", "", "ms-settings:privacy-webcam"])
+            .status()
+            .map_err(|error| error.to_string())?;
+        return if status.success() { Ok(()) } else { Err("Could not open Windows Camera privacy settings.".into()) };
+    }
+
+    #[cfg(not(any(target_os = "macos", target_os = "windows")))]
+    {
+        Err("Open your system camera/privacy settings and allow LumaRig to access video inputs.".into())
+    }
+}
+
+#[tauri::command]
 fn open_stage_monitor(app: tauri::AppHandle) -> Result<(), String> {
     if let Some(window) = app.get_webview_window("stage-monitor") {
         return window.set_focus().map_err(|e| e.to_string());
@@ -144,6 +170,7 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             open_stage_monitor,
+            open_video_input_privacy_settings,
             media_library::media_library_snapshot,
             media_library::media_create_folder,
             media_library::media_rename_folder,
