@@ -1,6 +1,8 @@
 import { createClient, type SupabaseClient } from '@supabase/supabase-js';
 
 const clients = new Map<string, SupabaseClient>();
+const DEVICE_ID_KEY = 'lumarig.device-id.v1';
+let fallbackDeviceId = '';
 
 export function lumaSupabaseStorageKey(url: string) {
   return `dmx-controller-relay-${new URL(url).hostname.replace(/[^a-z0-9]/gi, '-')}`;
@@ -35,6 +37,39 @@ export function desktopPlatformId() {
   return classifyDesktopPlatform(`${navigator.platform || ''} ${navigator.userAgent || ''}`);
 }
 
+function randomUuid() {
+  if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') return crypto.randomUUID();
+  return '00000000-0000-4000-8000-000000000000';
+}
+
 export function desktopDeviceId() {
-  return `lumarig-${desktopPlatformId()}`;
+  if (typeof window === 'undefined') {
+    if (!fallbackDeviceId) fallbackDeviceId = randomUuid();
+    return fallbackDeviceId;
+  }
+  try {
+    const existing = window.localStorage.getItem(DEVICE_ID_KEY);
+    if (existing && /^[0-9a-f-]{36}$/i.test(existing)) return existing;
+    const next = randomUuid();
+    window.localStorage.setItem(DEVICE_ID_KEY, next);
+    return next;
+  } catch {
+    if (!fallbackDeviceId) fallbackDeviceId = randomUuid();
+    return fallbackDeviceId;
+  }
+}
+
+export function desktopDeviceInfo(appVersion = '') {
+  const platform = desktopPlatformId();
+  const id = desktopDeviceId();
+  const suffix = id.replace(/-/g, '').slice(-4).toUpperCase();
+  const label = platform === 'windows' ? 'Windows' : platform === 'macos' ? 'Mac' : platform === 'linux' ? 'Linux' : 'Desktop';
+  return {
+    deviceId: id,
+    displayName: `${label} LumaRig · ${suffix}`,
+    kind: 'desktop' as const,
+    platform,
+    appName: 'LumaRig',
+    appVersion
+  };
 }
