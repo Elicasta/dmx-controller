@@ -163,7 +163,11 @@ fn sanitize_file_name(name: &str) -> String {
             }
         })
         .collect();
-    let trimmed = cleaned.trim().trim_matches('.').trim();
+    let collapsed = cleaned.replace("..", "_");
+    let trimmed = collapsed
+        .trim()
+        .trim_matches(|ch| ch == '.' || ch == '_')
+        .trim();
     if trimmed.is_empty() {
         "media.bin".to_string()
     } else {
