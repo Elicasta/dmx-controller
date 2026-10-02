@@ -1095,6 +1095,28 @@ test('Recording chooses library media and pauses recording time without losing t
   await expect(page.locator('.recorded-takes-console article')).toHaveCount(1);
 });
 
+test('NDI video scan turns WebView permission denial into a recovery action',async({page})=>{
+  await seed(page);
+  await page.addInitScript(()=>{
+    Object.defineProperty(navigator,'mediaDevices',{
+      configurable:true,
+      value:{
+        getUserMedia:async()=>{throw new DOMException('The request is not allowed by the user agent or the platform','NotAllowedError');},
+        enumerateDevices:async()=>[]
+      }
+    });
+  });
+  await page.goto('/');
+  await page.getByRole('button',{name:'BUILD',exact:true}).click();
+  await page.getByRole('button',{name:'Stage',exact:true}).click();
+  await page.locator('.stage-preset-grid').getByRole('button',{name:/Apostolic Day 2026/}).click();
+  const source=page.locator('.screen-source-inspector').getByRole('combobox',{name:'Source'});
+  await source.selectOption('ndi');
+  await page.getByRole('button',{name:'Scan NDI / Video Inputs',exact:true}).click();
+  await expect(page.locator('.screen-source-inspector .stage-source-error')).toContainText('Video input access is blocked');
+  await expect(page.locator('.screen-source-inspector').getByRole('button',{name:'Open Camera Privacy Settings',exact:true})).toBeVisible();
+});
+
 test('Timeline video display framing survives reload and follows media seeks on the stage',async({page})=>{
   await seed(page);await page.goto('/');
   await page.getByRole('button',{name:'BUILD',exact:true}).click();await page.getByRole('button',{name:'Stage',exact:true}).click();
