@@ -164,7 +164,7 @@ import { makeSelectionGrid, moveFixtureInSelectionGrid, normalizeSelectionGrid, 
 import { RemoteRelay, type RelayCommandEnvelope, type RemoteRelayConfig, type RemoteRelayStatus } from './core/remote-relay';
 import { desktopDeviceId } from './core/supabase-client';
 import { StudioBridgeDispatcher } from './core/studio-bridge-dispatcher';
-import { abletonTimelineMarkers, abletonTimelinePositionBar, activeAbletonLocator, sanitizeAbletonSnapshot, type AbletonLiveSnapshot } from './core/ableton-live-sync';
+import { abletonTimelineElapsedMs, abletonTimelineMarkers, abletonTimelinePositionBar, activeAbletonLocator, sanitizeAbletonSnapshot, type AbletonLiveSnapshot } from './core/ableton-live-sync';
 import { TransportEngine, type TransportSource, type TransportUpdate } from './core/transport-engine';
 import { ConnectionManager, type ConnectionRecord } from './core/connection-manager';
 import { lumaLivePositionMs, loadLumaLiveConnection, pairLumaLive, readLumaLiveState, saveLumaLiveConnection, scanLumaLive, sendLumaLiveCommand, type LumaLiveConnection, type LumaLiveEndpoint, type LumaLiveState } from './core/lumalive-client';
@@ -3145,12 +3145,17 @@ export default function App() {
     });
     if (!result.accepted) return;
 
-    const lightingPositionMs = applyLightingOffset(result.state.positionMs, externalTrack.lightingOffsetMs);
     const bar = abletonTimelinePositionBar(snapshot);
+    const lightingTimelineElapsedMs = abletonTimelineElapsedMs(
+      snapshot,
+      editingTimeline.beatsPerBar,
+      masterTempoBpm,
+      externalTrack.lightingOffsetMs,
+    );
     setShowTrackPositionMs(result.state.positionMs);
     timelinePositionRef.current = bar;
     setTimelinePositionBar(bar);
-    renderTimelineFrame(lightingPositionMs);
+    renderTimelineFrame(lightingTimelineElapsedMs);
   }
 
   async function dispatchStudioBridgeCommand(id: string, command: StudioBridgeCommand) {
