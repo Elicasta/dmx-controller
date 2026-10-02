@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState, type RefObject } from 'react';
 import { invoke } from '@tauri-apps/api/core';
-const CHANNEL='lumarig-media-output-v1';
+export const MEDIA_CHANNEL='lumarig-media-output-v1';
+const CHANNEL=MEDIA_CHANNEL;
 export type MediaOutputFrame={url:string;name:string;position:number;playing:boolean;sentAt:number;};
 export function useMediaOutputPublisher(audioRef:RefObject<HTMLAudioElement|null>,url:string,name:string){
   useEffect(()=>{
@@ -16,8 +17,9 @@ export function useMediaOutputPublisher(audioRef:RefObject<HTMLAudioElement|null
     const events=['play','pause','seeked','loadedmetadata','ended','emptied'];
     for(const event of events)audio?.addEventListener(event,publish);
     const tick=(now:number)=>{if(now-last>=50){publish();last=now;}frame=requestAnimationFrame(tick);};
+    const heartbeat=setInterval(publish,250);
     publish();frame=requestAnimationFrame(tick);
-    return()=>{cancelAnimationFrame(frame);for(const event of events)audio?.removeEventListener(event,publish);channel.postMessage({type:'frame',state:{url:'',name:'',position:0,playing:false,sentAt:Date.now()}});channel.close();};
+    return()=>{clearInterval(heartbeat);cancelAnimationFrame(frame);for(const event of events)audio?.removeEventListener(event,publish);channel.postMessage({type:'frame',state:{url:'',name:'',position:0,playing:false,sentAt:Date.now()}});channel.close();};
   },[audioRef,url,name]);
 }
 export async function openMediaOutput():Promise<void>{

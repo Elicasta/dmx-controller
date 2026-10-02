@@ -143,3 +143,18 @@
 .beat-step-grid button[aria-pressed=true] { color:var(--step-color); border-top:3px solid var(--step-color); }
 .beat-step-grid button.selected { outline:1px solid var(--accent); }
 .step-value-editor input[type=checkbox] { width:16px; height:16px; }
+
+/* Media, recording and visualizer refinement; preserve the existing Live desk. */
+.tempo-pill { position:relative; padding-left:22px; }
+.tempo-pulse { position:absolute; left:8px; top:50%; margin-top:-3px; width:6px; height:6px; border-radius:50%; background:var(--accent,#67e59a); box-shadow:0 0 6px #67e59a; }
+.labels-hidden .stage-light-label,.labels-hidden .stage-object>b { display:none; }
+.stage-preset-grid button { height:auto!important; min-height:78px; overflow:visible; }
+.stage-preset-grid button strong { font-size:12px!important; line-height:1.3; white-space:normal; }
+.stage-preset-grid button small { font-size:10px!important; line-height:1.35; white-space:normal; display:-webkit-box; -webkit-line-clamp:3; -webkit-box-orient:vertical; overflow:hidden; }
+.recordings-console-v3 { grid-template-columns:minmax(250px,340px) minmax(0,1fr); grid-template-rows:auto minmax(0,1fr); }
+.recordings-console-v3 .recording-source { grid-column:1/-1; display:flex; flex-wrap:wrap; gap:12px; align-items:end; overflow:visible; }
+.recording-source>label { min-width:180px; max-width:100%; display:flex; flex-direction:column; gap:4px; }
+.recorder-transport { flex-basis:100%; min-width:0; position:static; }
+.recorder-seek { flex:1 1 250px; min-width:180px; }
+.recorder-seek input { width:100%; }
+@media(max-width:800px) { .recordings-console-v3 { display:flex; flex-direction:column; overflow:auto; } .recordings-console-v3>.console-panel { flex-shrink:0; } }

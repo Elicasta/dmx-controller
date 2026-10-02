@@ -41,6 +41,7 @@ export type SectionLayer = {
   enabled: boolean;
 };
 export type ShowSection = {
+  primaryEffect?: CustomEffect;
   notes?: string;
   id: string;
   song: string;
@@ -363,6 +364,7 @@ export function sectionStack(
     {
       id: section.id,
       recipeId: section.recipeId,
+      customEffect: section.primaryEffect,
       groupId: section.groupId,
       energy: section.energy,
       enabled: true,
@@ -560,7 +562,8 @@ export function renderShowTimeline(
   elapsedMs: number,
   base: readonly number[],
 ): DmxUpdate[] {
-  const updates = new Map<number, number>();
+  // Timeline owns its full frame. No underlying programmer look may leak through a gap.
+  const updates = new Map<number, number>(makeUniverse().map((value, i) => [i + 1, value]));
   const duration = barMs(timeline),
     position = Math.max(0, elapsedMs) / duration;
   const active = timeline.clips
@@ -582,13 +585,13 @@ export function renderShowTimeline(
     const changes =
       cue.changes ?? cue.universe?.map((v, i) => [i + 1, v] as DmxUpdate) ?? [];
     changes.forEach(([c, v]) =>
-      updates.set(c, (base[c - 1] ?? 0) + (v - (base[c - 1] ?? 0)) * fade),
+      updates.set(c, (updates.get(c) ?? 0) + (v - (updates.get(c) ?? 0)) * fade),
     );
     renderEffectStack(
       cue.effectStack ?? [],
       fixtures,
       local,
-      applyUniverseUpdates(base, changes),
+      applyUniverseUpdates(makeUniverse(), [...updates.entries()]),
       timeline.bpm,
     ).forEach(([c, v]) => updates.set(c, v));
   }
@@ -738,6 +741,7 @@ export function isShowSection(value: unknown): value is ShowSection {
     ["id", "song", "name", "groupId", "recipeId"].every(
       (k) => typeof s[k as keyof ShowSection] === "string",
     ) &&
+    (s.primaryEffect === undefined || isEffectRecipe(s.primaryEffect)) &&
     (s.notes === undefined || (typeof s.notes === "string" && s.notes.length <= 4000)) &&
     hex(s.color) &&
     finite(s.intensity, 0, 100) &&

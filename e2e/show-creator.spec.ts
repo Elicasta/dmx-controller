@@ -1032,3 +1032,71 @@ test('cue targets focus the same fixture in Stage and Programmer', async ({page}
     await expect.poll(()=>page.evaluate(()=>{ const document=JSON.parse(localStorage.getItem('dmx-controller.patch.v1')??'[]'); return (Array.isArray(document)?document:document.fixtures).filter((fixture:any)=>fixture.selected).map((fixture:any)=>fixture.name); })).toEqual([name]);
   }
 });
+
+test('all saved FX appear in primary, layered and Timeline editors with clip shortcuts',async({page})=>{
+  await seed(page);await page.addInitScript(()=>localStorage.setItem('dmx-controller.custom-fx.v1',JSON.stringify([{id:'saved-test',name:'My Test Wave',parameter:'dimmer',waveform:'sine',bpm:130,depth:70,offset:10,phaseSpread:100}])));
+  await page.goto('/');await page.getByRole('button',{name:'SHOW',exact:true}).click();await page.getByRole('button',{name:'Show Creator',exact:true}).click();await page.getByRole('button',{name:/Worship Song/}).click();
+  await page.getByLabel('Primary FX',{exact:true}).selectOption('custom:saved-test');
+  await page.getByRole('button',{name:'My FX',exact:true}).click();
+  await expect(page.locator('.recipe-list article')).toContainText('My Test Wave');
+  await page.locator('.recipe-list article').getByRole('button',{name:'＋ Layer',exact:true}).click();
+  await expect(page.getByLabel('Layer 1 FX')).toHaveValue('custom:saved-test');
+  await page.getByRole('button',{name:'Build / Update 8 Sections',exact:true}).click();
+  await page.getByRole('button',{name:'Open Timeline ↗',exact:true}).click();
+  await page.getByRole('button',{name:'My FX',exact:true}).click();await expect(page.locator('.timeline-fx-recipe')).toHaveCount(1);
+  await page.locator('.timeline-fx-recipe').click();await expect(page.locator('.timeline-clip')).toHaveCount(9);
+  const clip=page.locator('.timeline-clip').first();await clip.click({position:{x:25,y:15}});await clip.press('Control+c');await clip.press('Control+v');
+  await expect(page.locator('.timeline-clip')).toHaveCount(10);await page.locator('.show-bar-timeline').press('Control+z');await expect(page.locator('.timeline-clip')).toHaveCount(9);
+  await page.locator('.show-bar-timeline').press('Control+Shift+z');await expect(page.locator('.timeline-clip')).toHaveCount(10);
+});
+
+test('stage presets replace repeatedly, labels can be hidden, and High render is available',async({page},info)=>{
+  await seed(page);await page.goto('/');await page.getByRole('button',{name:'BUILD',exact:true}).click();await page.getByRole('button',{name:'Stage',exact:true}).click();
+  const presets=page.locator('.stage-preset-grid');
+  for(const name of [/Apostolic Day 2026/,/Cornerstone · Main Sanctuary/,/Apostolic Day 2026/]){
+    await presets.getByRole('button',{name}).click();await expect(presets.getByRole('button',{name})).toHaveClass(/active/);
+  }
+  const viewer=page.locator('.stage-organizer .visualizer-3d').first();
+  await page.getByRole('button',{name:'Labels On',exact:true}).first().click();await expect(page.getByRole('button',{name:'Labels Off',exact:true}).first()).toBeVisible();
+  await page.getByRole('button',{name:'Render Quality',exact:true}).first().click();await expect(page.getByRole('button',{name:'Render High',exact:true}).first()).toBeVisible();
+  await page.screenshot({path:info.outputPath('stage-high-no-labels.png')});
+});
+
+test('Recording chooses library media and pauses recording time without losing the take',async({page})=>{
+  await seed(page);await page.goto('/');await page.getByRole('button',{name:'SHOW',exact:true}).click();await page.getByRole('button',{name:'Recordings',exact:true}).click();
+  await expect(page.getByLabel('Recording Song Library')).toBeVisible();
+  await expect(page.getByLabel('Recording playhead')).toBeVisible();
+  await page.getByRole('button',{name:'● RECORD SHOW',exact:true}).click();
+  await expect(page.locator('.console-recording-bar')).toContainText('RECORDING SHOW');
+  await expect.poll(async()=>await page.getByLabel('Recording position').textContent()).not.toContain('0.0 s');
+  await page.locator('.recorder-transport').getByRole('button',{name:'Pause',exact:true}).click();
+  await expect(page.locator('.recorder-transport')).toContainText('Recording paused');
+  const before=await page.getByLabel('Recording position').textContent();await page.waitForTimeout(400);expect(await page.getByLabel('Recording position').textContent()).toBe(before);
+  await page.locator('.recorder-transport').getByRole('button',{name:'Resume',exact:true}).click();
+  await page.locator('.recorder-transport').getByRole('button',{name:'Stop + save',exact:true}).click();
+  await expect(page.locator('.recorded-takes-console article')).toHaveCount(1);
+});
+
+test('Timeline video display assignment survives reload and follows media seeks on the stage',async({page})=>{
+  await seed(page);await page.goto('/');
+  await page.getByRole('button',{name:'BUILD',exact:true}).click();await page.getByRole('button',{name:'Stage',exact:true}).click();
+  await page.locator('.stage-preset-grid').getByRole('button',{name:/Apostolic Day 2026/}).click();
+  const screen=await page.evaluate(()=>JSON.parse(localStorage.getItem('dmx-controller.stage-elements.v1')??'{}').elements.find((e:any)=>e.type==='led-screen'));
+  const bytes=await page.evaluate(async()=>{
+    const canvas=document.createElement('canvas');canvas.width=320;canvas.height=180;const ctx=canvas.getContext('2d')!;
+    ctx.fillStyle='#2277aa';ctx.fillRect(0,0,320,180);const stream=canvas.captureStream(20);const chunks:Blob[]=[];
+    const recorder=new MediaRecorder(stream,{mimeType:'video/webm;codecs=vp8'});
+    const done=new Promise<Blob>(resolve=>{recorder.ondataavailable=e=>chunks.push(e.data);recorder.onstop=()=>resolve(new Blob(chunks,{type:'video/webm'}));});
+    const animation=setInterval(()=>{ctx.fillStyle='#337799';ctx.fillRect(0,0,320,180);},50);
+    recorder.start();await new Promise(resolve=>setTimeout(resolve,1200));recorder.stop();clearInterval(animation);const blob=await done;stream.getTracks().forEach(t=>t.stop());return Array.from(new Uint8Array(await blob.arrayBuffer()));
+  });
+  await page.getByLabel('Import screen video').first().setInputFiles({name:'Screen transport test.mp4',mimeType:'video/mp4',buffer:Buffer.from(bytes)});
+  await page.getByRole('button',{name:'SHOW',exact:true}).click();await page.getByRole('button',{name:'Timeline',exact:true}).click();
+  await expect(page.getByLabel('Display from Timeline')).toHaveValue(screen.id);
+  await page.reload();await page.getByRole('button',{name:'SHOW',exact:true}).click();await page.getByRole('button',{name:'Timeline',exact:true}).click();await expect(page.getByLabel('Display from Timeline')).toHaveValue(screen.id);
+  await page.getByRole('button',{name:'BUILD',exact:true}).click();await page.getByRole('button',{name:'Stage',exact:true}).click();await page.getByRole('button',{name:'Plot Editor',exact:true}).click();
+  await page.evaluate(()=>{const audio=document.querySelector('audio')!;audio.currentTime=.5;audio.dispatchEvent(new Event('seeked'));});
+  const video=page.getByLabel('Timeline video screen feed').first();
+  await expect.poll(()=>video.evaluate((v:HTMLVideoElement)=>v.currentTime)).toBeCloseTo(.5,1);
+  expect(await video.evaluate((v:HTMLVideoElement)=>v.videoWidth)).toBeGreaterThan(0);
+});

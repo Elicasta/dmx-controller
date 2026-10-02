@@ -1,5 +1,9 @@
 import { cueContext, cueTargetIds } from './lib/show-selection';
 import { mediaWindow, mediaPosition } from './lib/timeline-media';
+import { fxLibrary } from './lib/fx-library';
+import RecorderTransport from './components/RecorderTransport';
+import { useEditHistory } from './lib/edit-history';
+import TempoPulse from './components/TempoPulse';
 import { useMediaOutputPublisher } from "./components/MediaOutput";
 import { readProgramState, saveProgramState, type Recovery } from './lib/program-storage';
 import { insertSongProgram, programId, type SongProgram } from './lib/song-library';
@@ -778,7 +782,7 @@ export default function App() {
   const remoteEffectLeaseRef = useRef<Map<string, number>>(new Map());
   if (!remoteRelayRef.current) remoteRelayRef.current = new RemoteRelay();
   const [message, setMessage] = useState('Control station ready. Connect DMX when you want physical output.');
-  const [appVersion, setAppVersion] = useState('0.2.3');
+  const [appVersion, setAppVersion] = useState('0.2.6');
   const [updateStatus, setUpdateStatus] = useState<UpdateStatus>('idle');
   const [updateInfo, setUpdateInfo] = useState<UpdateMetadata | null>(null);
   const [updateError, setUpdateError] = useState('');
@@ -866,6 +870,12 @@ export default function App() {
   const [recordingTakeName, setRecordingTakeName] = useState('');
   const [showRecordingActive, setShowRecordingActive] = useState(false);
   const showRecordingActiveRef = useRef(false);
+  const [recordingPaused,setRecordingPaused]=useState(false);
+  const recordingPausedRef=useRef(false);
+  const recordingPausedAt=useRef(0);
+  const recordingElapsedRef=useRef(0);
+  const [selectedRecordingId,setSelectedRecordingId]=useState('');
+  const pausedTakeRef=useRef<{id:string;position:number}|null>(null);
   const [showRecordingElapsedMs, setShowRecordingElapsedMs] = useState(0);
   const showRecordingStartedRef = useRef(0);
   const showRecordingLastSampleRef = useRef(0);
@@ -896,6 +906,8 @@ export default function App() {
   const [profileAcknowledged, setProfileAcknowledged] = useState(false);
   const [stageFixtureId, setStageFixtureId] = useState(DEFAULT_PATCH[0].id);
   const [organizerDraft, setOrganizerDraft] = useState<PatchedFixture>(DEFAULT_PATCH[0]);
+  const [stageLabels,setStageLabels]=useState(()=>localStorage.getItem('lumarig.visualizer.labels.v1')!=='off');
+  useEffect(()=>{const sync=()=>setStageLabels(localStorage.getItem('lumarig.visualizer.labels.v1')!=='off');window.addEventListener('lumarig-labels-changed',sync);return()=>window.removeEventListener('lumarig-labels-changed',sync);},[]);
   const [stageElements, setStageElements] = useState<StageElement[]>(loadStageElements);
   const [selectedStageElementId, setSelectedStageElementId] = useState<string | null>(null);
   const [stageSettings, setStageSettings] = useState<StageSettings>(loadStageSettings);
@@ -1094,6 +1106,11 @@ export default function App() {
   useEffect(() => writeCompatibilityStorage(CUSTOM_FX_STORAGE_KEY, JSON.stringify(customEffects)), [customEffects]);
   const workspaceCheckpointRef = useRef<Record<string, unknown>>({});
   workspaceCheckpointRef.current = { patch, stageElements, stageSettings, looks:savedLooks, customEffects, projects:showLibrary, midiMappings, settings, sectionPresets, tempo:{bpm:effectBpm,locked:tempoLocked} };
+  const editHistory=useEditHistory({show:showFile,patch,stageElements,stageSettings,looks:savedLooks,customEffects,sectionPresets},value=>{
+    window.dispatchEvent(new Event('lumarig-stop-timeline'));stopTimeline();stopFade();stopEffect(false);
+    setShowFile(value.show);setPatch(value.patch);setStageElements(value.stageElements);setStageSettings(value.stageSettings);setSavedLooks(value.looks);setCustomEffects(value.customEffects);setSectionPresets(value.sectionPresets);setActiveStagePresetId(null);
+  },libraryReady);
+  const editClipboard=useRef<ShowCue|StageElement|CustomEffect|null>(null);
   function currentWorkspaceCheckpoint(): Record<string, unknown> { return workspaceCheckpointRef.current; }
   function applyWorkspaceCheckpoint(value: Record<string, unknown>) {
     if (!isAppWorkspaceCheckpoint(value)) throw Error('Saved workspace is invalid. Existing data is preserved.');
@@ -2000,11 +2017,12 @@ export default function App() {
   function stopShowRecording(save = true) {
     if (!showRecordingActiveRef.current) return;
     const audio = showTrackAudioRef.current;
-    const durationMs = showTrackUrlRef.current && audio
+    const durationMs = recordingPausedRef.current ? recordingElapsedRef.current : showTrackUrlRef.current && audio
       ? Math.max(showRecordingElapsedMs, audio.currentTime * 1000)
       : Math.max(showRecordingElapsedMs, performance.now() - showRecordingStartedRef.current);
     captureShowRecordingFrame(durationMs);
     showRecordingActiveRef.current = false;
+    recordingPausedRef.current=false;setRecordingPaused(false);
     setShowRecordingActive(false);
     if (showRecordingAnimationRef.current !== null) cancelAnimationFrame(showRecordingAnimationRef.current);
     showRecordingAnimationRef.current = null;
@@ -2038,6 +2056,7 @@ export default function App() {
     showRecordingFramesRef.current = [initialFrame];
     showRecordingLastUniverseRef.current = [...outputUniverseRef.current];
     showRecordingStartedRef.current = performance.now();
+    recordingElapsedRef.current=0;recordingPausedRef.current=false;setRecordingPaused(false);
     showRecordingLastSampleRef.current = 0;
     showRecordingActiveRef.current = true;
     setShowRecordingActive(true);
@@ -2050,6 +2069,7 @@ export default function App() {
     }
     const tick = (now: number) => {
       if (!showRecordingActiveRef.current) return;
+      if(recordingPausedRef.current){showRecordingAnimationRef.current=requestAnimationFrame(tick);return;}
       const currentAudio = showTrackAudioRef.current;
       const elapsed = showTrackUrlRef.current && currentAudio && !currentAudio.paused
         ? currentAudio.currentTime * 1000
@@ -2057,6 +2077,7 @@ export default function App() {
       if (elapsed - showRecordingLastSampleRef.current >= RECORDING_SAMPLE_MS) {
         showRecordingLastSampleRef.current = elapsed;
         const hasRoom = captureShowRecordingFrame(elapsed);
+        recordingElapsedRef.current=elapsed;
         setShowRecordingElapsedMs(elapsed);
         setShowTrackPositionMs(elapsed);
         if (!hasRoom) {
@@ -2068,7 +2089,6 @@ export default function App() {
       showRecordingAnimationRef.current = requestAnimationFrame(tick);
     };
     showRecordingAnimationRef.current = requestAnimationFrame(tick);
-    setWorkspace('live');
     setMessage(showTrackName ? `Recording lights live with ${showTrackName}.` : 'Recording lights live without an audio track.');
   }
 
@@ -2104,6 +2124,7 @@ export default function App() {
     audioArmedRef.current = false;
     const external = Boolean(options.external);
     const startPosition = Math.max(0, Math.min(recording.durationMs, options.positionMs ?? 0));
+    setSelectedRecordingId(recording.id);
     playingRecordingIdRef.current = recording.id;
     setPlayingRecordingId(recording.id);
     recordingPlaybackExternalRef.current = external;
@@ -2149,6 +2170,31 @@ export default function App() {
     else setMessage(hasMatchingTrack ? `Playing ${recording.name} with ${recording.trackName}.` : `Playing ${recording.name} lights only. Load ${recording.trackName || 'its track'} for synchronized audio.`);
   }
 
+  function pauseRecorderTransport() {
+    if(showRecordingActiveRef.current){recordingPausedRef.current=true;recordingPausedAt.current=performance.now();setRecordingPaused(true);showTrackAudioRef.current?.pause();return;}
+    if(playingRecordingIdRef.current){pausedTakeRef.current={id:playingRecordingIdRef.current,position:showTrackPositionMs};stopRecordedShowPlayback(false);}
+    showTrackAudioRef.current?.pause();
+  }
+  function playRecorderTransport() {
+    if(showRecordingActiveRef.current){
+      if(recordingPausedRef.current){showRecordingStartedRef.current+=performance.now()-recordingPausedAt.current;recordingPausedRef.current=false;setRecordingPaused(false);if(showTrackUrlRef.current)void showTrackAudioRef.current?.play().catch(error=>setMessage(String(error)));}
+      return;
+    }
+    const take=showFile.recordings?.find(t=>t.id===selectedRecordingId);
+    if(take){playShowRecording(take,{positionMs:pausedTakeRef.current?.id===take.id?pausedTakeRef.current.position:showTrackPositionMs});pausedTakeRef.current=null;}
+    else if(showTrackUrlRef.current)void showTrackAudioRef.current?.play().catch(error=>setMessage(String(error)));
+  }
+  function seekRecorderTransport(position:number) {
+    if(showRecordingActiveRef.current)return;
+    const take=showFile.recordings?.find(t=>t.id===selectedRecordingId);
+    const next=Math.max(0,Math.min(take?.durationMs ?? showTrackDurationMs,position));
+    const wasPlaying=Boolean(playingRecordingIdRef.current);
+    stopRecordedShowPlayback(false);showTrackAudioRef.current?.pause();
+    if(showTrackAudioRef.current && showTrackAudioRef.current.readyState>=1)showTrackAudioRef.current.currentTime=next/1000;
+    setShowTrackPositionMs(next);
+    timelinePositionRef.current=next*masterTempoBpm/60000/editingTimeline.beatsPerBar;setTimelinePositionBar(timelinePositionRef.current);
+    if(take){prepareRecordingAt(take,next);pausedTakeRef.current={id:take.id,position:next};if(wasPlaying)playShowRecording(take,{positionMs:next});}
+  }
   function toggleShowTrackPreview() {
     const audio = showTrackAudioRef.current;
     if (!audio || !showTrackUrlRef.current || showRecordingActive || playingRecordingId) return;
@@ -2996,6 +3042,23 @@ export default function App() {
         setCalibrationOpen(false);
         return;
       }
+      if(!typing && (event.ctrlKey || event.metaKey)) {
+        const key=event.key.toLowerCase();
+        // Timeline owns its clip clipboard and history while it is mounted.
+        const timelineEditing=workspace==='show' && (showMode==='timeline' || (showMode==='cues' && cueTimelineSong!==null));
+        if(!timelineEditing && (key==='z' || key==='y')){event.preventDefault();editHistory(key==='y'||event.shiftKey?'redo':'undo');return;}
+        if(workspace==='show' && showMode==='creator' && (key==='c'||key==='v'))return;
+        if(!timelineEditing && key==='c'){
+          const item=workspace==='create' && programMode==='fx' ? fxEditor : workspace==='build' || workspace==='visualizer' ? selectedStageElement : activeCue;
+          if(item){event.preventDefault();editClipboard.current=structuredClone(item);}return;
+        }
+        if(!timelineEditing && key==='v' && editClipboard.current){event.preventDefault();const item=editClipboard.current;
+          if('parameter' in item){const copy={...structuredClone(item),id:crypto.randomUUID(),name:item.name+' copy'};setFxEditor(copy);setCustomEffects(all=>[...all,copy].slice(-32));return;}
+          if('label' in item){const copy={...structuredClone(item),id:crypto.randomUUID(),label:item.label+' copy'};setStageElements(all=>[...all,copy]);setSelectedStageElementId(copy.id);}
+          else if(showFile.cues.length<200){const copy={...structuredClone(item),id:crypto.randomUUID(),name:item.name+' copy',sourceSectionId:undefined};setShowFile(all=>({...all,cues:renumberCues([...all.cues,copy])}));setActiveCueId(copy.id);}
+          return;
+        }
+      }
       const performanceContext = workspace === 'live' || (workspace === 'show' && showMode === 'cues');
       if (!typing && performanceContext && (event.code === 'Space' || event.key === 'ArrowRight')) {
         event.preventDefault();
@@ -3007,7 +3070,7 @@ export default function App() {
     };
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [workspace, showMode, nextCue?.id]);
+  }, [workspace, showMode, nextCue?.id, cueTimelineSong, activeCue, selectedStageElement, showFile, editHistory, programMode, fxEditor]);
 
   async function startAudioInput() {
     setAudioError('');
@@ -3182,9 +3245,18 @@ export default function App() {
     setPatch((current) => assignFixturesToGroup(current, [fixtureId], ''));
   }
 
+  function routeTimelineVideo(screenId:string) {
+    setStageElements(current=>current.map(element=>element.id===screenId?{...element,mediaSource:{kind:'timeline',sourceName:'Timeline video',fit:'contain'}}:element.mediaSource?.kind==='timeline'?{...element,mediaSource:{kind:'none'}}:element));
+    setMessage(screenId?'Timeline video routed to the selected display.':'Timeline display routing cleared.');
+  }
+  async function importScreenVideo(screenId:string,file:File) {
+    if(!/\.mp4$/i.test(file.name)){setMessage('Choose an MP4 video file.');return;}
+    await loadShowAudioFile(file);routeTimelineVideo(screenId);
+  }
   function loadStagePreset(presetId: StagePresetId) {
     const preset = instantiateStagePreset(presetId);
-    if (stageElements.length > 0 && !window.confirm(`Load ${preset.name}? This replaces the current stage scene instead of stacking the presets together.`)) return;
+    // Replacement is reversible through the editing history; native confirm may not be available.
+    setStageFixtureId('');
     setStageElements(preset.elements);
     setStageSettings({ schemaVersion: 2, unit: 'feet', dimensions: preset.dimensions });
     setSelectedStageElementId(preset.elements.find((element) => element.type === 'led-screen')?.id ?? preset.elements[0]?.id ?? null);
@@ -3618,6 +3690,16 @@ export default function App() {
       setMessage(`${result.song.name} added to this Show with its sections, lighting, timeline and media.`);
     } catch (error) { setMessage(String(error)); }
   }
+  async function chooseRecordingLibrarySong(program:SongProgram) {
+    try {
+      const result=insertSongProgram(showFileRef.current,program);
+      setShowFile(result.show);setActiveSongId(result.song.id);setTimelineShowId(result.song.id);
+      timelinePositionRef.current=0;setTimelinePositionBar(0);setMasterTempo(result.song.bpm);changeTempoLock(true);
+      clearShowAudio();const token=++mediaLoadToken.current;
+      if(result.song.mediaId){const media=await readSongMedia(result.song.mediaId);if(token!==mediaLoadToken.current)return;if(media)activateMedia(media,result.song.mediaName ?? result.song.name);else setMessage('Song added. Its media is missing; import or relink media.');}
+      setMessage(result.song.name+' ready to record.');
+    }catch(error){setMessage(String(error));}
+  }
   async function recoverShow(recovery: Recovery) {
     const workspace = recovery.workspace ? { ...recovery.workspace, projects:showLibrary, midiMappings, settings } : currentWorkspaceCheckpoint();
     if (!await checkpointShowChange(recovery.show, workspace)) return;
@@ -3699,12 +3781,12 @@ export default function App() {
   }
   const editingTimeline = (timelineShowId ? showFile.timelineShows?.find(item=>item.id===timelineShowId)?.timeline : showFile.timeline) ?? EMPTY_TIMELINE;
   function addTimelineFx(recipeId:string,startBar:number,lane:number) {
-    const recipe=FX_RECIPES.find(r=>r.id===recipeId);if(!recipe)return;
+    const recipe=fxLibrary(customEffects).find(r=>r.id===recipeId);if(!recipe)return;
     if(showFile.cues.length>=200||editingTimeline.clips.length>=1000){setMessage('Cue or timeline clip limit reached.');return;}
     try {
-      const section={...createSection(recipe.name,cueTimelineSong??showFile.timelineShows?.find(t=>t.id===timelineShowId)?.name??'Timeline FX',selectedGroup?.id??'',editingTimeline.bpm),recipeId,fadeMs:0,energy:100,intensity:100};
+      const section={...createSection(recipe.name,cueTimelineSong??showFile.timelineShows?.find(t=>t.id===timelineShowId)?.name??'Timeline FX',selectedGroup?.id??'',editingTimeline.bpm),recipeId,primaryEffect:FX_RECIPES.some(r=>r.id===recipeId)?undefined:structuredClone(recipe.effect),fadeMs:0,energy:100,intensity:100};
       const built=buildSectionCues([section],patchRef.current,showFile.groups??[])[0];
-      const cue={...built,name:recipe.name,sourceSectionId:undefined,changes:[] as DmxUpdate[],universe:undefined};
+      const cue={...built,name:recipe.name,sourceSectionId:undefined,universe:undefined};
       const clip={id:crypto.randomUUID(),cueId:cue.id,startBar,lengthBars:8,lane,enabled:true};
       setShowFile(current=>{
         const next={...current,cues:renumberCues([...current.cues,cue])};
@@ -3828,8 +3910,8 @@ export default function App() {
   function renderStagePreview(interactive = false) {
     const beamLength = Math.max(stageSettings.dimensions.width, stageSettings.dimensions.depth, stageSettings.dimensions.height) * 1.2;
     return (
-      <div className={`multi-stage physical-stage stage-view-${stageView} stage-mode-${stageMode}`}>
-        <div className="stage-view-toolbar" role="group" aria-label="Stage view">
+      <div className={`multi-stage physical-stage stage-view-${stageView} stage-mode-${stageMode} ${stageLabels?'':'labels-hidden'}`}>
+        <div className="stage-view-toolbar" role="group" aria-label="Stage view"><button aria-pressed={stageLabels} onClick={()=>{localStorage.setItem('lumarig.visualizer.labels.v1',stageLabels?'off':'on');window.dispatchEvent(new Event('lumarig-labels-changed'));}}>Labels {stageLabels?'On':'Off'}</button>
           {(['perspective', 'top', 'front', 'side'] as StageView[]).map((view) => <button key={view} className={stageView === view ? 'active' : ''} onClick={() => setStageView(view)}>{view}</button>)}
         </div>
         <svg className="stage-geometry-svg" preserveAspectRatio="none" viewBox="0 0 1000 560" aria-label={`${stageView} physical stage view`}>
@@ -4168,7 +4250,7 @@ export default function App() {
         <div className="console-brand"><span className="brand-mark">◆</span><div className="brand-product"><b>LUMARIG</b><small>SHOW</small></div><div className="brand-show"><input aria-label="Current show name" value={showFile.name} onChange={(event) => setShowFile((current) => ({ ...current, name: event.target.value }))} /><small>LIVE SHOWFILE · R{sharedShowRevisionRef.current} · v{appVersion}</small></div></div>
         <nav className="console-workspace-tabs" aria-label="Workspace">{(['build', 'create', 'show', 'visualizer', 'live'] as Workspace[]).map((item) => <button key={item} className={workspace === item ? 'active' : ''} onClick={() => setWorkspace(item)}>{item.toUpperCase()}</button>)}</nav>
         <div className="console-header-status">
-          <button className="tempo-pill" onClick={tapTempo}><strong>{masterTempoBpm} BPM</strong><small>{tempoSource === 'midi' ? 'MIDI CLOCK' : 'TAP'}</small></button>
+          <button className="tempo-pill" onClick={tapTempo}><TempoPulse bpm={masterTempoBpm} audioRef={showTrackAudioRef} running={Boolean(activeEffect || activeCustomEffectId || showRecordingActive || playingRecordingId || externalTransportRunning)} /><strong>{masterTempoBpm} BPM</strong><small>{tempoSource === 'midi' ? 'MIDI CLOCK' : 'TAP'}</small></button>
           <button aria-label="Connections" title="Connections and DMX status" className={`connection-pill ${dmxStatus.connected ? 'online' : ''}`} onClick={() => { setWorkspace('build'); setSetupView('settings'); }}><i /><span><strong>DMX</strong><small>{dmxStatus.connected ? 'CONNECTED' : 'VIRTUAL'}</small></span></button>
           <button className={`console-blackout ${dmxStatus.blackout ? 'active' : ''}`} onClick={toggleBlackout}>{dmxStatus.blackout ? 'RELEASE BLACKOUT' : 'BLACKOUT'}</button>
         </div>
@@ -4288,8 +4370,9 @@ export default function App() {
             <label><span>UI Scale</span><input type="range" min="10" max="100" value={selectedStageElement.size} onChange={(event) => updateStageElement(selectedStageElement.id, { size: Number(event.target.value) })} /></label>
             <label><span>Color</span><input className="inspector-color" type="color" value={selectedStageElement.color} onChange={(event) => updateStageElement(selectedStageElement.id, { color: event.target.value })} /></label>
             {selectedStageElement.type === 'led-screen' && <section className="screen-source-inspector">
-              <header><span>SCREEN SOURCE</span><strong>ProPresenter / NDI</strong></header>
-              <label><span>Source</span><select value={selectedStageElement.mediaSource?.kind ?? 'none'} onChange={(event) => updateStageElement(selectedStageElement.id, { mediaSource: event.target.value === 'ndi' ? { kind: 'ndi', sourceName: 'ProPresenter', fit: 'contain' } : { kind: 'none' } })}><option value="none">Static color</option><option value="ndi">NDI / video input</option></select></label>
+              <header><span>SCREEN SOURCE</span><strong>Media / Timeline / NDI</strong></header>
+              <label><span>Source</span><select value={selectedStageElement.mediaSource?.kind ?? 'none'} onChange={(event) => updateStageElement(selectedStageElement.id, { mediaSource: event.target.value === 'timeline' ? {kind:'timeline',sourceName:'Timeline video',fit:'contain'} : event.target.value === 'ndi' ? { kind: 'ndi', sourceName: 'ProPresenter', fit: 'contain' } : { kind: 'none' } })}><option value="none">Static color</option><option value="ndi">NDI / video input</option><option value="timeline">Timeline video</option></select></label>
+              <label>Import video to Timeline<input aria-label="Import screen video" type="file" accept="video/mp4,.mp4" onChange={e=>{const file=e.target.files?.[0];e.target.value='';if(file)void importScreenVideo(selectedStageElement.id,file).catch(error=>setMessage(String(error)));}} /></label>
               {selectedStageElement.mediaSource?.kind === 'ndi' && <>
                 <label><span>Input</span><select value={selectedStageElement.mediaSource.deviceId ?? ''} onChange={(event) => {
                   const input = stageVideoInputs.find((item) => item.deviceId === event.target.value);
@@ -4453,7 +4536,7 @@ export default function App() {
                 </div>
                 <div className="fx-editor-readouts">
                   <span><small>BPM</small><strong>{fxEditor.bpm}</strong></span>
-                  <span><small>DEPTH</small><strong>{fxEditor.depth}%</strong></span>
+                  <span><small>DEPTH</small><strong>{Number(fxEditor.depth.toFixed(1))}%</strong></span>
                   <span><small>PHASE</small><strong>{fxEditor.phaseSpread}%</strong></span>
                   <span><small>{(fxEditor.mode ?? 'absolute') === 'relative' ? 'BIAS' : 'BASE'}</small><strong>{fxEditor.offset}%</strong></span>
                   <span><small>ORDER</small><strong>{(fxEditor.orderMode ?? 'forward').replace('-', ' ')}</strong></span>
@@ -4505,7 +4588,7 @@ export default function App() {
                   <label><span>Mode</span><select value={fxEditor.mode ?? 'absolute'} onChange={(event) => setFxEditor((current) => ({ ...current, mode: event.target.value as CustomEffect['mode'] }))}><option value="absolute">Absolute</option><option value="relative">Relative to Look</option></select></label>
                 </div>
                 <label><span>Speed · {fxEditor.bpm} BPM</span><input type="range" min="20" max="300" value={fxEditor.bpm} onChange={(event) => setFxEditor((current) => ({ ...current, bpm: Number(event.target.value) }))}/></label>
-                <label><span>Depth · {fxEditor.depth}%</span><input type="range" min="0" max="100" value={fxEditor.depth} onChange={(event) => setFxEditor((current) => ({ ...current, depth: Number(event.target.value) }))}/></label>
+                <label><span>Depth · {Number(fxEditor.depth.toFixed(1))}%</span><input type="range" min="0" max="100" value={fxEditor.depth} onChange={(event) => setFxEditor((current) => ({ ...current, depth: Number(event.target.value) }))}/></label>
                 <label><span>Phase Spread · {fxEditor.phaseSpread}%</span><input type="range" min="0" max="200" value={fxEditor.phaseSpread} onChange={(event) => setFxEditor((current) => ({ ...current, phaseSpread: Number(event.target.value) }))}/></label>
                 <label><span>{(fxEditor.mode ?? 'absolute') === 'relative' ? 'Bias' : 'Base'} · {fxEditor.offset}%</span><input type="range" min="-100" max="100" value={fxEditor.offset} onChange={(event) => setFxEditor((current) => ({ ...current, offset: Number(event.target.value) }))}/></label>
                 <section className="fx-lane-editor">
@@ -4586,8 +4669,9 @@ export default function App() {
               </div>
               <label><span>Color</span><input className="inspector-color" type="color" value={selectedStageElement.color} onChange={(event) => updateStageElement(selectedStageElement.id, { color: event.target.value })}/></label>
               {selectedStageElement.type === 'led-screen' && <div className="visualizer-screen-route">
-                <label><span>Screen Source</span><select value={selectedStageElement.mediaSource?.kind ?? 'none'} onChange={(event) => updateStageElement(selectedStageElement.id, { mediaSource: event.target.value === 'ndi' ? { kind: 'ndi', sourceName: 'ProPresenter', fit: 'contain' } : { kind: 'none' } })}><option value="none">Static</option><option value="ndi">NDI / Video Input</option></select></label>
-                {selectedStageElement.mediaSource?.kind === 'ndi' && <label><span>Input</span><select value={selectedStageElement.mediaSource.deviceId ?? ''} onChange={(event) => { const input=stageVideoInputs.find((item)=>item.deviceId===event.target.value); updateStageElement(selectedStageElement.id,{mediaSource:{kind:'ndi',deviceId:event.target.value||undefined,sourceName:input?.label||'ProPresenter',fit:selectedStageElement.mediaSource?.kind==='ndi'?selectedStageElement.mediaSource.fit??'contain':'contain'}}); }}><option value="">Select input</option>{stageVideoInputs.map((input)=><option key={input.deviceId} value={input.deviceId}>{input.label}</option>)}</select></label>}
+                <label><span>Screen Source</span><select value={selectedStageElement.mediaSource?.kind ?? 'none'} onChange={(event) => updateStageElement(selectedStageElement.id, { mediaSource: event.target.value === 'timeline' ? {kind:'timeline',sourceName:'Timeline video',fit:'contain'} : event.target.value === 'ndi' ? { kind: 'ndi', sourceName: 'ProPresenter', fit: 'contain' } : { kind: 'none' } })}><option value="none">Static</option><option value="ndi">NDI / Video Input</option><option value="timeline">Timeline video</option></select></label>
+                <label>Import video to Timeline<input aria-label="Import screen video" type="file" accept="video/mp4,.mp4" onChange={e=>{const file=e.target.files?.[0];e.target.value='';if(file)void importScreenVideo(selectedStageElement.id,file).catch(error=>setMessage(String(error)));}} /></label>
+              {selectedStageElement.mediaSource?.kind === 'ndi' && <label><span>Input</span><select value={selectedStageElement.mediaSource.deviceId ?? ''} onChange={(event) => { const input=stageVideoInputs.find((item)=>item.deviceId===event.target.value); updateStageElement(selectedStageElement.id,{mediaSource:{kind:'ndi',deviceId:event.target.value||undefined,sourceName:input?.label||'ProPresenter',fit:selectedStageElement.mediaSource?.kind==='ndi'?selectedStageElement.mediaSource.fit??'contain':'contain'}}); }}><option value="">Select input</option>{stageVideoInputs.map((input)=><option key={input.deviceId} value={input.deviceId}>{input.label}</option>)}</select></label>}
               </div>}
               <div className="visualizer-object-actions"><button onClick={() => duplicateStageElement(selectedStageElement.id)}>Duplicate</button><button className="danger-button" onClick={() => removeStageElement(selectedStageElement.id)}>Delete</button></div>
             </section>}
@@ -4613,7 +4697,7 @@ export default function App() {
         {showMode === 'cues' && <ResizableWorkspace className={`show-cue-layout ${cueTimelineSong!==null ? 'cue-with-timeline' : ''}`} storageKey="lumarig.cue-columns.v1" leftLabel="Rundown" rightLabel="Cue Inspector" leftDefault={250} rightDefault={245} rightEnabled={cueTimelineSong===null} centerMinimum={400}>
           <SongCueLibrary cues={showFile.cues} sections={showFile.rundownSections??[]} activeId={activeCueId} timelineNames={(showFile.timelineShows??[]).map(item=>item.name)} onRun={runCue} onDelete={deleteCue} onCapture={captureCue} onMove={(id,direction)=>setShowFile(current=>({...current,cues:moveCue(current.cues,id,direction)}))} onMoveSong={(sectionId,name,direction)=>setShowFile(current=>({...current,cues:moveRundownItemCues(current.cues,sectionId,name,direction)}))} onSectionsChange={(rundownSections)=>setShowFile(current=>({...current,rundownSections}))} onTimeline={openSongTimeline} onImport={importTimelineShow}/>
 
-          {cueTimelineSong!==null ? <main className="cue-integrated-timeline"><header><strong>{cueTimelineSong}</strong><button onClick={()=>{releaseTimeline();setCueTimelineSong(null);}}>Close timeline</button></header><Suspense fallback={<p>Loading timeline…</p>}><ShowTimelineEditor selectedClipId={activeTimelineClipId} positionBar={timelinePositionBar} onSelectClip={selectTimelineClip} onRelease={releaseTimeline} onReset={() => { timelinePositionRef.current=0; setTimelinePositionBar(0); activeTimelineClipRef.current=''; setActiveTimelineClipId(''); setActiveCueId(null); setActiveSectionId(''); }} key={timelineShowId+cueTimelineSong} timeline={editingTimeline} cues={showFile.cues.filter(c => !timelineShowId || c.trackName === showFile.timelineShows?.find(t => t.id === timelineShowId)?.name)} initialBar={timelineStartBar} songFilter={cueTimelineSong} audioRef={showTrackAudioRef} audioUrl={editingTimeline.audioName===showTrackName?showTrackUrl:''} audioName={editingTimeline.audioName??''} audioDurationMs={editingTimeline.audioName===showTrackName?showTrackDurationMs:0} masterBpm={masterTempoBpm} onMasterBpmChange={setMasterTempo} tempoLocked={tempoLocked} onTempoLockChange={changeTempoLock} onLoadAudio={loadShowAudioFile} onChange={updateEditingTimeline} onAddFx={addTimelineFx} fxTargetName={selectedGroup?.name??'All patched fixtures'} onFrame={renderTimelineFrame} onStop={stopTimeline} onCreator={()=>setShowMode('creator')}/></Suspense></main> : <>          <main className="cue-preview-console"><header><span>{directStatus.clients > 0 ? 'LUMAVIZ LIVE PREVIEW' : 'STAGE / CUE PREVIEW'}</span><b>{activeCue?.name ?? 'Live output'}</b></header><div className={`show-viz-preview ${liveLumaVizPreview ? 'linked external-feed' : directStatus.clients > 0 ? 'linked' : ''}`}>{liveLumaVizPreview ? <img src={liveLumaVizPreview.dataUrl} alt={`LumaViz ${liveLumaVizPreview.view ?? 'live'} preview`} /> : renderStagePreview()}</div><div className="cue-preview-meta"><span>CURRENT<strong>{activeCue ? `${activeCue.number}. ${activeCue.name}` : 'Ready'}</strong></span><span>NEXT<strong>{nextCue ? `${nextCue.number}. ${nextCue.name}` : 'End of show'}</strong></span></div></main></>}
+          {cueTimelineSong!==null ? <main className="cue-integrated-timeline"><header><strong>{cueTimelineSong}</strong><button onClick={()=>{releaseTimeline();setCueTimelineSong(null);}}>Close timeline</button></header><Suspense fallback={<p>Loading timeline…</p>}><ShowTimelineEditor fxRecipes={fxLibrary(customEffects)} screens={stageElements.filter(e=>e.type==='led-screen')} displayId={stageElements.find(e=>e.mediaSource?.kind==='timeline')?.id ?? ''} onDisplayChange={routeTimelineVideo} selectedClipId={activeTimelineClipId} positionBar={timelinePositionBar} onSelectClip={selectTimelineClip} onRelease={releaseTimeline} onReset={() => { commitUniverse(makeUniverse()); timelinePositionRef.current=0; setTimelinePositionBar(0); activeTimelineClipRef.current=''; setActiveTimelineClipId(''); setActiveCueId(null); setActiveSectionId(''); }} key={timelineShowId+cueTimelineSong} timeline={editingTimeline} cues={showFile.cues.filter(c => !timelineShowId || c.trackName === showFile.timelineShows?.find(t => t.id === timelineShowId)?.name)} initialBar={timelineStartBar} songFilter={cueTimelineSong} audioRef={showTrackAudioRef} audioUrl={editingTimeline.audioName===showTrackName?showTrackUrl:''} audioName={editingTimeline.audioName??''} audioDurationMs={editingTimeline.audioName===showTrackName?showTrackDurationMs:0} masterBpm={masterTempoBpm} onMasterBpmChange={setMasterTempo} tempoLocked={tempoLocked} onTempoLockChange={changeTempoLock} onLoadAudio={loadShowAudioFile} onChange={updateEditingTimeline} onAddFx={addTimelineFx} fxTargetName={selectedGroup?.name??'All patched fixtures'} onFrame={renderTimelineFrame} onStop={stopTimeline} onCreator={()=>setShowMode('creator')}/></Suspense></main> : <>          <main className="cue-preview-console"><header><span>{directStatus.clients > 0 ? 'LUMAVIZ LIVE PREVIEW' : 'STAGE / CUE PREVIEW'}</span><b>{activeCue?.name ?? 'Live output'}</b></header><div className={`show-viz-preview ${liveLumaVizPreview ? 'linked external-feed' : directStatus.clients > 0 ? 'linked' : ''}`}>{liveLumaVizPreview ? <img src={liveLumaVizPreview.dataUrl} alt={`LumaViz ${liveLumaVizPreview.view ?? 'live'} preview`} /> : renderStagePreview()}</div><div className="cue-preview-meta"><span>CURRENT<strong>{activeCue ? `${activeCue.number}. ${activeCue.name}` : 'Ready'}</strong></span><span>NEXT<strong>{nextCue ? `${nextCue.number}. ${nextCue.name}` : 'End of show'}</strong></span></div></main></>}
 
           <aside className="cue-inspector-console"><header><span>CUE INSPECTOR</span><strong>{activeCue?.name ?? 'New cue'}</strong></header>{activeCue ? <><label><span>Cue Name</span><input value={activeCue.name} onChange={(event)=>updateCueProperties(activeCue.id,{name:event.target.value})}/></label><label><span>Cue Color</span><input type="color" value={activeCue.color ?? '#55e98d'} onChange={(event)=>updateCueProperties(activeCue.id,{color:event.target.value})}/></label><label><span>Description</span><textarea value={activeCue.description ?? ''} onChange={(event)=>updateCueProperties(activeCue.id,{description:event.target.value})}/></label><div className="inspector-pair"><label><span>Fade In ms</span><input type="number" min="0" value={activeCue.fadeMs} onChange={(event)=>updateCueProperties(activeCue.id,{fadeMs:Number(event.target.value)})}/></label><label><span>Fade Out ms</span><input type="number" min="0" value={activeCue.fadeOutMs ?? activeCue.fadeMs} onChange={(event)=>updateCueProperties(activeCue.id,{fadeOutMs:Number(event.target.value)})}/></label></div><div className="inspector-pair"><label><span>Delay ms</span><input type="number" min="0" value={activeCue.delayMs ?? 0} onChange={(event)=>updateCueProperties(activeCue.id,{delayMs:Number(event.target.value)})}/></label><label><span>Follow ms</span><input type="number" min="0" value={activeCue.followMs ?? 0} onChange={(event)=>updateCueProperties(activeCue.id,{followMs:Number(event.target.value)})}/></label></div><section className="cue-timing-overrides"><header><span>ATTRIBUTE TIMING</span><small>Override only what needs different timing</small></header>{(['intensity','color','position','beam'] as CueTimingFamily[]).map((family)=>{const rule=cueTimingRule(activeCue,family);return <div className="cue-timing-row" key={family}><strong>{family.toUpperCase()}</strong><label><span>Fade ms</span><input type="number" min="0" max="60000" value={rule.fadeMs} onChange={(event)=>updateCueTiming(activeCue.id,family,{fadeMs:Number(event.target.value)})}/></label><label><span>Delay ms</span><input type="number" min="0" max="60000" value={rule.delayMs} onChange={(event)=>updateCueTiming(activeCue.id,family,{delayMs:Number(event.target.value)})}/></label><label><span>Curve</span><select value={rule.curve} onChange={(event)=>updateCueTiming(activeCue.id,family,{curve:event.target.value as CueTimingRule['curve']})}><option value="ease">Ease</option><option value="linear">Linear</option><option value="snap">Snap</option></select></label></div>})}</section><label><span>Linked Effect</span><select value={activeCue.linkedEffectId ?? ''} onChange={(event)=>updateCueProperties(activeCue.id,{linkedEffectId:event.target.value})}><option value="">None</option>{EFFECT_PRESETS.map((effect)=><option key={effect.id} value={effect.id}>{effect.name}</option>)}</select></label><label><span>Show Section</span><select aria-label="Cue show section" value={activeCue.rundownSectionId ?? ''} onChange={(event)=>updateCueProperties(activeCue.id,{rundownSectionId:event.target.value})}><option value="">Unfiled</option>{(showFile.rundownSections??[]).map(section=><option key={section.id} value={section.id}>{section.name}</option>)}</select></label><label><span>Item Type</span><select aria-label="Cue item type" value={activeCue.trackKind ?? 'song'} onChange={(event)=>updateCueProperties(activeCue.id,{trackKind:event.target.value as 'song'|'media'})}><option value="song">Song</option><option value="media">Media</option></select></label><label><span>Song / media item</span><input value={activeCue.trackName ?? ''} onChange={(event)=>updateCueProperties(activeCue.id,{trackName:event.target.value})}/></label><button className="console-primary" onClick={()=>updateCue(activeCue.id)}>Update Look From Output</button></> : <><label><span>New Cue Name</span><input value={cueName} placeholder={`Cue ${showFile.cues.length+1}`} onChange={(event)=>setCueName(event.target.value)}/></label><label><span>Fade In</span><select value={cueFadeMs} onChange={(event)=>setCueFadeMs(Number(event.target.value))}>{FADE_TIMES.map((time)=><option key={time} value={time}>{time===0?'Snap':`${time/1000}s`}</option>)}</select></label><button className="console-primary" onClick={captureCue}>Capture Current Look</button></>}<label><span>Show Notes</span><textarea value={showFile.notes ?? ''} placeholder="Set list, transitions, safety notes…" onChange={(event)=>setShowFile((current)=>({...current,notes:event.target.value}))}/></label></aside>
 
@@ -4626,7 +4710,7 @@ export default function App() {
           const next = typeof action === 'function' ? action(editing) : action;
           return {...current,creatorSections:creatorSong ? [...all.filter(section => section.song !== creatorSong.name), ...next.map(section => ({...section,song:creatorSong.name}))] : next};
         })} groups={showFile.groups ?? []} fixtures={patch} masterBpm={masterTempoBpm} onMasterBpmChange={setMasterTempo} tempoLocked={tempoLocked} onTempoLockChange={changeTempoLock} onBuild={buildCreatorSections} onPreview={previewCreatorSection} onStop={() => { stopFade(); stopEffect(); }} onTimeline={() => { if (creatorSong) void selectBankSong(creatorSong, 'timeline'); else setShowMode('timeline'); }} onEditFx={(effect) => { setFxEditor(effect); setWorkspace('create'); setProgramMode('fx'); }}/></Suspense>}
-        {showMode === 'timeline' && <div className="timeline-workspace"><label className="timeline-show-select">Timeline show <select aria-label="Timeline show" value={timelineShowId} onChange={e=>{window.dispatchEvent(new Event('lumarig-stop-timeline'));stopTimeline();const item=showFile.timelineShows?.find(t=>t.id===e.target.value);const song=songBank.find(s=>s.name===item?.name);if(song)void selectBankSong(song,'timeline');else{++mediaLoadToken.current;setActiveSongId('');setTimelineShowId(e.target.value);showTrackAudioRef.current?.pause();}}}><option value="">Current show</option>{(showFile.timelineShows??[]).map(item=><option key={item.id} value={item.id}>{item.name}</option>)}</select></label><Suspense fallback={<p>Loading Timeline…</p>}><ShowTimelineEditor selectedClipId={activeTimelineClipId} positionBar={timelinePositionBar} onSelectClip={selectTimelineClip} onRelease={releaseTimeline} onReset={() => { timelinePositionRef.current=0; setTimelinePositionBar(0); activeTimelineClipRef.current=''; setActiveTimelineClipId(''); setActiveCueId(null); setActiveSectionId(''); }} key={timelineShowId} timeline={editingTimeline} cues={showFile.cues.filter(c => !timelineShowId || c.trackName === showFile.timelineShows?.find(t => t.id === timelineShowId)?.name)} audioRef={showTrackAudioRef} audioUrl={editingTimeline.audioName===showTrackName?showTrackUrl:''} audioName={editingTimeline.audioName??''} audioDurationMs={editingTimeline.audioName===showTrackName?showTrackDurationMs:0} masterBpm={masterTempoBpm} onMasterBpmChange={setMasterTempo} tempoLocked={tempoLocked} onTempoLockChange={changeTempoLock} onLoadAudio={loadShowAudioFile} onChange={updateEditingTimeline} onAddFx={addTimelineFx} fxTargetName={selectedGroup?.name??'All patched fixtures'} onFrame={renderTimelineFrame} onStop={stopTimeline} onCreator={() => setShowMode('creator')}/></Suspense></div>}
+        {showMode === 'timeline' && <div className="timeline-workspace"><label className="timeline-show-select">Timeline show <select aria-label="Timeline show" value={timelineShowId} onChange={e=>{window.dispatchEvent(new Event('lumarig-stop-timeline'));stopTimeline();const item=showFile.timelineShows?.find(t=>t.id===e.target.value);const song=songBank.find(s=>s.name===item?.name);if(song)void selectBankSong(song,'timeline');else{++mediaLoadToken.current;setActiveSongId('');setTimelineShowId(e.target.value);showTrackAudioRef.current?.pause();}}}><option value="">Current show</option>{(showFile.timelineShows??[]).map(item=><option key={item.id} value={item.id}>{item.name}</option>)}</select></label><Suspense fallback={<p>Loading Timeline…</p>}><ShowTimelineEditor fxRecipes={fxLibrary(customEffects)} screens={stageElements.filter(e=>e.type==='led-screen')} displayId={stageElements.find(e=>e.mediaSource?.kind==='timeline')?.id ?? ''} onDisplayChange={routeTimelineVideo} selectedClipId={activeTimelineClipId} positionBar={timelinePositionBar} onSelectClip={selectTimelineClip} onRelease={releaseTimeline} onReset={() => { commitUniverse(makeUniverse()); timelinePositionRef.current=0; setTimelinePositionBar(0); activeTimelineClipRef.current=''; setActiveTimelineClipId(''); setActiveCueId(null); setActiveSectionId(''); }} key={timelineShowId} timeline={editingTimeline} cues={showFile.cues.filter(c => !timelineShowId || c.trackName === showFile.timelineShows?.find(t => t.id === timelineShowId)?.name)} audioRef={showTrackAudioRef} audioUrl={editingTimeline.audioName===showTrackName?showTrackUrl:''} audioName={editingTimeline.audioName??''} audioDurationMs={editingTimeline.audioName===showTrackName?showTrackDurationMs:0} masterBpm={masterTempoBpm} onMasterBpmChange={setMasterTempo} tempoLocked={tempoLocked} onTempoLockChange={changeTempoLock} onLoadAudio={loadShowAudioFile} onChange={updateEditingTimeline} onAddFx={addTimelineFx} fxTargetName={selectedGroup?.name??'All patched fixtures'} onFrame={renderTimelineFrame} onStop={stopTimeline} onCreator={() => setShowMode('creator')}/></Suspense></div>}
 
         {showMode === 'tracks' && <div className="tracks-console tracks-console-v3">
           <section className="console-panel track-source"><header><div><span>LOCAL AUDIO TRACK</span><h2>{showTrackName || 'No track loaded'}</h2></div><label className="file-button"><input type="file" accept="audio/*" onChange={loadShowTrack}/>{showTrackName?'Change Track':'Load Track'}</label></header><div className="track-timeline"><span>{formatShowTime(showTrackPositionMs)}</span><input type="range" min="0" max={Math.max(1,showTrackDurationMs)} value={Math.min(showTrackPositionMs,Math.max(1,showTrackDurationMs))} onChange={(event)=>{const next=Number(event.target.value);if(showTrackAudioRef.current)showTrackAudioRef.current.currentTime=next/1000;setShowTrackPositionMs(next);}}/><span>{formatShowTime(showTrackDurationMs)}</span></div><div className="track-actions"><button onClick={toggleShowTrackPreview}>Play / Pause</button><button onClick={()=>setShowMode('timeline')}>Open Timeline</button></div></section>
@@ -4646,6 +4730,10 @@ export default function App() {
         </div>}
 
         {showMode === 'recordings' && <div className="recordings-console-v3">
+          <section className="console-panel recording-source"><label>Song from Library<select aria-label="Recording Song Library" value={activeSongId} disabled={showRecordingActive} onChange={e=>{pauseRecorderTransport();setSelectedRecordingId('');pausedTakeRef.current=null;const song=songBank.find(s=>s.id===e.target.value);if(song)void selectBankSong(song);else{const program=songLibrary.find(p=>'library:'+p.id===e.target.value);if(program)void chooseRecordingLibrarySong(program);}}}><option value="">Choose Song</option>{songBank.map(song=><option key={song.id} value={song.id}>{song.name}</option>)}{songLibrary.filter(p=>!songBank.some(s=>s.libraryId===p.id)).map(p=><option key={p.id} value={'library:'+p.id}>{p.show.name} · Saved Library</option>)}</select></label>
+          <label>Lighting take<select aria-label="Recording lighting take" disabled={showRecordingActive} value={selectedRecordingId} onChange={e=>{pauseRecorderTransport();setSelectedRecordingId(e.target.value);pausedTakeRef.current=null;setShowTrackPositionMs(0);}}><option value="">Live capture / Song media</option>{showFile.recordings?.map(t=><option key={t.id} value={t.id}>{t.name}</option>)}</select></label>
+          <RecorderTransport audioRef={showTrackAudioRef} position={showRecordingActive?showRecordingElapsedMs:showTrackPositionMs} duration={showFile.recordings?.find(t=>t.id===selectedRecordingId)?.durationMs ?? showTrackDurationMs} bpm={masterTempoBpm} beatsPerBar={editingTimeline.beatsPerBar} recording={showRecordingActive} paused={recordingPaused} onBpm={setMasterTempo} onPlay={playRecorderTransport} onPause={pauseRecorderTransport} onSeek={seekRecorderTransport} onStop={()=>{if(showRecordingActive)stopShowRecording(true);else{pauseRecorderTransport();seekRecorderTransport(0);}}} />
+          <button onClick={()=>{setWorkspace('live');}}>Open Live controls</button></section>
           <section className="console-panel recording-command"><header><div><span>SHOW RECORDER</span><h2>Capture live lighting performance</h2></div><b>{showFile.recordings?.length ?? 0} TAKES</b></header><div className="recording-arm-row"><input value={recordingTakeName} placeholder={`Take ${(showFile.recordings?.length ?? 0)+1}`} onChange={(event)=>setRecordingTakeName(event.target.value)}/><button className="record-button" onClick={startShowRecording}>● RECORD SHOW</button></div><small>Records resolved lighting changes so the take can be replayed locally or driven by LumaStudio / MIDI transport.</small></section>
           <section className="console-panel recorded-takes-console"><header><div><span>LIGHTING TAKES</span><h2>Saved Performances</h2></div></header>{showFile.recordings?.length?showFile.recordings.map((recording)=><article key={recording.id}><span><strong>{recording.name}</strong><small>{formatShowTime(recording.durationMs)} · {recording.frames.length} changes</small></span><button className={playingRecordingId===recording.id?'console-primary':''} onClick={()=>playingRecordingId===recording.id?stopRecordedShowPlayback():playShowRecording(recording)}>{playingRecordingId===recording.id?'Stop':'Play'}</button><button onClick={()=>assignExternalRecording(recording.id)}>Assign to Sync</button><button className="danger-button" onClick={()=>deleteShowRecording(recording)}>Delete</button></article>):<div className="empty-cues"><strong>No recordings yet</strong><span>Arm the recorder and perform the show from LIVE.</span></div>}</section>
         </div>}
