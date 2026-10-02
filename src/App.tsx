@@ -171,12 +171,14 @@ import {
   fetchCloudShowLibrary,
   fetchCloudSongLibrary,
   listPairedControllers,
+  registerCloudDesktop,
   revokePairedController,
   saveCloudRecordingLabel,
   saveCloudShow,
   saveCloudSong,
   signInCloudAccount,
   signOutCloudAccount,
+  touchCloudDesktop,
   uploadCloudShowMedia,
   downloadCloudShowMedia,
   watchCloudLibrary,
@@ -860,16 +862,19 @@ export default function App() {
   }, [pairingSession]);
   useEffect(() => {
     let active = true;
-    void currentCloudAccount(remoteRelayConfig).then((account) => {
+    void currentCloudAccount(remoteRelayConfig).then(async (account) => {
       if (!active || !account) return;
+      const nextConfig: RemoteRelayConfig = {
+        ...remoteRelayConfig,
+        email: account.email,
+        roomCode: remoteRelayConfig.roomCode || (crypto.randomUUID().replace(/-/g, '') + crypto.randomUUID().replace(/-/g, '')),
+        password: '',
+      };
+      await registerCloudDesktop(nextConfig).catch(() => {});
+      if (!active) return;
       setCloudAccount(account);
       setCloudLoginEmail(account.email);
-      setRemoteRelayConfig((current) => ({
-        ...current,
-        email: account.email,
-        roomCode: current.roomCode || (crypto.randomUUID().replace(/-/g, '') + crypto.randomUUID().replace(/-/g, '')),
-        password: '',
-      }));
+      setRemoteRelayConfig(nextConfig);
     }).catch(() => {});
     return () => { active = false; };
   }, []);
@@ -906,6 +911,12 @@ export default function App() {
   }, [cloudAccount?.userId, remoteRelayConfig.roomCode]);
   const [message, setMessage] = useState('Control station ready. Connect DMX when you want physical output.');
   const [appVersion, setAppVersion] = useState('0.2.7');
+  useEffect(() => {
+    if (!cloudAccount) return;
+    void registerCloudDesktop(remoteRelayConfig, appVersion).catch(() => {});
+    const timer = window.setInterval(() => { void touchCloudDesktop(remoteRelayConfig).catch(() => {}); }, 60_000);
+    return () => window.clearInterval(timer);
+  }, [cloudAccount?.userId, remoteRelayConfig.url, remoteRelayConfig.publishableKey, appVersion]);
   const [updateStatus, setUpdateStatus] = useState<UpdateStatus>('idle');
   const [updateInfo, setUpdateInfo] = useState<UpdateMetadata | null>(null);
   const [updateError, setUpdateError] = useState('');
@@ -2144,6 +2155,7 @@ export default function App() {
       const account = await signInCloudAccount(remoteRelayConfig, cloudLoginEmail, cloudLoginPassword);
       const roomCode = remoteRelayConfig.roomCode || (crypto.randomUUID().replace(/-/g, '') + crypto.randomUUID().replace(/-/g, ''));
       const nextConfig: RemoteRelayConfig = { ...remoteRelayConfig, email: account.email, password: '', roomCode };
+      await registerCloudDesktop(nextConfig, appVersion);
       setCloudAccount(account);
       setCloudLoginEmail(account.email);
       setCloudLoginPassword('');
@@ -5142,7 +5154,7 @@ export default function App() {
                 {cloudError && <p className="relay-error">{cloudError}</p>}
                 <div className="settings-actions"><button className="console-primary" disabled={cloudAccountBusy || !cloudLoginEmail.trim() || !cloudLoginPassword} onClick={()=>void signInLumaCloud()}>{cloudAccountBusy ? 'Signing in…' : 'Sign in to LumaRig Cloud'}</button><button onClick={()=>window.open(REMOTE_APP_URL + '/account','lumarig-cloud','noopener,noreferrer')}>Open Online Library ↗</button></div>
               </> : <>
-                <div className="cloud-account-card"><div><small>ACCOUNT</small><strong>{cloudAccount.email}</strong><span>{cloudSongDocuments.length} cloud songs · {cloudShows.length} cloud shows · {cloudRecordingLabels.length} take labels</span></div><div><button onClick={()=>window.open(REMOTE_APP_URL + '/account','lumarig-cloud','noopener,noreferrer')}>Online Library ↗</button><button className="danger-outline" disabled={cloudAccountBusy} onClick={()=>void signOutLumaCloud()}>Sign Out</button></div></div>
+                <div className="cloud-account-card"><div><small>ACCOUNT</small><strong>{cloudAccount.email}</strong><span>{cloudSongDocuments.length} cloud songs · {cloudShows.length} cloud shows · {cloudRecordingLabels.length} take labels</span><code title={desktopDeviceId()}>DEVICE · {desktopDeviceId()}</code></div><div><button onClick={()=>window.open(REMOTE_APP_URL + '/account','lumarig-cloud','noopener,noreferrer')}>Online Library ↗</button><button className="danger-outline" disabled={cloudAccountBusy} onClick={()=>void signOutLumaCloud()}>Sign Out</button></div></div>
                 {cloudError && <p className="relay-error">{cloudError}</p>}
                 <div className="settings-actions"><button onClick={()=>void refreshCloudAccountLibrary()}>Sync Library Now</button>{remoteRelayStatus === 'connected' ? <button onClick={disconnectRemoteRelay}>Disconnect Remote</button> : <button className="console-primary" onClick={()=>void connectRemoteRelay()}>Connect Remote</button>}</div>
                 <details className="cloud-advanced-connection"><summary>Advanced Cloud Connection</summary><label><span>Supabase Project URL</span><input value={remoteRelayConfig.url} placeholder="https://project.supabase.co" onChange={(event) => setRemoteRelayConfig((current) => ({ ...current, url: event.target.value }))} /></label><label><span>Publishable Key</span><input type="password" value={remoteRelayConfig.publishableKey} onChange={(event) => setRemoteRelayConfig((current) => ({ ...current, publishableKey: event.target.value }))} /></label><label><span>Private Relay Room</span><div className="relay-room-row"><input value={remoteRelayConfig.roomCode} onChange={(event) => setRemoteRelayConfig((current) => ({ ...current, roomCode: event.target.value }))} /><button onClick={() => setRemoteRelayConfig((current) => ({ ...current, roomCode: crypto.randomUUID().replace(/-/g, '') + crypto.randomUUID().replace(/-/g, '') }))}>Regenerate</button></div></label></details>
@@ -5151,7 +5163,7 @@ export default function App() {
                   <header><div><small>CONTROLLER ACCESS</small><strong>Pair Controller</strong><span>Your LumaRig account is already authenticated. The QR and six-digit code only grant this iPad access to the private control relay.</span></div><button className="console-primary" disabled={pairingBusy} onClick={()=>void startControllerPairing()}>{pairingBusy ? 'Creating…' : pairingSession ? 'New Pairing Code' : 'Pair Controller'}</button></header>
                   {pairingSession && pairingSecondsRemaining > 0 && <div className="pairing-session-card"><div className="pairing-qr"><QRCodeSVG value={pairingSession.pairingUrl} size={196} level="M" bgColor="#ffffff" fgColor="#090b10" /></div><div className="pairing-code-display"><small>MANUAL CODE</small><strong>{pairingSession.code}</strong><span>Expires in {Math.floor(pairingSecondsRemaining/60)}:{String(pairingSecondsRemaining%60).padStart(2,'0')}</span><button onClick={()=>void navigator.clipboard?.writeText(pairingSession.pairingUrl)}>Copy Pair Link</button></div></div>}
                   {pairingSession && pairingSecondsRemaining === 0 && <div className="pairing-expired"><strong>Pairing code expired</strong><span>Generate a new code. Existing paired devices stay connected.</span></div>}
-                  <div className="paired-device-list"><div className="paired-device-heading"><span>PAIRED CONTROLLERS</span><button onClick={()=>void refreshPairedControllerList()}>Refresh</button></div>{pairedControllers.length ? pairedControllers.map((device)=><article key={device.id}><span><strong>{device.deviceName}</strong><small>Paired {new Date(device.createdAt).toLocaleString()}</small></span><button className="danger-button" onClick={()=>void revokeControllerPairing(device.id)}>Revoke</button></article>) : <p>No paired controllers yet.</p>}{pairedControllersError && <p className="relay-error">{pairedControllersError}</p>}</div>
+                  <div className="paired-device-list"><div className="paired-device-heading"><span>PAIRED CONTROLLERS</span><button onClick={()=>void refreshPairedControllerList()}>Refresh</button></div>{pairedControllers.length ? pairedControllers.map((device)=><article key={device.id}><span><strong>{device.deviceName}</strong><small>{device.platform}{device.appVersion ? ' · v'+device.appVersion : ''} · last seen {new Date(device.lastSeenAt).toLocaleString()}</small><code>{device.clientDeviceId || device.deviceUserId}</code></span><button className="danger-button" onClick={()=>void revokeControllerPairing(device.id)}>Revoke</button></article>) : <p>No paired controllers yet.</p>}{pairedControllersError && <p className="relay-error">{pairedControllersError}</p>}</div>
                 </div>}
               </>}
             </section>
