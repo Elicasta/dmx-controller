@@ -1,6 +1,7 @@
 mod dmx;
 mod midi;
 mod media_library;
+mod lumalive;
 mod output;
 mod studio_bridge;
 mod updates;
@@ -176,6 +177,10 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             open_stage_monitor,
             open_video_input_privacy_settings,
+            lumalive::scan_lumalive,
+            lumalive::pair_lumalive,
+            lumalive::lumalive_state,
+            lumalive::lumalive_command,
             media_library::media_library_snapshot,
             media_library::media_create_folder,
             media_library::media_rename_folder,
