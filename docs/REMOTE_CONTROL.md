@@ -1,6 +1,6 @@
 # Remote Control
 
-The web controller is a control surface, not an output engine. The Mac remains authoritative:
+The web controller is a control surface, not an output engine. The LumaRig desktop remains authoritative:
 
 ```text
 LumaRig Remote → private relay → ControlCommand → ShowRuntime → OutputRouter → uDMX
@@ -8,9 +8,9 @@ LumaRig Remote → private relay → ControlCommand → ShowRuntime → OutputRo
 
 ## Cross-network relay
 
-The relay uses Supabase Realtime Broadcast. Both devices establish outbound encrypted WebSocket connections, so separate LANs and mobile networks do not require an inbound port on the show Mac.
+The relay uses Supabase Realtime Broadcast. Both devices establish outbound encrypted WebSocket connections, so separate LANs and mobile networks do not require an inbound port on the show computer.
 
-The Mac signs in with the permanent operator account and joins:
+The LumaRig desktop signs in with the permanent operator account and joins:
 
 ```
 dmx:<operator-user-id>:<room-code>
@@ -29,17 +29,17 @@ Anonymous controller identities use Supabase's `authenticated` database role, bu
 
 Disable **Realtime → Allow public access**. Enable **Auth → Anonymous Sign-Ins** for pairing.
 
-Use only the project publishable key in clients. Never use a secret or service-role key. The Mac operator password is used only for Auth sign-in and is not written into LumaRig settings.
+Use only the project publishable key in clients. Never use a secret or service-role key. The desktop operator password is used only for Auth sign-in and is not written into LumaRig settings.
 
 ## Message flow
 
-The Mac publishes throttled `state.snapshot` messages containing cue, fixture, selection, master, blackout, effects, sync, recorder, and output health state. The PWA requests a fresh snapshot after joining. Commands return as typed semantic actions through the same ShowRuntime path used by the desktop controller. Raw-frame commands are rejected at the remote boundary.
+The LumaRig desktop publishes throttled `state.snapshot` messages containing cue, fixture, selection, master, blackout, effects, sync, recorder, and output health state. The PWA requests a fresh snapshot after joining. Commands return as typed semantic actions through the same ShowRuntime path used by the desktop controller. Raw-frame commands are rejected at the remote boundary.
 
 Momentary controls publish distinct `effect.press` and `effect.release` commands. The PWA also releases held controls on pointer cancellation, app blur, and screen lock.
 
 ## Failure behavior
 
-- Relay loss never stops cues, FX, recorder, MIDI, sync, or DMX on the Mac.
+- Relay loss never stops cues, FX, recorder, MIDI, sync, or DMX on the LumaRig desktop.
 - A disconnected or revoked controller cannot create new authorized relay subscriptions.
 - Invalid or unsupported commands return `command.result` errors.
 - The app does not auto-connect uDMX when the relay starts.
@@ -54,6 +54,6 @@ The companion `Elicasta/mycontroller` repository contains the canonical migratio
 supabase/cloud-shows-pairing.sql
 ```
 
-Apply it to the exact Supabase project configured by the production remote, enable Anonymous Sign-Ins, disable Realtime public access, and create one permanent operator account for the Mac.
+Apply it to the exact Supabase project configured by the production remote, enable Anonymous Sign-Ins, disable Realtime public access, and create one permanent operator account for the LumaRig desktop.
 
 The older `supabase/realtime-policies.sql` file remains as a relay-only compatibility migration and assumes `lumarig_controller_devices` already exists.
