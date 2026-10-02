@@ -1335,6 +1335,17 @@ input[type="text"], input[type="number"], .add-fixture-grid input, .patch-card-b
 .screen-source-inspector { display: grid; gap: 8px; padding: 10px; border: 1px solid #33434d; border-radius: 5px; background: #101820; }
 .screen-source-inspector header { display: grid; gap: 2px; }
 .screen-source-inspector .stage-source-error { color: #ff9c8f; }
+.video-permission-action {
+  justify-self: start;
+  width: auto !important;
+  min-height: 30px !important;
+  padding: 5px 9px !important;
+  border-color: #8b5b51 !important;
+  background: #2a1715 !important;
+  color: #ffb1a7 !important;
+  font-size: 9px !important;
+}
+.video-permission-action:hover { border-color: #d77b6d !important; background: #351b18 !important; }
 .stage-monitor-media-frame { position: relative; width: 100%; height: 100%; overflow: hidden; border: 2px solid; border-radius: 3px; background: #030507; }
 .stage-monitor-media-frame .stage-media-placeholder, .stage-monitor-media-frame .stage-media-status { font-size: 11px; }
 .stage-object-riser .stage-object-shape { height: 28px; margin-top: 38px; clip-path: polygon(7% 0, 93% 0, 100% 100%, 0 100%); background: color-mix(in srgb, currentColor 34%, #0d1116); }
