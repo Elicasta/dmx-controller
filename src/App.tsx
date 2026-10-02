@@ -743,6 +743,7 @@ export default function App() {
     manager.upsert({ id:'ableton', kind:'ableton', name:'Ableton Live', status:'off', capabilities:['transport','tempo','song-position'] });
     manager.upsert({ id:'lumalive', kind:'lumalive', name:'LumaLive', status:'off', capabilities:['transport','song-recall','performance'] });
     manager.upsert({ id:'propresenter', kind:'propresenter', name:'ProPresenter', status:'off', capabilities:['cue-trigger','transport','media'] });
+    manager.upsert({ id:'tracks', kind:'media', name:'Local Tracks', status:'off', capabilities:['transport','audio','recording'] });
     connectionManagerRef.current = manager;
   }
   const [sharedTransport, setSharedTransport] = useState(() => transportEngineRef.current!.snapshot());
@@ -2976,12 +2977,16 @@ export default function App() {
     if(showRecordingActiveRef.current){if(timelineRecordingOrigin.current){timelinePlayingRef.current=false;setTimelinePlaying(false);updateTimelineVideoFrame(timelinePositionRef.current*timelineRecordingOrigin.current.barMs);}recordingPausedRef.current=true;recordingPausedAt.current=performance.now();setRecordingPaused(true);showTrackAudioRef.current?.pause();return;}
     if(playingRecordingIdRef.current){pausedTakeRef.current={id:playingRecordingIdRef.current,position:showTrackPositionMs};stopRecordedShowPlayback(false);}
     showTrackAudioRef.current?.pause();
+    releaseSharedTransport('tracks',showTrackPositionMs);
   }
   function playRecorderTransport() {
     if(showRecordingActiveRef.current){
       if(recordingPausedRef.current){if(timelineRecordingOrigin.current){timelinePlayingRef.current=true;setTimelinePlaying(true);}showRecordingStartedRef.current+=performance.now()-recordingPausedAt.current;recordingPausedRef.current=false;setRecordingPaused(false);if(showTrackUrlRef.current)void showTrackAudioRef.current?.play().catch(error=>setMessage(String(error)));}
       return;
     }
+    const position=pausedTakeRef.current?.position ?? showTrackPositionMs;
+    const authority=applySharedTransport({source:'tracks',playing:true,positionMs:position,bpm:masterTempoBpm,claim:true});
+    if(!authority.accepted){setMessage(`Tracks playback is waiting for ${authority.state.source} transport authority.`);return;}
     const take=showFile.recordings?.find(t=>t.id===selectedRecordingId);
     if(take){playShowRecording(take,{positionMs:pausedTakeRef.current?.id===take.id?pausedTakeRef.current.position:showTrackPositionMs});pausedTakeRef.current=null;}
     else if(showTrackUrlRef.current)void showTrackAudioRef.current?.play().catch(error=>setMessage(String(error)));
@@ -2990,18 +2995,27 @@ export default function App() {
     if(showRecordingActiveRef.current)return;
     const take=showFile.recordings?.find(t=>t.id===selectedRecordingId);
     const next=Math.max(0,Math.min(take?.durationMs ?? showTrackDurationMs,position));
-    const wasPlaying=Boolean(playingRecordingIdRef.current);
+    const wasPlaying=Boolean(playingRecordingIdRef.current) || Boolean(showTrackAudioRef.current && !showTrackAudioRef.current.paused);
+    const authority=applySharedTransport({source:'tracks',positionMs:next,bpm:masterTempoBpm,claim:wasPlaying});
+    if(!authority.accepted){setMessage(`Track seek ignored while ${authority.state.source} owns transport.`);return;}
     stopRecordedShowPlayback(false);showTrackAudioRef.current?.pause();
     if(showTrackAudioRef.current && showTrackAudioRef.current.readyState>=1)showTrackAudioRef.current.currentTime=next/1000;
     setShowTrackPositionMs(next);
     timelinePositionRef.current=next*masterTempoBpm/60000/editingTimeline.beatsPerBar;setTimelinePositionBar(timelinePositionRef.current);
     if(take){prepareRecordingAt(take,next);pausedTakeRef.current={id:take.id,position:next};if(wasPlaying)playShowRecording(take,{positionMs:next});}
+    if(!wasPlaying) releaseSharedTransport('tracks',next);
   }
   function toggleShowTrackPreview() {
     const audio = showTrackAudioRef.current;
     if (!audio || !showTrackUrlRef.current || showRecordingActive || playingRecordingId) return;
-    if (audio.paused) void audio.play();
-    else audio.pause();
+    if (audio.paused) {
+      const result=applySharedTransport({source:'tracks',playing:true,positionMs:audio.currentTime*1000,bpm:masterTempoBpm,claim:true});
+      if(!result.accepted){setMessage(`Track preview is waiting for ${result.state.source} transport authority.`);return;}
+      void audio.play().catch(error=>setMessage(String(error)));
+    } else {
+      audio.pause();
+      releaseSharedTransport('tracks',audio.currentTime*1000);
+    }
   }
 
   function deleteShowRecording(recording: ShowRecording) {
@@ -5661,7 +5675,14 @@ export default function App() {
         const source=mediaPosition(timelinePositionRef.current*60000/masterTempoBpm*editingTimeline.beatsPerBar,editingTimeline.audioOffsetBars*60000/masterTempoBpm*editingTimeline.beatsPerBar,bounds);
         const boundary=timelinePositionRef.current<editingTimeline.audioOffsetBars ? bounds.startMs : bounds.endMs;
         event.currentTarget.currentTime=(source ?? (Number.isFinite(boundary) ? boundary : bounds.startMs))/1000;
-      }} onTimeUpdate={(event) => setShowTrackPositionMs(event.currentTarget.currentTime * 1000)} onEnded={handleShowTrackEnded} />
+      }} onTimeUpdate={(event) => {
+        const positionMs=event.currentTarget.currentTime*1000;
+        setShowTrackPositionMs(positionMs);
+        if(!event.currentTarget.paused && sharedTransport.source==='tracks'){
+          const result=transportEngineRef.current!.apply({source:'tracks',playing:true,positionMs,bpm:masterTempoBpm,claim:true});
+          if(result.accepted)setSharedTransport(result.state);
+        }
+      }} onEnded={()=>{releaseSharedTransport('tracks',showTrackDurationMs);handleShowTrackEnded();}} />
       {dmxStatus.blackout && <div className="blackout-banner"><strong>BLACKOUT ACTIVE</strong><span>Programmed fixture values are preserved.</span><button onClick={toggleBlackout}>Release Blackout</button></div>}
       {showRecordingActive && <section className="console-recording-bar"><span className="recording-pulse" /><div><strong>{timelineRecordingOrigin.current ? timelineRecordingOrigin.current.overdub?'TIMELINE OVERDUB':'TIMELINE RECORD' : 'RECORDING SHOW'}</strong><small>{showTrackName || 'Lighting only'} · {formatShowTime(showRecordingElapsedMs)}</small></div><button onClick={recordingPaused?playRecorderTransport:pauseRecorderTransport}>{recordingPaused?'Resume recording':'Pause recording'}</button><button onClick={() => stopShowRecording(true)}>Stop + save</button><button onClick={() => stopShowRecording(false)}>Cancel</button></section>}
       {activeRecordingPlayback && <section className="console-recording-bar playback"><span className="playback-pulse" /><div><strong>{recordingPlaybackExternalRef.current ? 'EXTERNAL SYNC' : 'RECORDED SHOW'}</strong><small>{activeRecordingPlayback.name} · {formatShowTime(showTrackPositionMs)} / {formatShowTime(activeRecordingPlayback.durationMs)}</small></div><button onClick={() => stopRecordedShowPlayback()}>Stop</button></section>}
@@ -6185,7 +6206,7 @@ export default function App() {
         {showMode === 'timeline' && <div className="timeline-workspace"><label className="timeline-show-select">Timeline show <select aria-label="Timeline show" value={timelineShowId} onChange={e=>{window.dispatchEvent(new Event('lumarig-stop-timeline'));stopTimeline();const item=showFile.timelineShows?.find(t=>t.id===e.target.value);const song=songBank.find(s=>s.name===item?.name);if(song)void selectBankSong(song,'timeline');else{++mediaLoadToken.current;setActiveSongId('');setTimelineShowId(e.target.value);showTrackAudioRef.current?.pause();}}}><option value="">Current show</option>{(showFile.timelineShows??[]).map(item=><option key={item.id} value={item.id}>{item.name}</option>)}</select></label><Suspense fallback={<p>Loading Timeline…</p>}><ShowTimelineEditor onRecord={recordIntoTimeline} keepMediaOnRelease={()=>Boolean(timelineRecordingOrigin.current && showRecordingActiveRef.current)} onExportVideo={exportTimelineVideo} onImportVideoClip={importTimelineVideoClip} onPlayingChange={changeTimelinePlaying} fxRecipes={fxLibrary(customEffects)} screens={stageElements.filter(e=>e.type==='led-screen')} displayId={stageElements.find(e=>e.mediaSource?.kind==='timeline')?.id ?? ''} onDisplayChange={routeTimelineVideo} selectedClipId={activeTimelineClipId} positionBar={timelinePositionBar} onSelectClip={selectTimelineClip} onRelease={releaseTimeline} onReset={() => { commitUniverse(makeUniverse()); timelinePositionRef.current=0; setTimelinePositionBar(0); activeTimelineClipRef.current=''; setActiveTimelineClipId(''); setActiveCueId(null); setActiveSectionId(''); }} key={timelineShowId} timeline={editingTimeline} cues={showFile.cues.filter(c => !timelineShowId || c.trackName === showFile.timelineShows?.find(t => t.id === timelineShowId)?.name)} audioRef={showTrackAudioRef} audioUrl={editingTimeline.audioName===showTrackName?showTrackUrl:''} audioName={editingTimeline.audioName??''} audioDurationMs={editingTimeline.audioName===showTrackName?showTrackDurationMs:0} masterBpm={masterTempoBpm} onMasterBpmChange={setMasterTempo} tempoLocked={tempoLocked} onTempoLockChange={changeTempoLock} tempoAnalysis={creatorSong?.tempoAnalysis} onDownbeatChange={correctActiveSongDownbeat} onOpenStepEditor={openTimelineStepEditor} onLoadAudio={loadShowAudioFile} onChange={updateEditingTimeline} onAddFx={addTimelineFx} fxTargetName={selectedGroup?.name??'All patched fixtures'} onFrame={renderTimelineFrame} onStop={stopTimeline} onCreator={() => changeShowMode('creator')}/></Suspense></div>}
 
         {showMode === 'tracks' && <div className="tracks-console tracks-console-v3">
-          <section className="console-panel track-source"><header><div><span>LOCAL AUDIO TRACK</span><h2>{showTrackName || 'No track loaded'}</h2></div><label className="file-button"><input type="file" accept="audio/*" onChange={loadShowTrack}/>{showTrackName?'Change Track':'Load Track'}</label></header><div className="track-timeline"><span>{formatShowTime(showTrackPositionMs)}</span><input type="range" min="0" max={Math.max(1,showTrackDurationMs)} value={Math.min(showTrackPositionMs,Math.max(1,showTrackDurationMs))} onChange={(event)=>{const next=Number(event.target.value);if(showTrackAudioRef.current)showTrackAudioRef.current.currentTime=next/1000;setShowTrackPositionMs(next);}}/><span>{formatShowTime(showTrackDurationMs)}</span></div><div className="track-actions"><button onClick={toggleShowTrackPreview}>Play / Pause</button><button onClick={()=>setShowMode('timeline')}>Open Timeline</button></div></section>
+          <section className="console-panel track-source"><header><div><span>LOCAL AUDIO TRACK</span><h2>{showTrackName || 'No track loaded'}</h2></div><label className="file-button"><input type="file" accept="audio/*" onChange={loadShowTrack}/>{showTrackName?'Change Track':'Load Track'}</label></header><div className="track-timeline"><span>{formatShowTime(showTrackPositionMs)}</span><input type="range" min="0" max={Math.max(1,showTrackDurationMs)} value={Math.min(showTrackPositionMs,Math.max(1,showTrackDurationMs))} onChange={(event)=>seekRecorderTransport(Number(event.target.value))}/><span>{formatShowTime(showTrackDurationMs)}</span></div><div className="track-actions"><button onClick={toggleShowTrackPreview}>Play / Pause</button><button onClick={()=>changeShowMode('timeline')}>Open Timeline</button></div></section>
           <section className="console-panel external-track-console"><header><div><span>STUDIO / DAW TRACK</span><h2>{externalTrack.songName || 'External Track'}</h2></div><b className={externalTransportRunning?'healthy':''}>{externalTransportRunning?'Following':externalTrack.armed?'Armed':'Off'}</b></header><label><span>Song Name</span><input value={externalTrack.songName} onChange={(event)=>updateExternalTrack({songName:event.target.value})}/></label><label><span>Lighting Take</span><select value={externalTrack.recordingId} onChange={(event)=>assignExternalRecording(event.target.value)}><option value="">Choose take</option>{showFile.recordings?.map((recording)=><option key={recording.id} value={recording.id}>{recording.name}</option>)}</select></label><div className="inspector-pair"><label><span>BPM</span><input type="number" value={externalTrack.bpm} onChange={(event)=>updateExternalTrack({bpm:Number(event.target.value)})}/></label><label><span>Advance ms</span><input type="number" value={externalTrack.lightingOffsetMs} onChange={(event)=>updateExternalTrack({lightingOffsetMs:Number(event.target.value)})}/></label></div><button className={externalTrack.armed?'danger-button':'console-primary'} onClick={toggleExternalTrackArm}>{externalTrack.armed?'Disarm External Sync':'Arm External Sync'}</button></section>
         </div>}
 
