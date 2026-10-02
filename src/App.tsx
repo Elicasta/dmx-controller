@@ -165,6 +165,8 @@ import { RemoteRelay, type RelayCommandEnvelope, type RemoteRelayConfig, type Re
 import { desktopDeviceId } from './core/supabase-client';
 import { StudioBridgeDispatcher } from './core/studio-bridge-dispatcher';
 import { abletonTimelineMarkers, abletonTimelinePositionBar, activeAbletonLocator, sanitizeAbletonSnapshot, type AbletonLiveSnapshot } from './core/ableton-live-sync';
+import { TransportEngine, type TransportSource, type TransportUpdate } from './core/transport-engine';
+import { ConnectionManager, type ConnectionRecord } from './core/connection-manager';
 import { QRCodeSVG } from 'qrcode.react';
 import {
   createCloudShowFolder,
@@ -729,14 +731,71 @@ export default function App() {
   const [artNetTelemetry, setArtNetTelemetry] = useState({ framesSent: 0, lastError: "" });
   const [directStatus, setDirectStatus] = useState<LumaVizDirectStatus>({ listening: false, port: 9460, clients: 0, framesSent: 0 });
   const [lumaVizPreview, setLumaVizPreview] = useState<{ dataUrl: string; timestamp: number; view?: string } | null>(null);
+  const transportEngineRef = useRef<TransportEngine | null>(null);
+  if (!transportEngineRef.current) transportEngineRef.current = new TransportEngine({ bpm: 120 });
+
+  const connectionManagerRef = useRef<ConnectionManager | null>(null);
+  if (!connectionManagerRef.current) {
+    const manager = new ConnectionManager();
+    manager.upsert({ id:'studio', kind:'studio', name:'LumaStudio', status:'off', capabilities:['transport','show-control','recording'] });
+    manager.upsert({ id:'midi', kind:'midi', name:'MIDI / DAW', status:'off', capabilities:['clock','transport','controls'] });
+    manager.upsert({ id:'ableton', kind:'ableton', name:'Ableton Live', status:'off', capabilities:['transport','tempo','song-position'] });
+    manager.upsert({ id:'lumalive', kind:'lumalive', name:'LumaLive', status:'off', capabilities:['transport','song-recall','performance'] });
+    manager.upsert({ id:'propresenter', kind:'propresenter', name:'ProPresenter', status:'off', capabilities:['cue-trigger','transport','media'] });
+    connectionManagerRef.current = manager;
+  }
+  const [sharedTransport, setSharedTransport] = useState(() => transportEngineRef.current!.snapshot());
+  const [connectionRecords, setConnectionRecords] = useState<ConnectionRecord[]>(() => connectionManagerRef.current!.snapshot());
+  const refreshConnectionRecords = () => setConnectionRecords(connectionManagerRef.current!.snapshot());
+
   const [studioBridgeStatus, setStudioBridgeStatus] = useState<StudioBridgeStatus>({ listening: false, port: 47777, connectedClients: 0 });
   const [abletonSnapshot, setAbletonSnapshot] = useState<AbletonLiveSnapshot | null>(null);
+  const [abletonConnected, setAbletonConnected] = useState(false);
   const abletonSnapshotRef = useRef<AbletonLiveSnapshot | null>(null);
+  const abletonLastSeenRef = useRef(0);
+  useEffect(() => {
+    const timer = window.setInterval(() => {
+      if (!abletonLastSeenRef.current || Date.now() - abletonLastSeenRef.current <= 2500) return;
+      abletonLastSeenRef.current = 0;
+      setAbletonConnected(false);
+      connectionManagerRef.current!.upsert({
+        id:'ableton',
+        kind:'ableton',
+        name:'Ableton Live',
+        status:'off',
+        capabilities:['transport','tempo','song-position'],
+        lastSeenAt:null,
+        lastError:'',
+        detail:'Waiting for Max for Live bridge'
+      });
+      refreshConnectionRecords();
+      if (transportEngineRef.current!.snapshot().source === 'ableton') releaseSharedTransport('ableton');
+    }, 1000);
+    return () => window.clearInterval(timer);
+  }, []);
   useEffect(() => {
     const refresh = () => {
       void invoke<StudioBridgeStatus>('studio_bridge_status')
-        .then(setStudioBridgeStatus)
-        .catch((error) => setStudioBridgeStatus((current) => ({ ...current, lastError: String(error) })));
+        .then((status) => {
+          setStudioBridgeStatus(status);
+          connectionManagerRef.current!.upsert({
+            id:'studio',
+            kind:'studio',
+            name:'LumaStudio',
+            status: status.lastError ? 'error' : status.connectedClients > 0 ? 'connected' : status.listening ? 'connecting' : 'off',
+            capabilities:['transport','show-control','recording'],
+            lastSeenAt: status.connectedClients > 0 ? Date.now() : null,
+            lastError: status.lastError ?? '',
+            detail: status.connectedClients > 0 ? `${status.connectedClients} client${status.connectedClients === 1 ? '' : 's'} · ws://127.0.0.1:${status.port}` : `Listening on ${status.port}`
+          });
+          refreshConnectionRecords();
+        })
+        .catch((error) => {
+          const message=String(error);
+          setStudioBridgeStatus((current) => ({ ...current, lastError: message }));
+          connectionManagerRef.current!.fail('studio',message);
+          refreshConnectionRecords();
+        });
     };
     refresh();
     const timer = window.setInterval(refresh, STATUS_POLL_MS);
@@ -1044,6 +1103,38 @@ export default function App() {
   const externalSongPositionMsRef = useRef(0);
   const externalClockUiTicksRef = useRef(0);
   const externalLightingOffsetRef = useRef(0);
+
+  function applySharedTransport(update: TransportUpdate, now = performance.now()) {
+    const result = transportEngineRef.current!.apply(update, now);
+    if (!result.accepted) return result;
+    const state = result.state;
+    setSharedTransport(state);
+    externalSongPositionMsRef.current = state.positionMs;
+    externalTransportRunningRef.current = state.playing;
+    setExternalSongPositionMs(state.positionMs);
+    setExternalTransportRunning(state.playing);
+    if (update.bpm != null && !tempoLockedRef.current) {
+      if (update.source === 'midi') {
+        setMidiBpm(state.bpm);
+        midiBpmRef.current = state.bpm;
+        setTempoSource('midi');
+        tempoSourceRef.current = 'midi';
+      } else {
+        setEffectBpm(state.bpm);
+        effectBpmRef.current = state.bpm;
+      }
+    }
+    return result;
+  }
+
+  function releaseSharedTransport(source: TransportSource, positionMs = externalSongPositionMsRef.current) {
+    return applySharedTransport({
+      source,
+      playing:false,
+      positionMs,
+      release:true
+    });
+  }
 
   const [newProfileId, setNewProfileId] = useState(FIXTURE_LIBRARY[0].id);
   const [newModeId, setNewModeId] = useState(FIXTURE_LIBRARY[0].modes[0].id);
@@ -2863,25 +2954,37 @@ export default function App() {
   function applyAbletonRuntimeSnapshot(input: AbletonLiveSnapshot) {
     const snapshot = sanitizeAbletonSnapshot(input);
     abletonSnapshotRef.current = snapshot;
+    abletonLastSeenRef.current = Date.now();
     setAbletonSnapshot(snapshot);
+    setAbletonConnected(true);
+    connectionManagerRef.current!.upsert({
+      id:'ableton',
+      kind:'ableton',
+      name:'Ableton Live',
+      status:'connected',
+      capabilities:['transport','tempo','song-position'],
+      lastSeenAt:Date.now(),
+      lastError:'',
+      detail:`${snapshot.locators.length} locators · ${snapshot.bpm.toFixed(1)} BPM`
+    });
+    refreshConnectionRecords();
 
     const rawPositionMs = snapshot.currentBeat * 60000 / snapshot.bpm;
-    const lightingPositionMs = applyLightingOffset(rawPositionMs, externalTrack.lightingOffsetMs);
-    const bar = abletonTimelinePositionBar(snapshot);
+    const result = applySharedTransport({
+      source:'ableton',
+      playing:snapshot.playing,
+      positionMs:rawPositionMs,
+      bpm:snapshot.bpm,
+      claim:snapshot.playing,
+      release:!snapshot.playing
+    });
+    if (!result.accepted) return;
 
-    setExternalSongPositionMs(rawPositionMs);
-    externalSongPositionMsRef.current = rawPositionMs;
-    setShowTrackPositionMs(rawPositionMs);
-    setExternalTransportRunning(snapshot.playing);
-    externalTransportRunningRef.current = snapshot.playing;
+    const lightingPositionMs = applyLightingOffset(result.state.positionMs, externalTrack.lightingOffsetMs);
+    const bar = abletonTimelinePositionBar(snapshot);
+    setShowTrackPositionMs(result.state.positionMs);
     timelinePositionRef.current = bar;
     setTimelinePositionBar(bar);
-
-    if (!tempoLockedRef.current) {
-      setEffectBpm(snapshot.bpm);
-      effectBpmRef.current = snapshot.bpm;
-    }
-
     renderTimelineFrame(lightingPositionMs);
   }
 
@@ -2981,11 +3084,15 @@ export default function App() {
       stopRecordingPlayback: () => stopRecordedShowPlayback(false),
       setBlackout: (enabled) => setBlackoutState(enabled, 'remote'),
       syncTransport: (playing, positionMs, bpm) => {
-        setExternalSongPositionMs(positionMs);
-        externalSongPositionMsRef.current = positionMs;
-        setExternalTransportRunning(playing);
-        externalTransportRunningRef.current = playing;
-        if (!tempoLockedRef.current) { setEffectBpm(bpm); effectBpmRef.current = bpm; }
+        const result=applySharedTransport({
+          source:'studio',
+          playing,
+          positionMs,
+          bpm,
+          claim:playing,
+          release:!playing
+        });
+        if(!result.accepted) throw new Error(`Transport authority is currently held by ${result.state.source}.`);
       },
       syncAbletonSnapshot: (snapshot) => applyAbletonRuntimeSnapshot(snapshot),
       syncAbletonTransport: (playing, currentBeat, bpm, beatsPerBar) => {
@@ -3321,19 +3428,42 @@ export default function App() {
   }
 
   async function connectMidi() {
+    connectionManagerRef.current!.upsert({
+      id:'midi',kind:'midi',name:'MIDI / DAW',status:'connecting',
+      capabilities:['clock','transport','controls'],detail:'Opening selected MIDI input'
+    });
+    refreshConnectionRecords();
     try {
       await invoke('connect_midi', { inputId: Number(selectedMidiInput) });
-      setMidiStatus(await invoke<MidiStatus>('midi_status'));
+      const status=await invoke<MidiStatus>('midi_status');
+      setMidiStatus(status);
+      connectionManagerRef.current!.upsert({
+        id:'midi',kind:'midi',name:status.input_name || 'MIDI / DAW',status:'connected',
+        capabilities:['clock','transport','controls'],lastSeenAt:Date.now(),detail:status.last_event || 'Waiting for MIDI'
+      });
+      refreshConnectionRecords();
       setMessage('MIDI connected. Notes, CC, clock, and transport are being monitored.');
-    } catch (error) { setMessage(`MIDI connection failed: ${String(error)}`); }
+    } catch (error) {
+      connectionManagerRef.current!.fail('midi',String(error));
+      refreshConnectionRecords();
+      setMessage(`MIDI connection failed: ${String(error)}`);
+    }
   }
 
   async function disconnectMidi() {
     try {
       await invoke('disconnect_midi');
-      setMidiStatus(await invoke<MidiStatus>('midi_status'));
+      const status=await invoke<MidiStatus>('midi_status');
+      setMidiStatus(status);
+      connectionManagerRef.current!.disconnect('midi','Disconnected by operator');
+      refreshConnectionRecords();
+      releaseSharedTransport('midi');
       setMessage('MIDI disconnected.');
-    } catch (error) { setMessage(`MIDI disconnect failed: ${String(error)}`); }
+    } catch (error) {
+      connectionManagerRef.current!.fail('midi',String(error));
+      refreshConnectionRecords();
+      setMessage(`MIDI disconnect failed: ${String(error)}`);
+    }
   }
 
   async function refreshPairedControllerList() {
@@ -3511,50 +3641,64 @@ export default function App() {
       }
       if (externalTrack.armed && externalTransportRunningRef.current) {
         const transportBpm = midiBpmRef.current ?? externalTrack.bpm;
-        externalSongPositionMsRef.current += 60000 / Math.max(20, transportBpm) / 24;
-        externalClockUiTicksRef.current += 1;
-        if (externalClockUiTicksRef.current % 6 === 0) {
-          setExternalSongPositionMs(externalSongPositionMsRef.current);
+        const result=transportEngineRef.current!.advance('midi',60000/Math.max(20,transportBpm)/24,transportBpm,now);
+        if(result.accepted){
+          externalSongPositionMsRef.current=result.state.positionMs;
+          externalClockUiTicksRef.current += 1;
+          if (externalClockUiTicksRef.current % 6 === 0) {
+            setExternalSongPositionMs(result.state.positionMs);
+            setSharedTransport(result.state);
+          }
         }
       }
       return;
     }
     if (event.kind === 'song_position' && externalTrack.armed) {
       const positionMs = midiSongPositionToMs(event.song_position ?? 0, midiBpmRef.current ?? externalTrack.bpm);
-      const lightingPositionMs = applyLightingOffset(positionMs, externalTrack.lightingOffsetMs);
-      externalSongPositionMsRef.current = positionMs;
-      setExternalSongPositionMs(positionMs);
+      const result=applySharedTransport({
+        source:'midi',
+        positionMs,
+        bpm:midiBpmRef.current ?? externalTrack.bpm,
+        claim:externalTransportRunningRef.current
+      });
+      if(!result.accepted)return;
+      const lightingPositionMs = applyLightingOffset(result.state.positionMs, externalTrack.lightingOffsetMs);
       setShowTrackPositionMs(lightingPositionMs);
-      if (externalTransportRunningRef.current && externalTrackRecording) {
+      if (result.state.playing && externalTrackRecording) {
         playShowRecording(externalTrackRecording, { external: true, positionMs: lightingPositionMs });
       }
-      setMessage(`External song position: ${formatShowTime(positionMs)}.`);
+      setMessage(`External song position: ${formatShowTime(result.state.positionMs)}.`);
       return;
     }
     if ((event.kind === 'start' || event.kind === 'continue') && externalTrack.armed) {
       const dawPositionMs = event.kind === 'start' ? 0 : externalSongPositionMsRef.current;
-      const startAt = applyLightingOffset(dawPositionMs, externalTrack.lightingOffsetMs);
       if (event.kind === 'start') {
-        externalSongPositionMsRef.current = 0;
-        setExternalSongPositionMs(0);
         midiClockTimesRef.current = [];
         midiBpmRef.current = null;
         setMidiBpm(null);
       }
+      const result=applySharedTransport({
+        source:'midi',
+        playing:true,
+        positionMs:dawPositionMs,
+        bpm:midiBpmRef.current ?? externalTrack.bpm,
+        claim:true
+      });
+      if(!result.accepted){
+        setMessage(`MIDI transport ignored while ${result.state.source} owns transport.`);
+        return;
+      }
       externalClockUiTicksRef.current = 0;
-      externalTransportRunningRef.current = true;
-      setExternalTransportRunning(true);
-      if (!tempoLockedRef.current) { setTempoSource('midi'); tempoSourceRef.current = 'midi'; }
+      const startAt = applyLightingOffset(result.state.positionMs, externalTrack.lightingOffsetMs);
       if (externalTrackRecording) playShowRecording(externalTrackRecording, { external: true, positionMs: startAt });
       else setMessage('External transport started, but no recorded lighting take is assigned.');
       return;
     }
     if (event.kind === 'stop' && externalTrack.armed) {
-      externalTransportRunningRef.current = false;
-      setExternalTransportRunning(false);
-      setExternalSongPositionMs(externalSongPositionMsRef.current);
+      const result=releaseSharedTransport('midi');
+      if(!result.accepted)return;
       if (recordingPlaybackExternalRef.current) stopRecordedShowPlayback(false);
-      setMessage(`${externalTrack.songName || 'External song'} stopped at ${formatShowTime(externalSongPositionMsRef.current)}.`);
+      setMessage(`${externalTrack.songName || 'External song'} stopped at ${formatShowTime(result.state.positionMs)}.`);
       return;
     }
     if (event.kind === 'note_off' && event.number != null && event.channel != null) {
@@ -3603,16 +3747,36 @@ export default function App() {
   };
 
   useEffect(() => {
-    if (!midiStatus.connected) return;
+    if (!midiStatus.connected) {
+      connectionManagerRef.current!.disconnect('midi');
+      refreshConnectionRecords();
+      return;
+    }
     const interval = window.setInterval(async () => {
       try {
         const events = await invoke<MidiEvent[]>('drain_midi_events');
         events.forEach((event) => midiActionRef.current(event));
-        setMidiStatus(await invoke<MidiStatus>('midi_status'));
-      } catch { /* connection may be rebuilding */ }
+        const status=await invoke<MidiStatus>('midi_status');
+        setMidiStatus(status);
+        if(status.connected){
+          connectionManagerRef.current!.upsert({
+            id:'midi',kind:'midi',name:status.input_name || 'MIDI / DAW',status:'connected',
+            capabilities:['clock','transport','controls'],
+            lastSeenAt:status.messages_received>0?Date.now():connectionManagerRef.current!.get('midi')?.lastSeenAt ?? null,
+            lastError:status.last_error ?? '',
+            detail:status.last_event || (midiClockSeen?'Clock received':'Waiting for MIDI')
+          });
+        }else{
+          connectionManagerRef.current!.disconnect('midi','Native MIDI input closed');
+        }
+        refreshConnectionRecords();
+      } catch (error) {
+        connectionManagerRef.current!.fail('midi',String(error),true);
+        refreshConnectionRecords();
+      }
     }, MIDI_POLL_MS);
     return () => window.clearInterval(interval);
-  }, [midiStatus.connected]);
+  }, [midiStatus.connected, midiClockSeen]);
 
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
@@ -4782,7 +4946,24 @@ export default function App() {
     const active=activeVideoClip({...editingTimeline,bpm:masterTempoBpm},elapsedMs);
     videoOutputOverrideRef.current={url:active?videoAssetsRef.current.get(active.clip.mediaId)??'':'',name:active?.clip.name??'',position:active?.position??0,playing:timelinePlayingRef.current,sentAt:Date.now()};
   }
-  function changeTimelinePlaying(playing:boolean){timelinePlayingRef.current=playing;setTimelinePlaying(playing);updateTimelineVideoFrame(timelinePositionRef.current*60000/masterTempoBpm*editingTimeline.beatsPerBar);}
+  function changeTimelinePlaying(playing:boolean){
+    const positionMs=timelinePositionRef.current*60000/masterTempoBpm*editingTimeline.beatsPerBar;
+    const result=applySharedTransport({
+      source:'timeline',
+      playing,
+      positionMs,
+      bpm:masterTempoBpm,
+      claim:playing,
+      release:!playing
+    });
+    if(!result.accepted){
+      setMessage(`Timeline transport is waiting for ${result.state.source} authority to release.`);
+      return;
+    }
+    timelinePlayingRef.current=playing;
+    setTimelinePlaying(playing);
+    updateTimelineVideoFrame(positionMs);
+  }
   function addTimelineFx(recipeId:string,startBar:number,lane:number) {
     const recipe=fxLibrary(customEffects).find(r=>r.id===recipeId);if(!recipe)return;
     if(showFile.cues.length>=200||editingTimeline.clips.length>=1000){setMessage('Cue or timeline clip limit reached.');return;}
@@ -5868,7 +6049,7 @@ export default function App() {
         </div>}
 
         {showMode === 'sync' && <div className="show-sync-v3">
-          <section className="console-panel sync-status-card ableton-sync-card"><header><div><span>ABLETON LIVE</span><h2>{abletonSnapshot?.setName || 'Locator Bridge'}</h2></div><b className={abletonSnapshot && studioBridgeStatus.connectedClients>0?'healthy':''}>{abletonSnapshot && studioBridgeStatus.connectedClients>0?'LINKED':'WAITING'}</b></header><div className="sync-metrics"><span><small>LOCATORS</small><strong>{abletonSnapshot?.locators.length ?? 0}</strong></span><span><small>SECTION</small><strong>{abletonSnapshot ? (activeAbletonLocator(abletonSnapshot)?.name ?? 'Pre-roll') : '—'}</strong></span><span><small>POSITION</small><strong>{abletonSnapshot ? `B${abletonSnapshot.currentBeat.toFixed(1)}` : '—'}</strong></span><span><small>BPM</small><strong>{abletonSnapshot?.bpm ?? '—'}</strong></span></div><p>Arrangement locators are mirrored onto LumaRig Timeline. Live supplies musical position; LumaRig resolves the lighting show.</p></section>
+          <section className="console-panel sync-status-card ableton-sync-card"><header><div><span>ABLETON LIVE</span><h2>{abletonSnapshot?.setName || 'Locator Bridge'}</h2></div><b className={abletonConnected?'healthy':''}>{abletonConnected?'LINKED':'WAITING'}</b></header><div className="sync-metrics"><span><small>LOCATORS</small><strong>{abletonSnapshot?.locators.length ?? 0}</strong></span><span><small>SECTION</small><strong>{abletonSnapshot ? (activeAbletonLocator(abletonSnapshot)?.name ?? 'Pre-roll') : '—'}</strong></span><span><small>POSITION</small><strong>{abletonSnapshot ? `B${abletonSnapshot.currentBeat.toFixed(1)}` : '—'}</strong></span><span><small>AUTHORITY</small><strong>{sharedTransport.source === 'ableton' ? 'ABLETON' : sharedTransport.source.toUpperCase()}</strong></span></div><p>Arrangement locators are mirrored onto LumaRig Timeline. Live supplies musical position; LumaRig resolves the lighting show.</p></section>
           <section className="console-panel sync-status-card"><header><div><span>LUMASTUDIO</span><h2>Transport Authority</h2></div><b className={studioBridgeStatus.connectedClients>0?'healthy':''}>{studioBridgeStatus.connectedClients>0?'CONNECTED':studioBridgeStatus.listening?'READY':'OFFLINE'}</b></header><div className="sync-metrics"><span><small>PORT</small><strong>{studioBridgeStatus.port}</strong></span><span><small>CLIENTS</small><strong>{studioBridgeStatus.connectedClients}</strong></span><span><small>TRANSPORT</small><strong>{externalTransportRunning?'FOLLOWING':'LOCAL'}</strong></span><span><small>AUTHORITY</small><strong>RIG LIGHTING</strong></span></div><p>Studio controls transport and song position. LumaRig keeps authority over cue execution, FX and DMX output.</p></section>
           <section className="console-panel sync-status-card"><header><div><span>MIDI</span><h2>Clock + Transport</h2></div><b className={midiStatus.connected?'healthy':''}>{midiStatus.connected?'CONNECTED':'OFFLINE'}</b></header><div className="sync-metrics"><span><small>INPUT</small><strong>{midiStatus.input_name || '—'}</strong></span><span><small>CLOCK</small><strong>{midiClockSeen?'SEEN':'WAITING'}</strong></span><span><small>BPM</small><strong>{midiBpm || effectBpm}</strong></span><span><small>MESSAGES</small><strong>{midiStatus.messages_received}</strong></span></div><button onClick={()=>{setWorkspace('build');setSetupView('settings');}}>Open Connections</button></section>
           <section className="console-panel sync-status-card"><header><div><span>LUMAVIZ</span><h2>Preview + Shared Show</h2></div><b className={directStatus.clients>0?'healthy':''}>{directStatus.clients>0?'CONNECTED':directStatus.listening?'READY':'OFFLINE'}</b></header><div className="sync-metrics"><span><small>DIRECT PORT</small><strong>{directStatus.port}</strong></span><span><small>CLIENTS</small><strong>{directStatus.clients}</strong></span><span><small>FRAMES</small><strong>{directStatus.framesSent}</strong></span><span><small>LOCATION</small><strong>{activeLocation?.name || '—'}</strong></span></div></section>
