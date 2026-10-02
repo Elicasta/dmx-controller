@@ -1,3 +1,5 @@
+import type { AbletonLiveSnapshot } from './ableton-live-sync';
+
 export const STUDIO_BRIDGE_PROTOCOL = 1;
 
 export type StudioSongIdentity = {
@@ -21,7 +23,9 @@ export type StudioBridgeCommand =
   | { type: 'record.play'; recordingId: string; offsetMs?: number }
   | { type: 'record.stopPlayback' }
   | { type: 'blackout'; enabled: boolean }
-  | { type: 'transport'; playing: boolean; positionMs: number; bpm: number };
+  | { type: 'transport'; playing: boolean; positionMs: number; bpm: number }
+  | { type: 'ableton.snapshot'; snapshot: AbletonLiveSnapshot }
+  | { type: 'ableton.transport'; playing: boolean; currentBeat: number; bpm: number; beatsPerBar: number };
 
 export type StudioBridgeResult = {
   id: string;
