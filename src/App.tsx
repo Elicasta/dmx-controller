@@ -3543,50 +3543,64 @@ export default function App() {
       }
       if (externalTrack.armed && externalTransportRunningRef.current) {
         const transportBpm = midiBpmRef.current ?? externalTrack.bpm;
-        externalSongPositionMsRef.current += 60000 / Math.max(20, transportBpm) / 24;
-        externalClockUiTicksRef.current += 1;
-        if (externalClockUiTicksRef.current % 6 === 0) {
-          setExternalSongPositionMs(externalSongPositionMsRef.current);
+        const result=transportEngineRef.current!.advance('midi',60000/Math.max(20,transportBpm)/24,transportBpm,now);
+        if(result.accepted){
+          externalSongPositionMsRef.current=result.state.positionMs;
+          externalClockUiTicksRef.current += 1;
+          if (externalClockUiTicksRef.current % 6 === 0) {
+            setExternalSongPositionMs(result.state.positionMs);
+            setSharedTransport(result.state);
+          }
         }
       }
       return;
     }
     if (event.kind === 'song_position' && externalTrack.armed) {
       const positionMs = midiSongPositionToMs(event.song_position ?? 0, midiBpmRef.current ?? externalTrack.bpm);
-      const lightingPositionMs = applyLightingOffset(positionMs, externalTrack.lightingOffsetMs);
-      externalSongPositionMsRef.current = positionMs;
-      setExternalSongPositionMs(positionMs);
+      const result=applySharedTransport({
+        source:'midi',
+        positionMs,
+        bpm:midiBpmRef.current ?? externalTrack.bpm,
+        claim:externalTransportRunningRef.current
+      });
+      if(!result.accepted)return;
+      const lightingPositionMs = applyLightingOffset(result.state.positionMs, externalTrack.lightingOffsetMs);
       setShowTrackPositionMs(lightingPositionMs);
-      if (externalTransportRunningRef.current && externalTrackRecording) {
+      if (result.state.playing && externalTrackRecording) {
         playShowRecording(externalTrackRecording, { external: true, positionMs: lightingPositionMs });
       }
-      setMessage(`External song position: ${formatShowTime(positionMs)}.`);
+      setMessage(`External song position: ${formatShowTime(result.state.positionMs)}.`);
       return;
     }
     if ((event.kind === 'start' || event.kind === 'continue') && externalTrack.armed) {
       const dawPositionMs = event.kind === 'start' ? 0 : externalSongPositionMsRef.current;
-      const startAt = applyLightingOffset(dawPositionMs, externalTrack.lightingOffsetMs);
       if (event.kind === 'start') {
-        externalSongPositionMsRef.current = 0;
-        setExternalSongPositionMs(0);
         midiClockTimesRef.current = [];
         midiBpmRef.current = null;
         setMidiBpm(null);
       }
+      const result=applySharedTransport({
+        source:'midi',
+        playing:true,
+        positionMs:dawPositionMs,
+        bpm:midiBpmRef.current ?? externalTrack.bpm,
+        claim:true
+      });
+      if(!result.accepted){
+        setMessage(`MIDI transport ignored while ${result.state.source} owns transport.`);
+        return;
+      }
       externalClockUiTicksRef.current = 0;
-      externalTransportRunningRef.current = true;
-      setExternalTransportRunning(true);
-      if (!tempoLockedRef.current) { setTempoSource('midi'); tempoSourceRef.current = 'midi'; }
+      const startAt = applyLightingOffset(result.state.positionMs, externalTrack.lightingOffsetMs);
       if (externalTrackRecording) playShowRecording(externalTrackRecording, { external: true, positionMs: startAt });
       else setMessage('External transport started, but no recorded lighting take is assigned.');
       return;
     }
     if (event.kind === 'stop' && externalTrack.armed) {
-      externalTransportRunningRef.current = false;
-      setExternalTransportRunning(false);
-      setExternalSongPositionMs(externalSongPositionMsRef.current);
+      const result=releaseSharedTransport('midi');
+      if(!result.accepted)return;
       if (recordingPlaybackExternalRef.current) stopRecordedShowPlayback(false);
-      setMessage(`${externalTrack.songName || 'External song'} stopped at ${formatShowTime(externalSongPositionMsRef.current)}.`);
+      setMessage(`${externalTrack.songName || 'External song'} stopped at ${formatShowTime(result.state.positionMs)}.`);
       return;
     }
     if (event.kind === 'note_off' && event.number != null && event.channel != null) {
