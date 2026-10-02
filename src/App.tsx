@@ -1990,6 +1990,124 @@ export default function App() {
     if (activeCueId === id) setActiveCueId(null);
   }
 
+  function cloudProgramFromDocument(document: CloudSongDocument): SongProgram | null {
+    if (!isSongProgram(document.program)) return null;
+    let program = structuredClone(document.program);
+    const sourceSong = program.show.songs?.[0];
+    if (!sourceSong) return null;
+    if (sourceSong.name !== document.title) {
+      program.show = renameSong(program.show, sourceSong.id, document.title);
+    }
+    program.id = document.songId;
+    program.savedAt = document.updatedAt;
+    program.revision = Math.max(program.revision, document.revision);
+    program.show = {
+      ...program.show,
+      name: document.title,
+      songs: songsForShow(program.show).map((song, index) => index === 0 ? {
+        ...song,
+        libraryId: document.songId,
+        name: document.title,
+        bpm: document.bpm,
+        musicalKey: document.musicalKey,
+        artist: document.artist,
+        arrangement: document.arrangement,
+        notes: document.notes,
+      } : song),
+      timeline: program.show.timeline ? { ...program.show.timeline, bpm: document.bpm } : program.show.timeline,
+    };
+    return isSongProgram(program) ? program : null;
+  }
+
+  async function refreshCloudAccountLibrary() {
+    if (!cloudAccount) return;
+    try {
+      const [songs, labels] = await Promise.all([
+        fetchCloudSongLibrary(remoteRelayConfig),
+        fetchCloudRecordingLabels(remoteRelayConfig),
+      ]);
+      setCloudSongDocuments(songs);
+      setCloudRecordingLabels(labels);
+      for (const document of songs) {
+        const program = cloudProgramFromDocument(document);
+        if (!program) continue;
+        const saved = await upsertSongProgram(program);
+        setSongLibrary(saved.programs);
+      }
+      if (labels.length) {
+        const names = new Map(labels.map((item) => [item.takeId, item.label]));
+        setShowFile((current) => ({
+          ...current,
+          recordings: current.recordings?.map((recording) => names.has(recording.id) ? { ...recording, name: names.get(recording.id)! } : recording),
+        }));
+      }
+    } catch (error) {
+      setCloudError(error instanceof Error ? error.message : String(error));
+    }
+  }
+
+  async function syncSongProgramToCloud(program: SongProgram) {
+    if (!cloudAccount) return;
+    const song = program.show.songs?.[0];
+    if (!song) return;
+    const known = cloudSongDocuments.find((item) => item.songId === program.id);
+    const result = await saveCloudSong(remoteRelayConfig, {
+      songId: program.id,
+      title: song.name,
+      artist: song.artist || '',
+      bpm: song.bpm,
+      musicalKey: song.musicalKey || '',
+      arrangement: song.arrangement || (program.show.creatorSections ?? []).map((section) => section.name),
+      notes: song.notes || '',
+      program,
+      expectedRevision: known?.revision ?? 0,
+      deviceId: desktopDeviceId(),
+    });
+    if (result.conflict) {
+      await refreshCloudAccountLibrary();
+      throw new Error('This Song changed in the online library. LumaRig pulled the latest cloud version instead of overwriting it.');
+    }
+    await refreshCloudAccountLibrary();
+  }
+
+  async function signInLumaCloud() {
+    if (cloudAccountBusy) return;
+    setCloudAccountBusy(true);
+    setCloudError('');
+    try {
+      const account = await signInCloudAccount(remoteRelayConfig, cloudLoginEmail, cloudLoginPassword);
+      const roomCode = remoteRelayConfig.roomCode || (crypto.randomUUID().replace(/-/g, '') + crypto.randomUUID().replace(/-/g, ''));
+      const nextConfig: RemoteRelayConfig = { ...remoteRelayConfig, email: account.email, password: '', roomCode };
+      setCloudAccount(account);
+      setCloudLoginEmail(account.email);
+      setCloudLoginPassword('');
+      setRemoteRelayConfig(nextConfig);
+      setMessage('LumaRig Cloud signed in. Your library and controller pairing are available on this computer.');
+    } catch (error) {
+      setCloudError(error instanceof Error ? error.message : String(error));
+    } finally {
+      setCloudAccountBusy(false);
+    }
+  }
+
+  async function signOutLumaCloud() {
+    setCloudAccountBusy(true);
+    try {
+      await disconnectRemoteRelay();
+      await signOutCloudAccount(remoteRelayConfig);
+      cloudLibraryUnsubscribeRef.current?.();
+      cloudLibraryUnsubscribeRef.current = null;
+      setCloudAccount(null);
+      setCloudSongDocuments([]);
+      setCloudRecordingLabels([]);
+      setRemoteRelayConfig((current) => ({ ...current, email: '', password: '' }));
+      setMessage('Signed out of LumaRig Cloud. Local Shows, Songs, and DMX continue to work.');
+    } catch (error) {
+      setCloudError(error instanceof Error ? error.message : String(error));
+    } finally {
+      setCloudAccountBusy(false);
+    }
+  }
   async function refreshCloudLibrary() {
     setCloudStatus('loading');
     setCloudError('');
