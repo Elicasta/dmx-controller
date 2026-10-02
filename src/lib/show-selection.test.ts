@@ -17,6 +17,7 @@ const fixtures=[{id:'a',profileId:'adj-mega-par-profile-plus',modeId:'ch05',addr
 describe('cue target authority',()=>{
   it('focuses the fixture addressed by sparse tracked instructions',()=>expect(cueTargetIds(show,{changes:[[7,255]]} as unknown as ShowCue,fixtures,[])).toEqual(['b']));
   it('includes every enabled FX layer but ignores stale and disabled targets',()=>expect(cueTargetIds(show,{effectStack:[{targetIds:['gone','b']},{targetIds:['a'],enabled:false}]} as ShowCue,fixtures,[])).toEqual(['b']));
+  it('includes static targets alongside independently targeted FX',()=>expect(cueTargetIds(show,{changes:[[7,255]],effectStack:[{targetIds:['a']}]} as unknown as ShowCue,fixtures,[])).toEqual(['a','b']));
   it('selects the patch for a full legacy frame',()=>expect(cueTargetIds(show,{universe:Array(512).fill(0)} as ShowCue,fixtures,[])).toEqual(['a','b']));
   it('clears target selection for a cue with no fixture instructions',()=>expect(cueTargetIds(show,{changes:[]} as unknown as ShowCue,fixtures,[])).toEqual([]));
 });
