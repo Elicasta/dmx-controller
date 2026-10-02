@@ -52,6 +52,7 @@ type Props = {
   onFrame: (elapsedMs: number) => void;
   onStop: () => void;
   onCreator: () => void;
+  onOpenStepEditor?: (cueId:string)=>void;
   tempoLocked: boolean;
   onTempoLockChange: (locked: boolean) => void;
   masterBpm: number;
@@ -1024,6 +1025,11 @@ export default function ShowTimelineEditor(props: Props) {
                 >
                   Duplicate
                 </button>
+                {(() => {
+                  const cue=cues.find(item=>item.id===selected.cueId);
+                  const hasSteps=Boolean(cue?.effectStack?.some(layer=>layer.effect.waveform==='step'||layer.effect.steps?.length||layer.effect.lanes?.some(lane=>lane.steps?.length)));
+                  return hasSteps && props.onOpenStepEditor ? <button disabled={playing} onClick={()=>props.onOpenStepEditor?.(selected.cueId)}>Open Step Editor ↗</button> : null;
+                })()}
                 <button
                   disabled={playing}
                   onClick={() => {
