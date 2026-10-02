@@ -23,7 +23,7 @@ This folder is the Max for Live side of the LumaRig Ableton integration.
 
 ## Timing
 
-The Max bridge is the Ableton transport authority while it is actively playing. It sends exact musical position at 40 Hz and LumaRig runs those updates through the shared transport engine before rendering Timeline output.
+The Max bridge is the Ableton transport authority while it is actively playing. It sends exact musical position at about 30 Hz and LumaRig runs those updates through the shared transport engine before rendering Timeline output.
 
 MIDI Clock remains available as a fallback DAW transport, but it should not be armed as a second authority at the same time. The transport engine prevents Ableton, MIDI, Timeline and Studio from fighting over the playhead.
 
@@ -31,4 +31,4 @@ The Max bridge also carries the information MIDI cannot express cleanly: locator
 
 ## Failure behavior
 
-If Max, Ableton or the bridge disconnects, LumaRig does not blackout or clear its current output. Local control remains available. The Node bridge retries the local connection every second and drops transport packets while disconnected rather than building a stale queue.
+If Max, Ableton or the bridge disconnects, LumaRig does not blackout or clear its current output. Local control remains available. The Node bridge retries the local connection every second and keeps only the latest locator map and transport state. When LumaRig returns, the bridge performs a protocol handshake and restores that current state without replaying stale packets.
