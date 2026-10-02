@@ -630,16 +630,24 @@ pub fn media_begin_managed_write(
 pub fn media_append_managed_write(
     app: AppHandle,
     state: State<'_, MediaLibraryState>,
-    asset_id: String,
-    chunk: Vec<u8>,
+    request: tauri::ipc::Request<'_>,
 ) -> Result<(), String> {
+    let asset_id = request
+        .headers()
+        .get("x-lumarig-media-id")
+        .and_then(|value| value.to_str().ok())
+        .filter(|value| !value.trim().is_empty())
+        .ok_or("Media chunk is missing its asset id.")?;
+    let tauri::ipc::InvokeBody::Raw(chunk) = request.body() else {
+        return Err("Media chunk must use Tauri's binary IPC body.".to_string());
+    };
     let _guard = state.lock.lock().map_err(|_| "Media library lock failed.".to_string())?;
-    let path = incoming_path(&app, &asset_id)?;
+    let path = incoming_path(&app, asset_id)?;
     let mut file = OpenOptions::new()
         .append(true)
         .open(&path)
         .map_err(|error| io_error("Media staging file could not be opened", error))?;
-    file.write_all(&chunk)
+    file.write_all(chunk)
         .map_err(|error| io_error("Media chunk could not be written", error))
 }
 
