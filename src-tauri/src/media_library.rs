@@ -4,7 +4,7 @@ use std::{
     fs::{self, File, OpenOptions},
     io::{Read, Seek, Write},
     path::{Path, PathBuf},
-    sync::Mutex,
+    sync::{Arc, Mutex},
     time::{SystemTime, UNIX_EPOCH},
 };
 use tauri::{AppHandle, Manager, State};
@@ -17,9 +17,9 @@ const BACKUP_FORMAT: &str = "lumarig-portable-backup";
 const BACKUP_VERSION: u32 = 1;
 const MAX_MANIFEST_BYTES: u64 = 64 * 1024 * 1024;
 
-#[derive(Default)]
+#[derive(Default, Clone)]
 pub struct MediaLibraryState {
-    lock: Mutex<()>,
+    lock: Arc<Mutex<()>>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -479,10 +479,9 @@ pub fn media_delete_folder(
     write_registry(&app, &registry)
 }
 
-#[tauri::command]
-pub async fn media_pick_import(
+fn media_pick_import_impl(
     app: AppHandle,
-    state: State<'_, MediaLibraryState>,
+    state: MediaLibraryState,
     mode: String,
     folder_id: Option<String>,
 ) -> Result<Vec<MediaAsset>, String> {
@@ -623,10 +622,9 @@ pub fn media_remove_asset(
     Ok(())
 }
 
-#[tauri::command]
-pub async fn media_relink_asset(
+fn media_relink_asset_impl(
     app: AppHandle,
-    state: State<'_, MediaLibraryState>,
+    state: MediaLibraryState,
     asset_id: String,
 ) -> Result<Option<MediaAsset>, String> {
     let selected = app
@@ -843,10 +841,9 @@ pub fn media_finish_managed_write(
     Ok(result)
 }
 
-#[tauri::command]
-pub async fn media_export_portable_backup(
+fn media_export_portable_backup_impl(
     app: AppHandle,
-    state: State<'_, MediaLibraryState>,
+    state: MediaLibraryState,
     manifest_json: String,
     media_ids: Vec<String>,
     suggested_name: String,
@@ -961,10 +958,9 @@ pub async fn media_export_portable_backup(
     Ok(Some(path.to_string_lossy().to_string()))
 }
 
-#[tauri::command]
-pub async fn media_import_portable_backup(
+fn media_import_portable_backup_impl(
     app: AppHandle,
-    state: State<'_, MediaLibraryState>,
+    state: MediaLibraryState,
 ) -> Result<Option<PortableBackupImport>, String> {
     let selected = app
         .dialog()
@@ -1447,4 +1443,58 @@ mod tests {
         assert!(!sanitize_file_name(r"C:\Music\song.wav").contains('\\'));
         assert!(!sanitize_file_name("../../song.wav").contains('/'));
     }
+}
+
+#[tauri::command]
+pub async fn media_pick_import(
+    app: AppHandle,
+    state: State<'_, MediaLibraryState>,
+    mode: String,
+    folder_id: Option<String>,
+) -> Result<Vec<MediaAsset>, String> {
+    let state = state.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        media_pick_import_impl(app, state, mode, folder_id)
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
+pub async fn media_relink_asset(
+    app: AppHandle,
+    state: State<'_, MediaLibraryState>,
+    asset_id: String,
+) -> Result<Option<MediaAsset>, String> {
+    let state = state.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || media_relink_asset_impl(app, state, asset_id))
+        .await
+        .map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
+pub async fn media_export_portable_backup(
+    app: AppHandle,
+    state: State<'_, MediaLibraryState>,
+    manifest_json: String,
+    media_ids: Vec<String>,
+    suggested_name: String,
+) -> Result<Option<String>, String> {
+    let state = state.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        media_export_portable_backup_impl(app, state, manifest_json, media_ids, suggested_name)
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
+pub async fn media_import_portable_backup(
+    app: AppHandle,
+    state: State<'_, MediaLibraryState>,
+) -> Result<Option<PortableBackupImport>, String> {
+    let state = state.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || media_import_portable_backup_impl(app, state))
+        .await
+        .map_err(|e| e.to_string())?
 }
