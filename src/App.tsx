@@ -4296,6 +4296,114 @@ export default function App() {
     setMessage(`${asset.name} linked to ${song.name} from Media Library.`);
   }
 
+  function portableFileStem(name: string) {
+    return (name.trim() || 'LumaRig').replace(/[<>:\"/\\|?*\u0000-\u001f]/g, '_').replace(/\s+/g, ' ').slice(0, 120);
+  }
+
+  async function ensurePortableMedia(payload: unknown) {
+    const mediaIds = collectMediaIds(payload);
+    for (const mediaId of mediaIds) {
+      const nativeAsset = await readMediaAsset(mediaId);
+      if (nativeAsset?.missing) throw Error('Relink missing media before export: ' + nativeAsset.name);
+      if (nativeAsset) continue;
+      const legacy = await readSongMedia(mediaId);
+      if (!legacy) throw Error('Media used by this file is missing: ' + (mediaNameForId(payload, mediaId) ?? mediaId));
+      await persistManagedMedia(mediaId, legacy, mediaNameForId(payload, mediaId) ?? (mediaId + '.media'));
+    }
+    return mediaIds;
+  }
+
+  async function exportSongPackage(songOrProgram: SongRecord | SongProgram) {
+    try {
+      const program = 'show' in songOrProgram ? structuredClone(songOrProgram) : extractSongProgram(showFileRef.current, songOrProgram);
+      const name = program.show.name || program.show.songs?.[0]?.name || 'Song';
+      setMessage('Preparing ' + name + '.lumarigsong…');
+      const mediaIds = await ensurePortableMedia(program);
+      const path = await exportPortablePackage('lumarig-song', program, mediaIds, portableFileStem(name));
+      if (path) setMessage(name + '.lumarigsong saved · ' + mediaIds.length + ' media file' + (mediaIds.length === 1 ? '' : 's') + ' included.');
+    } catch (error) {
+      setMessage('Song export failed: ' + (error instanceof Error ? error.message : String(error)));
+    }
+  }
+
+  async function importSongPackageFile() {
+    let staged: Awaited<ReturnType<typeof importPortablePackage<SongProgram>>> = null;
+    try {
+      setMessage('Opening LumaRig Song file…');
+      staged = await importPortablePackage<SongProgram>('lumarig-song');
+      if (!staged) return;
+      if (!isSongProgram(staged.manifest.payload)) throw Error('This .lumarigsong file contains invalid Song programming.');
+      const committedMedia = await commitPortableBackupRestore(staged.restoreToken);
+      const imported = await importSongProgram(staged.manifest.payload);
+      setSongLibrary(imported.state.programs);
+      setShowRecovery(imported.state.recovery);
+      setMessage(imported.program.show.name + ' imported into Song Library' + (imported.conflictCopy ? ' as a separate copy' : '') + ' · ' + committedMedia + ' new media file' + (committedMedia === 1 ? '' : 's') + '.');
+    } catch (error) {
+      if (staged?.restoreToken) await cancelPortableBackupRestore(staged.restoreToken).catch(() => {});
+      setMessage('Song import failed: ' + (error instanceof Error ? error.message : String(error)));
+    }
+  }
+
+  function portableShowSnapshot(snapshot?: ShowProjectSnapshot): ShowProjectSnapshot {
+    if (snapshot) return { ...structuredClone(snapshot), cloudRevision: undefined, cloudFolderId: undefined, lastEditor: 'lumarig', show: sanitizeShow(snapshot.show) };
+    const cleanName = showFileRef.current.name.trim() || 'Untitled Show';
+    return {
+      id: 'show-' + Date.now().toString(36),
+      name: cleanName, savedAt: new Date().toISOString(), status: 'show',
+      revision: sharedShowRevisionRef.current, lastEditor: 'lumarig',
+      show: sanitizeShow({ ...showFileRef.current, name: cleanName }),
+      patch: patchRef.current.map((fixture, index) => migratePatchedFixture(fixture, index, patchRef.current.length, stageSettings.dimensions)),
+      stageElements: stageElements.map((element) => migrateStageElement(element, stageSettings.dimensions)),
+      stageSettings: { ...stageSettings, dimensions: { ...stageSettings.dimensions } },
+      looks: [...savedLooks],
+    };
+  }
+
+  async function exportShowPackage(snapshot?: ShowProjectSnapshot) {
+    try {
+      const portable = portableShowSnapshot(snapshot);
+      setMessage('Preparing ' + portable.name + '.lumarigshow…');
+      const mediaIds = await ensurePortableMedia(portable);
+      const path = await exportPortablePackage('lumarig-show', portable, mediaIds, portableFileStem(portable.name));
+      if (path) setMessage(portable.name + '.lumarigshow saved · ' + mediaIds.length + ' media file' + (mediaIds.length === 1 ? '' : 's') + ' included.');
+    } catch (error) {
+      setMessage('Show export failed: ' + (error instanceof Error ? error.message : String(error)));
+    }
+  }
+
+  async function importShowPackageFile() {
+    let staged: Awaited<ReturnType<typeof importPortablePackage<ShowProjectSnapshot>>> = null;
+    try {
+      setMessage('Opening LumaRig Show file…');
+      staged = await importPortablePackage<ShowProjectSnapshot>('lumarig-show');
+      if (!staged) return;
+      if (!isShowProjectSnapshot(staged.manifest.payload)) throw Error('This .lumarigshow file contains invalid Show programming.');
+      let imported = portableShowSnapshot(staged.manifest.payload);
+      const existing = showLibrary.find((item) => item.id === imported.id);
+      if (existing && JSON.stringify({ ...existing, savedAt: '', cloudRevision: undefined, cloudFolderId: undefined }) === JSON.stringify({ ...imported, savedAt: '', cloudRevision: undefined, cloudFolderId: undefined })) {
+        const committedMedia = await commitPortableBackupRestore(staged.restoreToken);
+        setMessage(existing.name + ' is already in Show Library · ' + committedMedia + ' missing media file' + (committedMedia === 1 ? '' : 's') + ' restored.');
+        return;
+      }
+      if (existing) {
+        const base = imported.name;
+        const used = new Set(showLibrary.map((item) => item.name.toLowerCase()));
+        let name = base + ' (Imported)', n = 2;
+        while (used.has(name.toLowerCase())) name = base + ' (Imported ' + n++ + ')';
+        imported = { ...imported, id: 'show-' + Date.now().toString(36) + '-' + crypto.randomUUID().slice(0, 8), name };
+      }
+      imported = { ...imported, savedAt: new Date().toISOString(), cloudRevision: undefined, cloudFolderId: undefined, lastEditor: 'lumarig' };
+      const committedMedia = await commitPortableBackupRestore(staged.restoreToken);
+      const projects = [imported, ...showLibrary.filter((item) => item.id !== imported.id)].slice(0, 40);
+      const saved = await saveAppProgramState(showFileRef.current, { seed: [imported.show], workspace: { ...currentWorkspaceCheckpoint(), projects } });
+      setShowLibrary(projects); setSongLibrary(saved.programs); setShowRecovery(saved.recovery);
+      try { writeCompatibilityStorage(SHOW_LIBRARY_STORAGE_KEY, JSON.stringify(projects)); } catch {}
+      setMessage(imported.name + ' imported into Show Library · ' + committedMedia + ' new media file' + (committedMedia === 1 ? '' : 's') + '.');
+    } catch (error) {
+      if (staged?.restoreToken) await cancelPortableBackupRestore(staged.restoreToken).catch(() => {});
+      setMessage('Show import failed: ' + (error instanceof Error ? error.message : String(error)));
+    }
+  }
   async function exportLocalPortableBackup() {
     if (!libraryReady) throw Error('Song Library is still opening.');
     setMessage('Preparing portable backup…');
