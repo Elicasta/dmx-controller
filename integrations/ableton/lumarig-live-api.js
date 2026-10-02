@@ -22,7 +22,9 @@ function stringValue(value, fallback) {
 function readLiveSet() {
   var set = new LiveAPI(null, "live_set");
   var bpm = numberValue(set.get("tempo"), 120);
-  var beatsPerBar = Math.max(1, Math.min(12, Math.round(numberValue(set.get("signature_numerator"), 4))));
+  var signatureNumerator = Math.max(1, Math.min(99, Math.round(numberValue(set.get("signature_numerator"), 4))));
+  var signatureDenominator = Math.max(1, Math.min(64, Math.round(numberValue(set.get("signature_denominator"), 4))));
+  var beatsPerBar = signatureNumerator * 4 / signatureDenominator;
   var currentBeat = Math.max(0, numberValue(set.get("current_song_time"), 0));
   var playing = numberValue(set.get("is_playing"), 0) !== 0;
   var locators = [];
@@ -53,6 +55,8 @@ function readLiveSet() {
     setName: "Ableton Live",
     bpm: bpm,
     beatsPerBar: beatsPerBar,
+    signatureNumerator: signatureNumerator,
+    signatureDenominator: signatureDenominator,
     currentBeat: currentBeat,
     playing: playing,
     locators: locators
@@ -70,6 +74,8 @@ function poll() {
       snapshot.setId,
       snapshot.bpm,
       snapshot.beatsPerBar,
+      snapshot.signatureNumerator,
+      snapshot.signatureDenominator,
       snapshot.locators
     ]);
     if (locatorSignature !== lastLocatorSignature) {
@@ -103,7 +109,7 @@ function start() {
   lastTransportSignature = "";
   poll();
   pollTask = new Task(poll, this);
-  pollTask.interval = 25;
+  pollTask.interval = 33;
   pollTask.repeat();
   outlet(1, "status", "LiveAPI polling started");
 }
