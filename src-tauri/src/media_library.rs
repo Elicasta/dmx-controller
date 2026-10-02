@@ -214,13 +214,29 @@ fn write_registry(app: &AppHandle, registry: &MediaRegistry) -> Result<(), Strin
     fs::create_dir_all(&root).map_err(|error| io_error("Media library folder could not be created", error))?;
     let path = registry_path(app)?;
     let temp = root.join("registry.json.tmp");
+    let backup = root.join("registry.json.bak");
     let data = serde_json::to_vec_pretty(registry)
         .map_err(|error| io_error("Media registry could not be serialized", error))?;
     fs::write(&temp, data).map_err(|error| io_error("Media registry could not be staged", error))?;
-    if path.exists() {
-        fs::remove_file(&path).map_err(|error| io_error("Previous media registry could not be replaced", error))?;
+
+    if backup.exists() {
+        let _ = fs::remove_file(&backup);
     }
-    fs::rename(&temp, &path).map_err(|error| io_error("Media registry could not be committed", error))
+    if path.exists() {
+        fs::rename(&path, &backup)
+            .map_err(|error| io_error("Previous media registry could not be protected", error))?;
+    }
+    if let Err(error) = fs::rename(&temp, &path) {
+        if backup.exists() {
+            let _ = fs::rename(&backup, &path);
+        }
+        let _ = fs::remove_file(&temp);
+        return Err(io_error("Media registry could not be committed", error));
+    }
+    if backup.exists() {
+        let _ = fs::remove_file(&backup);
+    }
+    Ok(())
 }
 
 fn asset_snapshot(asset: &StoredMediaAsset) -> MediaAsset {
