@@ -164,6 +164,7 @@ import { makeSelectionGrid, moveFixtureInSelectionGrid, normalizeSelectionGrid, 
 import { RemoteRelay, type RelayCommandEnvelope, type RemoteRelayConfig, type RemoteRelayStatus } from './core/remote-relay';
 import { desktopDeviceId } from './core/supabase-client';
 import { StudioBridgeDispatcher } from './core/studio-bridge-dispatcher';
+import { abletonTimelineElapsedMs, abletonTimelineMarkers, abletonTimelinePositionBar, activeAbletonLocator, sanitizeAbletonSnapshot, type AbletonLiveSnapshot } from './core/ableton-live-sync';
 import { TransportEngine, type TransportSource, type TransportUpdate } from './core/transport-engine';
 import { ConnectionManager, type ConnectionRecord } from './core/connection-manager';
 import { lumaLivePositionMs, loadLumaLiveConnection, pairLumaLive, readLumaLiveState, saveLumaLiveConnection, scanLumaLive, sendLumaLiveCommand, type LumaLiveConnection, type LumaLiveEndpoint, type LumaLiveState } from './core/lumalive-client';
@@ -740,7 +741,8 @@ export default function App() {
     const manager = new ConnectionManager();
     manager.upsert({ id:'studio', kind:'studio', name:'LumaStudio', status:'off', capabilities:['transport','show-control','recording'] });
     manager.upsert({ id:'midi', kind:'midi', name:'MIDI / DAW', status:'off', capabilities:['clock','transport','controls'] });
-    manager.upsert({ id:'ableton', kind:'ableton', name:'Ableton Live', status:'off', capabilities:['transport','tempo','song-position'] });
+    manager.upsert({ id:'ableton', kind:'ableton', name:'Ableton Live · Max Bridge', status:'off', capabilities:['transport','tempo','song-position','locators'] });
+    manager.upsert({ id:'ableton-lumalive', kind:'ableton', name:'Ableton via LumaLive', status:'off', capabilities:['transport','tempo','song-position'] });
     manager.upsert({ id:'lumalive', kind:'lumalive', name:'LumaLive', status:'off', capabilities:['transport','song-recall','performance'] });
     manager.upsert({ id:'propresenter', kind:'propresenter', name:'ProPresenter', status:'off', capabilities:['cue-trigger','transport','media'] });
     manager.upsert({ id:'tracks', kind:'media', name:'Local Tracks', status:'off', capabilities:['transport','audio','recording'] });
@@ -763,6 +765,32 @@ export default function App() {
   const [proPresenterError, setProPresenterError] = useState('');
 
   const [studioBridgeStatus, setStudioBridgeStatus] = useState<StudioBridgeStatus>({ listening: false, port: 47777, connectedClients: 0 });
+  const [abletonSnapshot, setAbletonSnapshot] = useState<AbletonLiveSnapshot | null>(null);
+  const [abletonConnected, setAbletonConnected] = useState(false);
+  const abletonSnapshotRef = useRef<AbletonLiveSnapshot | null>(null);
+  const abletonLastSeenRef = useRef(0);
+  const abletonUiUpdateRef = useRef(0);
+  const abletonConnectionUpdateRef = useRef(0);
+  useEffect(() => {
+    const timer = window.setInterval(() => {
+      if (!abletonLastSeenRef.current || Date.now() - abletonLastSeenRef.current <= 2500) return;
+      abletonLastSeenRef.current = 0;
+      setAbletonConnected(false);
+      connectionManagerRef.current!.upsert({
+        id:'ableton',
+        kind:'ableton',
+        name:'Ableton Live · Max Bridge',
+        status:'off',
+        capabilities:['transport','tempo','song-position','locators'],
+        lastSeenAt:null,
+        lastError:'',
+        detail:'Waiting for Max for Live bridge'
+      });
+      refreshConnectionRecords();
+      if (transportEngineRef.current!.snapshot().source === 'ableton') releaseSharedTransport('ableton');
+    }, 1000);
+    return () => window.clearInterval(timer);
+  }, []);
   useEffect(() => {
     const refresh = () => {
       void invoke<StudioBridgeStatus>('studio_bridge_status')
@@ -1407,7 +1435,7 @@ export default function App() {
           detail:[state.currentSongTitle,state.currentSectionName].filter(Boolean).join(' · ') || `v${lumaLiveConnection.version || 'connected'}`
         });
         connectionManagerRef.current!.upsert({
-          id:'ableton',kind:'ableton',name:'Ableton Live',status:state.bridgeConnected?'connected':'degraded',
+          id:'ableton-lumalive',kind:'ableton',name:'Ableton via LumaLive',status:state.bridgeConnected?'connected':'degraded',
           capabilities:['transport','tempo','song-position'],lastSeenAt:state.bridgeConnected?Date.now():null,
           lastError:state.bridgeConnected?'':'LumaLive is running but its Ableton adapter is offline.',
           detail:state.bridgeConnected?`${state.tempo.toFixed(1)} BPM · ${state.playing?'Playing':'Stopped'}`:'Open Ableton with the Luma Live Max adapter'
@@ -1439,7 +1467,7 @@ export default function App() {
         const message=error instanceof Error?error.message:String(error);
         setLumaLiveError(message);
         connectionManagerRef.current!.fail('lumalive',message,true);
-        connectionManagerRef.current!.disconnect('ableton','LumaLive state unavailable');
+        connectionManagerRef.current!.disconnect('ableton-lumalive','LumaLive state unavailable');
         refreshConnectionRecords();
       }
     };
