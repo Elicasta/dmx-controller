@@ -23,13 +23,16 @@ export function getLumaSupabaseClient(url: string, publishableKey: string): Supa
   return client;
 }
 
-export function desktopPlatformId() {
-  if (typeof navigator === 'undefined') return 'desktop';
-  const source = `${navigator.platform || ''} ${navigator.userAgent || ''}`;
+export function classifyDesktopPlatform(source: string) {
   if (/windows|win32|win64/i.test(source)) return 'windows';
   if (/macintosh|mac os|macintel/i.test(source)) return 'macos';
   if (/linux/i.test(source)) return 'linux';
   return 'desktop';
+}
+
+export function desktopPlatformId() {
+  if (typeof navigator === 'undefined') return 'desktop';
+  return classifyDesktopPlatform(`${navigator.platform || ''} ${navigator.userAgent || ''}`);
 }
 
 export function desktopDeviceId() {
