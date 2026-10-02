@@ -17,8 +17,18 @@ import {
   snapBar,
   type ShowTimeline,
   type TimelineClip,
+  type FxRecipe,
+  type TimelineMediaClip,
+  type TimelineTakeClip,
 } from "../lib/show-design";
 type Props = {
+  onImportVideoClip?: (file:File,startBar:number)=>void;
+  onPlayingChange?: (playing:boolean)=>void;
+  onExportVideo?: (clip?:TimelineMediaClip)=>void;
+  fxRecipes?: FxRecipe[];
+  screens?: Array<{id:string;label:string}>;
+  onDisplayChange?: (screenId:string)=>void;
+  displayId?: string;
   selectedClipId?: string;
   positionBar?: number;
   onSelectClip?: (id: string, bar: number) => void;
@@ -45,7 +55,7 @@ type Props = {
   onMasterBpmChange: (bpm: number) => void;
 };
 type Drag = {
-  kind: "move" | "resize" | "audio" | "trim-in" | "trim-out" | "playhead";
+  kind: "move" | "resize" | "audio" | "trim-in" | "trim-out" | "playhead" | "video-move" | "video-resize" | "take-move" | "take-resize";
   id: string;
   x: number;
   start: number;
@@ -73,14 +83,17 @@ export default function ShowTimelineEditor(props: Props) {
     onMasterBpmChange,
   tempoLocked, onTempoLockChange,
   } = props;
+  const recipes=props.fxRecipes ?? FX_RECIPES;
+  const clipClipboard=useRef<{kind:'cue'|'video'|'take';clip:TimelineClip|TimelineMediaClip|TimelineTakeClip}|null>(null);
+  const selectedRef=useRef('');
   const audioStarting = useRef(false);
   const playAttempt = useRef(0);
-  const [libraryMode,setLibraryMode]=useState<"cues"|"fx">("cues");
+  const [libraryMode,setLibraryMode]=useState<"cues"|"fx"|"myfx">("cues");
   const [localSelectedId, setLocalSelectedId] = useState("");
   const selectedId = props.selectedClipId ?? localSelectedId;
   function setSelectedId(id: string) {
     setLocalSelectedId(id);
-    const clip = latest.current.timeline.clips.find(item => item.id === id);
+    const clip = [...latest.current.timeline.clips,...latest.current.timeline.videoClips??[],...latest.current.timeline.takeClips??[]].find(item => item.id === id);
     latest.current.onSelectClip?.(id, clip?.startBar ?? cursorRef.current);
   }
   const [cursor, setCursor] = useState(props.positionBar ?? props.initialBar ?? 0);
@@ -109,6 +122,8 @@ export default function ShowTimelineEditor(props: Props) {
   const clipEnd = Math.max(
     0,
     ...timeline.clips.map((c) => c.startBar + c.lengthBars),
+    ...(timeline.videoClips??[]).map(c=>c.startBar+c.lengthBars),
+    ...(timeline.takeClips??[]).map(c=>c.startBar+c.lengthBars),
   );
   const bounds = mediaWindow(timeline, audioDurationMs);
   const audioEnd = timeline.audioOffsetBars + bounds.durationMs / msPerBar;
@@ -117,7 +132,30 @@ export default function ShowTimelineEditor(props: Props) {
   const endBar = Math.max(16, clipEnd, audioEnd);
   const totalBars = Math.max(32, Math.ceil(endBar + 8));
   const laneCount = Math.max(lanes, ...timeline.clips.map((c) => c.lane + 1));
+  const selectedVideo=timeline.videoClips?.find(c=>c.id===selectedId);
+  const selectedTake=timeline.takeClips?.find(c=>c.id===selectedId);
+  const [takeChannel,setTakeChannel]=useState(1),[takeValue,setTakeValue]=useState(255);
   const selected = timeline.clips.find((c) => c.id === selectedId);
+  selectedRef.current=selectedId;
+  const shortcutRef=useRef<(event:KeyboardEvent)=>void>(()=>{});
+  shortcutRef.current=(event)=>{
+    const target=event.target as HTMLElement|null;if(target?.closest('input,textarea,select,[contenteditable="true"]') || !(event.ctrlKey||event.metaKey))return;
+    const key=event.key.toLowerCase();
+    if(key==='z'||key==='y'){event.preventDefault();pause();history(key==='y'||event.shiftKey?'redo':'undo');}
+    else if(key==='c'){
+      const t=latest.current.timeline,id=selectedRef.current;
+      const clip=t.clips.find(c=>c.id===id)??t.videoClips?.find(c=>c.id===id)??t.takeClips?.find(c=>c.id===id);
+      if(clip){event.preventDefault();clipClipboard.current={kind:'cueId' in clip?'cue':'mediaId' in clip?'video':'take',clip:structuredClone(clip)};}
+    }
+    else if(key==='v' && clipClipboard.current){event.preventDefault();pause();const {kind,clip:source}=clipClipboard.current,t=latest.current.timeline;
+      const clip={...structuredClone(source),id:crypto.randomUUID(),startBar:snapBar(cursorRef.current,snap)};
+      if(kind==='cue' && t.clips.length<1000)edit({...t,clips:[...t.clips,clip as TimelineClip]});
+      if(kind==='video' && (t.videoClips?.length??0)<100)edit({...t,videoClips:[...t.videoClips??[],clip as TimelineMediaClip]});
+      if(kind==='take' && (t.takeClips?.length??0)<24)edit({...t,takeClips:[...t.takeClips??[],clip as TimelineTakeClip]});
+      setSelectedId(clip.id);
+    }
+  };
+  useEffect(()=>{const keydown=(event:KeyboardEvent)=>shortcutRef.current(event);window.addEventListener('keydown',keydown);return()=>window.removeEventListener('keydown',keydown);},[]);
   useEffect(() => {
     if (props.positionBar === undefined || Math.abs(props.positionBar-cursorRef.current)<0.00001) return;
     cursorRef.current=props.positionBar; setCursor(props.positionBar);
@@ -197,6 +235,7 @@ export default function ShowTimelineEditor(props: Props) {
     ++playAttempt.current; audioStarting.current = false;
     playingRef.current = false;
     setPlaying(false);
+    latest.current.onPlayingChange?.(false);
     if (raf.current !== null) cancelAnimationFrame(raf.current);
     raf.current = null;
     audioRef.current?.pause();
@@ -224,6 +263,7 @@ export default function ShowTimelineEditor(props: Props) {
     setAudioError("");
     playingRef.current = true;
     setPlaying(true);
+    latest.current.onPlayingChange?.(true);
     let previous = performance.now(),
       lastPaint = previous - 40;
     syncAudio(cursorRef.current * runtimeBarMs(latest.current), true);
@@ -266,12 +306,13 @@ export default function ShowTimelineEditor(props: Props) {
       const end = Math.max(
         1,
         ...p.timeline.clips.map((c) => c.startBar + c.lengthBars),
+        ...(p.timeline.videoClips??[]).map(c=>c.startBar+c.lengthBars),
+        ...(p.timeline.takeClips??[]).map(c=>c.startBar+c.lengthBars),
         p.timeline.audioOffsetBars + mediaWindow(p.timeline, p.audioDurationMs).durationMs / runtimeBarMs(p),
       );
       if (cursorRef.current >= end) {
         cursorRef.current = end; setCursor(end); p.onFrame(end * runtimeBarMs(p));
         pause();
-        p.onStop();
         return;
       }
       raf.current = requestAnimationFrame(tick);
@@ -279,7 +320,7 @@ export default function ShowTimelineEditor(props: Props) {
     raf.current = requestAnimationFrame(tick);
   }
   useEffect(() => {
-    const stopTransport=()=>{++playAttempt.current;audioStarting.current=false;playingRef.current=false;setPlaying(false);if(raf.current!==null)cancelAnimationFrame(raf.current);raf.current=null;latest.current.audioRef.current?.pause();latest.current.onStop();};
+    const stopTransport=()=>{++playAttempt.current;audioStarting.current=false;playingRef.current=false;setPlaying(false);latest.current.onPlayingChange?.(false);if(raf.current!==null)cancelAnimationFrame(raf.current);raf.current=null;latest.current.audioRef.current?.pause();latest.current.onStop();};
     window.addEventListener('lumarig-stop-timeline',stopTransport);
     return ()=>window.removeEventListener('lumarig-stop-timeline',stopTransport);
   },[]);
@@ -287,6 +328,7 @@ export default function ShowTimelineEditor(props: Props) {
     () => () => {
       ++playAttempt.current;
       playingRef.current = false;
+      latest.current.onPlayingChange?.(false);
       if (raf.current !== null) cancelAnimationFrame(raf.current);
       latest.current.audioRef.current?.pause();
       (latest.current.onRelease ?? latest.current.onStop)();
@@ -340,8 +382,8 @@ export default function ShowTimelineEditor(props: Props) {
     e.preventDefault();
     e.stopPropagation();
     pause();
-    setSelectedId(clip.id);
-    seek(clip.startBar);
+    if(selectedId!==clip.id)setSelectedId(clip.id);
+    if(kind==="move")seek(clip.startBar);
     e.currentTarget.setPointerCapture(e.pointerId);
     drag.current = {
       kind,
@@ -354,10 +396,27 @@ export default function ShowTimelineEditor(props: Props) {
       before: structuredClone(timeline),
     };
   }
+  function assetChange(kind:'video'|'take',id:string,changes:Partial<TimelineMediaClip & TimelineTakeClip>,record=true) {
+    const current=latest.current.timeline;
+    const next=kind==='video'?{...current,videoClips:current.videoClips?.map(c=>c.id===id?{...c,...changes}:c)}:{...current,takeClips:current.takeClips?.map(c=>c.id===id?{...c,...changes}:c)};
+    if(record)edit(next);else onChange(next);
+  }
+  function beginAsset(e:PointerEvent<HTMLElement>,clip:TimelineMediaClip|TimelineTakeClip,kind:'video'|'take',resize=false){
+    e.preventDefault();e.stopPropagation();pause();setSelectedId(clip.id);seek(clip.startBar);e.currentTarget.setPointerCapture(e.pointerId);
+    drag.current={kind:kind==='video'?(resize?'video-resize':'video-move'):(resize?'take-resize':'take-move'),id:clip.id,x:e.clientX,start:clip.startBar,length:clip.lengthBars,lane:0,nextLane:0,before:structuredClone(timeline)};
+  }
   function movePointer(e: PointerEvent<HTMLElement>) {
     const d = drag.current;
     if (!d) return;
     const delta = (e.clientX - d.x) / zoomRef.current;
+    if(d.kind.startsWith('video-') || d.kind.startsWith('take-')){
+      const kind=d.kind.startsWith('video-')?'video':'take';
+      const clip=(kind==='video'?latest.current.timeline.videoClips:latest.current.timeline.takeClips)?.find(c=>c.id===d.id);
+      if(!clip)return;
+      if(d.kind.endsWith('resize'))assetChange(kind,d.id,{lengthBars:clamp(snapBar(d.length+delta,snap),.0001,(clip.trimOutMs-clip.trimInMs)/runtimeBarMs(latest.current))},false);
+      else assetChange(kind,d.id,{startBar:clamp(snapBar(d.start+delta,snap),0,100000)},false);
+      return;
+    }
     if (d.kind === 'playhead') { seek(d.start + delta); return; }
     if (d.kind === 'trim-in' || d.kind === 'trim-out') {
       const ms = delta * runtimeBarMs(latest.current);
@@ -406,7 +465,7 @@ export default function ShowTimelineEditor(props: Props) {
   function dropCue(e: import("react").DragEvent<HTMLElement>, lane: number) {
     e.preventDefault();
     const recipeId=e.dataTransfer.getData("application/lumarig-fx");
-    if(FX_RECIPES.some(r=>r.id===recipeId)){
+    if(recipes.some(r=>r.id===recipeId)){
       checkpoint();
       props.onAddFx?.(recipeId,snapBar((e.clientX-e.currentTarget.getBoundingClientRect().left)/zoom,snap),lane);return;
     }
@@ -459,13 +518,16 @@ export default function ShowTimelineEditor(props: Props) {
       <div className="timeline-toolbar">
         <button
           className="console-primary"
-          disabled={!timeline.clips.length && !audioUrl}
+          disabled={!timeline.clips.length && !timeline.videoClips?.length && !timeline.takeClips?.length && !audioUrl}
           onClick={play}
         >
           {playing ? "Pause" : "Play Show"}
         </button>
         <button onClick={stop}>Stop / Rewind</button>
-        {/\.mp4$/i.test(audioName) && <button onClick={()=>void openMediaOutput().catch(error=>setAudioError(String(error)))}>Pop Out Video</button>}
+        {(timeline.videoClips?.length || /\.mp4$/i.test(audioName)) ? <button onClick={()=>void openMediaOutput().catch(error=>setAudioError(String(error)))}>Pop Out Video</button> : null}
+        <label>Import video clip<input aria-label="Import Timeline video clip" type="file" accept="video/mp4,.mp4" onChange={e=>{const file=e.target.files?.[0];e.target.value='';if(file){pause();props.onImportVideoClip?.(file,cursorRef.current);}}}/></label>
+        {(selectedVideo || /\.mp4$/i.test(audioName)) && <button onClick={()=>props.onExportVideo?.(selectedVideo)}>Export trimmed MP4</button>}
+        <label>Display from Timeline<select aria-label="Display from Timeline" value={props.displayId??""} onChange={e=>props.onDisplayChange?.(e.target.value)}><option value="">No screen</option>{props.screens?.map(s=><option key={s.id} value={s.id}>{s.label}</option>)}</select></label>
         <button aria-label="Rewind timeline" onClick={() => seek(0)}><svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true"><path fill="currentColor" d="M2 3h2v10H2zM13 3v10L5 8z" /></svg></button>
         <button aria-label="Previous beat" onClick={() => seek(steppedBar(cursorRef.current, -1, timeline.beatsPerBar))}>‹ Beat</button>
         <button aria-label="Next beat" onClick={() => seek(steppedBar(cursorRef.current, 1, timeline.beatsPerBar))}>Beat ›</button>
@@ -542,12 +604,12 @@ export default function ShowTimelineEditor(props: Props) {
       </div>
       <ResizableWorkspace className="timeline-edit-layout" storageKey="lumarig.timeline-columns.v1" compactMode="stack" leftLabel="Cue / FX Library" rightEnabled={false} leftDefault={220} centerMinimum={480}>
         <aside className="timeline-cue-library">
-          <div className="timeline-library-tabs"><button aria-label="Cue library" aria-pressed={libraryMode==="cues"} onClick={()=>setLibraryMode("cues")}>Cues</button><button aria-pressed={libraryMode==="fx"} onClick={()=>setLibraryMode("fx")}>FX recipes</button></div>
+          <div className="timeline-library-tabs"><button aria-label="Cue library" aria-pressed={libraryMode==="cues"} onClick={()=>setLibraryMode("cues")}>Cues</button><button aria-pressed={libraryMode==="fx"} onClick={()=>setLibraryMode("fx")}>FX recipes</button><button aria-pressed={libraryMode==="myfx"} onClick={()=>setLibraryMode("myfx")}>My FX</button></div>
           <header>
             SHOW CUES <small>{cues.length}</small>
           </header>
           <p>Drag to a lane or click to append.</p>
-          {libraryMode==="fx" ? <><p>Target: {props.fxTargetName??"current group"}. Drag a recipe to a lane.</p>{FX_RECIPES.map(recipe=><button className="timeline-fx-recipe" key={recipe.id} draggable onDragStart={e=>{e.dataTransfer.setData("application/lumarig-fx",recipe.id);e.dataTransfer.effectAllowed="copy";}} onClick={()=>{checkpoint();props.onAddFx?.(recipe.id,clipEnd,0);}}><span>{recipe.name}<small>{recipe.category}</small></span></button>)}</> : cues.length ? (
+          {libraryMode!=="cues" ? <><p>Target: {props.fxTargetName??"current group"}. Drag a recipe to a lane.</p>{recipes.filter(r=>libraryMode!=="myfx" || r.id.startsWith("custom:")).map(recipe=><button className="timeline-fx-recipe" key={recipe.id} draggable onDragStart={e=>{e.dataTransfer.setData("application/lumarig-fx",recipe.id);e.dataTransfer.effectAllowed="copy";}} onClick={()=>{checkpoint();props.onAddFx?.(recipe.id,clipEnd,0);}}><span>{recipe.name}<small>{recipe.category}</small></span></button>)}</> : cues.length ? (
             cues.filter(c=>!props.songFilter||(c.trackName?.trim()||"Unfiled cues")===props.songFilter).map((c) => (
               <button
                 key={c.id}
@@ -686,6 +748,9 @@ export default function ShowTimelineEditor(props: Props) {
                   )}
                 </div>
               </div>
+              {(['video','take'] as const).map(kind=><div className="timeline-lane-row" key={kind}><div className="lane-label">{kind==='video'?'VIDEO':'TAKE'}</div><div className="timeline-lane asset-lane" style={{width:totalBars*zoom,'--bar-width':`${zoom}px`,'--beat-width':`${zoom/timeline.beatsPerBar}px`} as import('react').CSSProperties} onPointerDown={seekPointer} onDragOver={e=>{if(kind==='video' && e.dataTransfer.types.includes('Files')){e.preventDefault();e.stopPropagation();}}} onDrop={e=>{if(kind!=='video')return;const file=e.dataTransfer.files[0];if(file){e.preventDefault();e.stopPropagation();pause();props.onImportVideoClip?.(file,clamp((e.clientX-e.currentTarget.getBoundingClientRect().left)/zoom,0,100000));}}}>
+                {(kind==='video'?timeline.videoClips??[]:timeline.takeClips??[]).map(clip=><div key={clip.id} role="button" tabIndex={0} aria-label={`${kind==='video'?'Video':'Recorded take'} clip ${clip.name}`} className={`timeline-clip asset-clip ${selectedId===clip.id?'selected':''} ${clip.enabled?'':'muted'}`} style={{left:clip.startBar*zoom,width:clip.lengthBars*zoom,'--section-color':kind==='video'?'#64baff':'#d3a1ff'} as import('react').CSSProperties} onPointerDown={e=>beginAsset(e,clip,kind)} onPointerMove={movePointer} onPointerUp={endPointer} onPointerCancel={cancelPointer} onKeyDown={e=>{if(e.key==='Enter'){pause();setSelectedId(clip.id);seek(clip.startBar);}if(e.key==='ArrowLeft'||e.key==='ArrowRight'){e.preventDefault();assetChange(kind,clip.id,{startBar:Math.max(0,clip.startBar+(e.key==='ArrowRight'?snap:-snap))});}}}><strong>{clip.name}</strong><small>{((clip.trimOutMs-clip.trimInMs)/1000).toFixed(2)} s</small><span className="clip-resize" aria-label={`Resize ${kind} clip`} onPointerDown={e=>beginAsset(e,clip,kind,true)} onPointerMove={movePointer} onPointerUp={endPointer} onPointerCancel={cancelPointer}/></div>)}
+              </div></div>)}
               {Array.from({ length: laneCount }, (_, lane) => (
                 <div key={lane} className="timeline-lane-row">
                   <div className="lane-label">FX {lane + 1}</div>
@@ -787,6 +852,21 @@ export default function ShowTimelineEditor(props: Props) {
             </div>
           </div>
           <div className="timeline-inspector">
+            {(selectedVideo || selectedTake) && (()=>{
+              const clip=(selectedVideo??selectedTake)!,kind=selectedVideo?'video':'take';
+              return <><strong>{clip.name}</strong><label>Start bar<input aria-label="Asset clip start bar" type="number" min={1} step={.25} value={clip.startBar+1} onChange={e=>assetChange(kind,clip.id,{startBar:Math.max(0,Number(e.target.value)-1)})}/></label>
+              <label>Trim in seconds<input aria-label="Asset clip trim in" type="number" min={0} max={(clip.trimOutMs-1)/1000} step={.01} value={Number((clip.trimInMs/1000).toFixed(3))} onChange={e=>{const trimInMs=clamp(Number(e.target.value)*1000,0,clip.trimOutMs-1);assetChange(kind,clip.id,{trimInMs,lengthBars:(clip.trimOutMs-trimInMs)/msPerBar});}}/></label>
+              <label>Trim out seconds<input aria-label="Asset clip trim out" type="number" min={(clip.trimInMs+1)/1000} max={clip.durationMs/1000} step={.01} value={Number((clip.trimOutMs/1000).toFixed(3))} onChange={e=>{const trimOutMs=clamp(Number(e.target.value)*1000,clip.trimInMs+1,clip.durationMs);assetChange(kind,clip.id,{trimOutMs,lengthBars:(trimOutMs-clip.trimInMs)/msPerBar});}}/></label>
+              <button onClick={()=>assetChange(kind,clip.id,{trimInMs:0,trimOutMs:clip.durationMs,lengthBars:clip.durationMs/msPerBar})}>Reset clip trim</button><button aria-pressed={clip.enabled} onClick={()=>assetChange(kind,clip.id,{enabled:!clip.enabled})}>{clip.enabled?'Mute clip':'Enable clip'}</button>
+              <button onClick={()=>edit(kind==='video'?{...timeline,videoClips:timeline.videoClips?.filter(c=>c.id!==clip.id)}:{...timeline,takeClips:timeline.takeClips?.filter(c=>c.id!==clip.id)})}>Delete asset clip</button></>;
+            })()}
+            {selectedTake && <section className="take-frame-editor"><strong>Fine tune recorded lighting at playhead</strong><label>DMX channel<input aria-label="Take frame channel" type="number" min={1} max={512} value={takeChannel} onChange={e=>setTakeChannel(Math.round(clamp(Number(e.target.value),1,512)))}/></label><label>Value<input aria-label="Take frame value" type="number" min={0} max={255} value={takeValue} onChange={e=>setTakeValue(Math.round(clamp(Number(e.target.value),0,255)))}/></label><button onClick={()=>{
+              const timeMs=Math.round(clamp((cursorRef.current-selectedTake.startBar)*msPerBar+selectedTake.trimInMs,0,selectedTake.durationMs));
+              const frames=structuredClone(selectedTake.frames);let frame=frames.find(f=>f.timeMs===timeMs);
+              if(!frame){frame={timeMs,updates:[]};frames.push(frame);frames.sort((a,b)=>a.timeMs-b.timeMs);}
+              frame.updates=frame.updates.filter(([c])=>c!==takeChannel);frame.updates.push([takeChannel,takeValue]);assetChange('take',selectedTake.id,{frames});
+            }}>Set channel at playhead</button><small>The source take is preserved. FX clips can overlay this version.</small></section>}
+
             {audioUrl && audioDurationMs > 0 && <>
               <label>Trim in (seconds)<input aria-label="Trim in seconds" type="number" min={0} max={Math.max(0, (bounds.endMs - 10) / 1000)} step={0.01} value={bounds.startMs / 1000} disabled={playing}
                 onChange={e => edit({ ...timeline, audioTrimInMs: clamp(Number(e.target.value) * 1000, 0, bounds.endMs - 10) })} /></label>

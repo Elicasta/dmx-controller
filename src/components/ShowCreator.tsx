@@ -1,3 +1,4 @@
+import { fxLibrary } from "../lib/fx-library";
 import StepEditor from "./StepEditor";
 import { createStepProgram } from "../lib/step-program";
 import ResizableWorkspace from './ResizableWorkspace';
@@ -59,9 +60,7 @@ export default function ShowCreator({
   onMasterBpmChange,
   tempoLocked, onTempoLockChange,
 }: Props) {
-  const recipes: FxRecipe[] = useMemo(() => [...FX_RECIPES, ...customEffects.map(effect => ({
-    id:'custom:' + effect.id, name:effect.name, category:'Custom' as const, description:'Saved FX from your Programmer library', effect,
-  }))], [customEffects]);
+  const recipes: FxRecipe[] = useMemo(() => fxLibrary(customEffects), [customEffects]);
   const [copiedSection, setCopiedSection] = useState<ShowSection | null>(null);
   const [favorites, setFavorites] = useState<string[]>(() => {
     try { const parsed=JSON.parse(localStorage.getItem('lumarig.fx-favorites.v1') ?? '[]'); return Array.isArray(parsed) ? parsed.filter(x=>typeof x==='string') : []; } catch { return []; }
@@ -88,6 +87,14 @@ export default function ShowCreator({
   const [sectionSearch,setSectionSearch]=useState("");
   const [category, setCategory] = useState("All");
   const selected = sections.find((s) => s.id === selectedId) ?? sections[0];
+  useEffect(()=>{
+    const keydown=(event:KeyboardEvent)=>{
+      const target=event.target as HTMLElement|null;
+      if(target?.closest('input,textarea,select,[contenteditable="true"]') || !(event.ctrlKey||event.metaKey))return;
+      if(event.key.toLowerCase()==='c' && selected){event.preventDefault();setCopiedSection(structuredClone(selected));}
+      if(event.key.toLowerCase()==='v' && copiedSection && sections.length<200){event.preventDefault();add(cloneSection(copiedSection));}
+    };window.addEventListener('keydown',keydown);return()=>window.removeEventListener('keydown',keydown);
+  },[selected,copiedSection,sections.length,song]);
   const songStats = useMemo(() => [...new Set(sections.map((section) => section.song))].map((name) => {
     const items = sections.filter((section) => section.song === name);
     return { name, count: items.length, bars: items.reduce((sum, section) => sum + section.bars, 0) };
@@ -141,6 +148,7 @@ export default function ShowCreator({
       add({
         ...createSection("New Section", song, groupId, bpm),
         recipeId: id,
+        primaryEffect: !FX_RECIPES.some(r=>r.id===id) ? structuredClone(recipes.find(r=>r.id===id)?.effect) : undefined,
       });
       return;
     }
@@ -152,7 +160,7 @@ export default function ShowCreator({
         {
           id: crypto.randomUUID(),
           recipeId: id,
-          customEffect: id.startsWith("custom:") ? structuredClone(recipe?.effect) : undefined,
+          customEffect: !FX_RECIPES.some(r=>r.id===id) ? structuredClone(recipe?.effect) : undefined,
           groupId: selected.groupId,
           energy: 70,
           enabled: true,
@@ -274,7 +282,7 @@ export default function ShowCreator({
                       e.preventDefault();
                       const recipeId=e.dataTransfer.getData("application/lumarig-fx");
                       if(recipes.some(r=>r.id===recipeId)) {
-                        setSections(all=>all.map(item=>item.id!==s.id||item.layers.length>=8?item:{...item,layers:[...item.layers,{id:crypto.randomUUID(),recipeId,customEffect:recipeId.startsWith("custom:")?structuredClone(recipes.find(r=>r.id===recipeId)?.effect):undefined,groupId:item.groupId,energy:70,enabled:true}]}));
+                        setSections(all=>all.map(item=>item.id!==s.id||item.layers.length>=8?item:{...item,layers:[...item.layers,{id:crypto.randomUUID(),recipeId,customEffect:!FX_RECIPES.some(r=>r.id===recipeId)?structuredClone(recipes.find(r=>r.id===recipeId)?.effect):undefined,groupId:item.groupId,energy:70,enabled:true}]}));
                       } else move(dragId, s.id);
                       setDragId("");
                     }}
@@ -484,10 +492,11 @@ export default function ShowCreator({
                   <select
                     aria-label="Primary FX"
                 value={selected.recipeId}
-                    onChange={(e) => update({ recipeId: e.target.value })}
+                    onChange={(e) => update({ recipeId: e.target.value, primaryEffect: e.target.value && !FX_RECIPES.some(r=>r.id===e.target.value) ? structuredClone(recipes.find(r=>r.id===e.target.value)?.effect) : undefined })}
                   >
                     <option value="">Static look</option>
-                    {FX_RECIPES.map((r) => (
+                    {selected.primaryEffect && !recipes.some(r=>r.id===selected.recipeId) && <option value={selected.recipeId}>{selected.primaryEffect.name}</option>}
+                    {recipes.map((r) => (
                       <option key={r.id} value={r.id}>
                         {r.name}
                       </option>
@@ -518,7 +527,7 @@ export default function ShowCreator({
                       aria-label={`Layer ${index + 1} FX`}
                       value={l.recipeId}
                       onChange={(e) =>
-                        layerChange(l.id, { recipeId: e.target.value, stepEditor: false, customEffect: e.target.value.startsWith('custom:') ? structuredClone(recipes.find(r=>r.id===e.target.value)?.effect) : undefined })
+                        layerChange(l.id, { recipeId: e.target.value, stepEditor: false, customEffect: !FX_RECIPES.some(r=>r.id===e.target.value) ? structuredClone(recipes.find(r=>r.id===e.target.value)?.effect) : undefined })
                       }
                     >
                       {l.customEffect&&!recipes.some(r=>r.id===l.recipeId)&&<option value={l.recipeId}>{l.customEffect.name}</option>}
@@ -620,7 +629,7 @@ export default function ShowCreator({
               onChange={(e) => setQuery(e.target.value)}
             />
             <div className="recipe-filters">
-              {["All", "Favorites", "Intensity", "Rows", "Movement", "Color", "Custom"].map((c) => (
+              {["All", "My FX", "Favorites", "Intensity", "Rows", "Movement", "Color", "Custom"].map((c) => (
                 <button
                   key={c}
                   className={category === c ? "active" : ""}
@@ -633,7 +642,7 @@ export default function ShowCreator({
             <div className="recipe-list">
               {recipes.filter(
                 (r) =>
-                  (category === "All" || (category === "Favorites" ? favorites.includes(r.id) : r.category === category)) &&
+                  (category === "All" || (category === "My FX" ? r.id.startsWith("custom:") : category === "Favorites" ? favorites.includes(r.id) : r.category === category)) &&
                   `${r.name} ${r.description}`
                     .toLowerCase()
                     .includes(query.toLowerCase()),

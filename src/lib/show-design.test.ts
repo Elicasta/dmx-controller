@@ -278,15 +278,15 @@ describe("audio bar timeline engine", () => {
       5000,
     )).toBeNull();
   });
-  it("has exact clip boundaries and releases its channels outside a clip", () => {
+  it("blacks out at exact clip boundaries without restoring the captured look", () => {
     expect(renderShowTimeline(timeline, cues, fixtures, 3999, frame)).toEqual(
-      [],
+      makeUniverse().map((v,i)=>[i+1,v]),
     );
     expect(
       renderShowTimeline(timeline, cues, fixtures, 4000, frame).length,
     ).toBeGreaterThan(0);
     expect(renderShowTimeline(timeline, cues, fixtures, 12000, frame)).toEqual(
-      [],
+      makeUniverse().map((v,i)=>[i+1,v]),
     );
   });
   it("renders seeks deterministically at the same song position", () => {
@@ -320,7 +320,7 @@ describe("audio bar timeline engine", () => {
     ).toBeCloseTo(76.5);
   });
   it("ignores removed cues and disabled clips", () => {
-    expect(renderShowTimeline(timeline, [], fixtures, 5000, frame)).toEqual([]);
+    expect(renderShowTimeline(timeline, [], fixtures, 5000, frame)).toEqual(makeUniverse().map((v,i)=>[i+1,v]));
     expect(
       renderShowTimeline(
         { ...timeline, clips: [{ ...clip, enabled: false }] },
@@ -329,7 +329,7 @@ describe("audio bar timeline engine", () => {
         5000,
         frame,
       ),
-    ).toEqual([]);
+    ).toEqual(makeUniverse().map((v,i)=>[i+1,v]));
   });
   it("uses the global timeline tempo for every FX layer", () => {
     const dynamic = buildSectionCues([section()], fixtures, [group]);
@@ -416,4 +416,16 @@ describe('independent section layers', () => {
     expect(result[parameterChannel(fixtures[0],'red')!-1]).toBe(0);
     expect(cue.effectStack).toHaveLength(2);
   });
+});
+
+it('resumes an active underlying clip, then blacks out when both overlays end',()=>{
+  const lower={id:'lower',number:1,name:'Lower',fadeMs:0,values:{dimmer:100,red:255,green:255,blue:255,white:0,amber:0,uv:0},changes:[[1,180],[2,50]] as [number,number][]};
+  const upper={...lower,id:'upper',changes:[[1,80]] as [number,number][]};
+  const t={...EMPTY_TIMELINE,bpm:120,clips:[{id:'a',cueId:'lower',startBar:0,lengthBars:4,lane:0,enabled:true},{id:'b',cueId:'upper',startBar:1,lengthBars:1,lane:1,enabled:true}]};
+  const base=Array(512).fill(255);
+  expect(new Map(renderShowTimeline(t,[lower,upper],[],2500,base)).get(1)).toBe(80);
+  const returned=new Map(renderShowTimeline(t,[lower,upper],[],4500,base));
+  expect(returned.get(1)).toBe(180);expect(returned.get(2)).toBe(50);
+  const empty=renderShowTimeline(t,[lower,upper],[],8000,base);
+  expect(empty).toHaveLength(512);expect(empty.every(([,value])=>value===0)).toBe(true);
 });

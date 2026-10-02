@@ -1,3 +1,4 @@
+import { followTimelineVideo } from '../lib/timeline-video';
 import { useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent, type WheelEvent as ReactWheelEvent } from 'react';
 import { fixtureGeometryState } from '../core/fixture-geometry';
 import { cameraBasis, cameraOrbitFromPose, orbitVisualizerCamera, projectVisualizerPoint, visualizerCameraPreset, visualizerFlybyCamera, type VisualizerCamera, type VisualizerCameraPreset } from '../core/visualizer-camera';
@@ -13,13 +14,15 @@ export type VisualizerSnapshot = {
   blackout: boolean;
 };
 
-type VisualizerQuality = 'fast' | 'quality';
+type VisualizerQuality = 'fast' | 'quality' | 'high';
 type CameraSelection = VisualizerCameraPreset | 'custom';
 
 type MediaEntry = {
   deviceId: string;
   video: HTMLVideoElement;
-  stream: MediaStream;
+  stream?: MediaStream;
+  dispose?: ()=>void;
+  visible?: boolean;
 };
 
 type Projected = ReturnType<typeof projectVisualizerPoint>;
@@ -240,7 +243,7 @@ function objectFaces(element: StageElement, stage: StageDimensions, camera: Visu
 function drawFloorGrid(ctx: CanvasRenderingContext2D, camera: VisualizerCamera, stage: StageDimensions, width: number, height: number, quality: VisualizerQuality) {
   const roomHalf = stage.roomWidth / 2;
   const roomDepth = Math.max(stage.roomDepth, stage.depth * 1.5);
-  const step = quality === 'quality' ? 1 : 2;
+  const step = quality !== 'fast' ? 1 : 2;
   ctx.save();
   ctx.lineWidth = 1;
 
@@ -346,7 +349,7 @@ function drawBeams(
     if (start.depth <= 0 || endLeft.depth <= 0 || endRight.depth <= 0) return;
 
     const color = fixtureColor(snapshot, fixture);
-    const alpha = clamp((quality === 'quality' ? .34 : .23) * intensity * (.35 + haze), .03, .7);
+    const alpha = clamp((quality !== 'fast' ? .34 : .23) * intensity * (.35 + haze), .03, .7);
     const gradient = ctx.createLinearGradient(start.x, start.y, (endLeft.x + endRight.x) / 2, (endLeft.y + endRight.y) / 2);
     gradient.addColorStop(0, color.replace('rgb(', 'rgba(').replace(')', `,${alpha * .95})`));
     gradient.addColorStop(.65, color.replace('rgb(', 'rgba(').replace(')', `,${alpha * .55})`));
@@ -361,7 +364,7 @@ function drawBeams(
     ctx.fillStyle = gradient;
     ctx.fill();
 
-    if (quality === 'quality') {
+    if (quality !== 'fast') {
       ctx.strokeStyle = color.replace('rgb(', 'rgba(').replace(')', `,${Math.min(.8, alpha * 1.45)})`);
       ctx.lineWidth = Math.max(1, intensity * 1.6);
       ctx.beginPath();
@@ -379,14 +382,14 @@ function crowdPoints(stage: StageDimensions, quality: VisualizerQuality) {
   const half = Math.min(stage.roomWidth / 2 - .8, Math.max(stage.width / 2, 4));
   const start = stage.depth + 1.2;
   const end = Math.max(start + 1, stage.roomDepth - 1.2);
-  const xStep = quality === 'quality' ? .72 : 1.05;
-  const zStep = quality === 'quality' ? .82 : 1.18;
+  const xStep = quality !== 'fast' ? .72 : 1.05;
+  const zStep = quality !== 'fast' ? .82 : 1.18;
   let row = 0;
   for (let z = start; z <= end; z += zStep) {
     const offset = row % 2 ? xStep * .45 : 0;
     for (let x = -half + offset; x <= half; x += xStep) {
       points.push({ x, y: 0, z });
-      if (points.length >= (quality === 'quality' ? 420 : 190)) return points;
+      if (points.length >= (quality !== 'fast' ? 420 : 190)) return points;
     }
     row += 1;
   }
@@ -403,7 +406,7 @@ function drawCrowd(ctx: CanvasRenderingContext2D, camera: VisualizerCamera, stag
   for (const item of people) {
     const foot = projectVisualizerPoint(item.point, camera, width, height);
     const head = item.projected;
-    const size = clamp(210 / head.depth, 2.2, quality === 'quality' ? 8 : 6);
+    const size = clamp(210 / head.depth, 2.2, quality !== 'fast' ? 8 : 6);
     ctx.strokeStyle = 'rgba(137,151,160,.36)';
     ctx.fillStyle = 'rgba(164,176,183,.42)';
     ctx.lineWidth = Math.max(1, size * .24);
@@ -439,7 +442,8 @@ function drawFaces(
   faces: Face[],
   media: Map<string, MediaEntry>,
   quality: VisualizerQuality,
-  selectedElementId?: string
+  selectedElementId?: string,
+  showLabels = true
 ) {
   for (const face of faces.sort((a, b) => b.depth - a.depth)) {
     polygon(ctx, face.points);
@@ -451,20 +455,20 @@ function drawFaces(
 
     if (face.screenElement) {
       const entry = media.get(face.screenElement.id);
-      if (entry?.video.readyState && entry.video.videoWidth > 0) {
+      if (entry?.visible !== false && entry?.video.readyState && entry.video.videoWidth > 0) {
         drawImageQuad(ctx, entry.video, face.points);
         polygon(ctx, face.points);
         ctx.strokeStyle = 'rgba(228,239,244,.58)';
         ctx.stroke();
       } else {
         polygon(ctx, face.points);
-        const glow = quality === 'quality' ? .32 : .18;
-        ctx.fillStyle = `rgba(210,230,240,${glow})`;
+        const glow = quality !== 'fast' ? .32 : .18;
+        ctx.fillStyle = face.screenElement.mediaSource?.kind==='timeline' ? '#000' : `rgba(210,230,240,${glow})`;
         ctx.fill();
       }
     }
 
-    if (face.label && quality === 'quality') {
+    if (face.label && showLabels) {
       const centerX = face.points.reduce((sum, point) => sum + point.x, 0) / face.points.length;
       const centerY = face.points.reduce((sum, point) => sum + point.y, 0) / face.points.length;
       ctx.fillStyle = 'rgba(224,234,239,.76)';
@@ -627,7 +631,7 @@ function drawAssetDetails(
       drawWorldCircle(ctx, camera, width, height, worldFromElementLocal(element, stage, {x:w*.22,y:h*.12,z:0}), Math.max(.1,w*.12), '#20272d', stroke);
       drawWorldLine(ctx, camera, width, height, worldFromElementLocal(element, stage, {x:-w*.4,y:h*.28,z:0}), worldFromElementLocal(element, stage, {x:-w*.06,y:h*.28,z:0}), '#c5a95d', 1.4);
       drawWorldLine(ctx, camera, width, height, worldFromElementLocal(element, stage, {x:w*.08,y:h*.34,z:0}), worldFromElementLocal(element, stage, {x:w*.42,y:h*.34,z:0}), '#c5a95d', 1.4);
-      if (element.assetKind === 'drum-shield' && quality === 'quality') {
+      if (element.assetKind === 'drum-shield' && quality !== 'fast') {
         for (const x of [-w*.48,-w*.16,w*.16,w*.48]) {
           drawWorldLine(ctx, camera, width, height, worldFromElementLocal(element, stage, {x,y:-h*.45,z:-d*.48}), worldFromElementLocal(element, stage, {x,y:h*.48,z:-d*.48}), 'rgba(190,215,225,.42)', 1);
         }
@@ -655,7 +659,7 @@ function drawAssetDetails(
     if (element.assetKind === 'keyboard' || element.assetKind === 'piano') {
       const y = h * .18;
       const z = -d * .46;
-      const keyCount = quality === 'quality' ? 9 : 5;
+      const keyCount = quality !== 'fast' ? 9 : 5;
       for (let index = 0; index <= keyCount; index += 1) {
         const x = -w*.44 + (w*.88)*(index/keyCount);
         drawWorldLine(ctx, camera, width, height, worldFromElementLocal(element, stage, {x,y,z}), worldFromElementLocal(element, stage, {x,y,z:d*.18}), 'rgba(225,230,234,.55)', .7);
@@ -710,9 +714,11 @@ export default function Visualizer3D({
   const [orthographicZoom, setOrthographicZoom] = useState(1);
   const [haze, setHaze] = useState(.68);
   const [showCrowd, setShowCrowd] = useState(false);
+  const [showLabels, setShowLabels] = useState(()=>localStorage.getItem('lumarig.visualizer.labels.v1')!=='off');
   const [quality, setQuality] = useState<VisualizerQuality>('quality');
   const [playingFlyby, setPlayingFlyby] = useState(false);
   const [mediaRevision, setMediaRevision] = useState(0);
+  useEffect(()=>{const sync=()=>setShowLabels(localStorage.getItem('lumarig.visualizer.labels.v1')!=='off');window.addEventListener('lumarig-labels-changed',sync);return()=>window.removeEventListener('lumarig-labels-changed',sync);},[]);
   const selectedElement = snapshot.elements.find((element) => element.id === selectedElementId);
 
   const target = useMemo(() => ({
@@ -746,6 +752,7 @@ export default function Visualizer3D({
     const desired = new Map<string, string>();
     for (const element of snapshot.elements) {
       const source = element.mediaSource;
+      if(element.type==='led-screen' && source?.kind==='timeline')desired.set(element.id,'timeline');
       if (element.type === 'led-screen' && source?.kind === 'ndi' && source.deviceId) {
         desired.set(element.id, source.deviceId);
       }
@@ -753,25 +760,35 @@ export default function Visualizer3D({
 
     for (const [id, entry] of mediaRef.current) {
       if (desired.get(id) === entry.deviceId) continue;
-      entry.stream.getTracks().forEach((track) => track.stop());
+      entry.dispose?.();
+      entry.stream?.getTracks().forEach((track) => track.stop());
       entry.video.srcObject = null;
       mediaRef.current.delete(id);
     }
 
-    if (!navigator.mediaDevices?.getUserMedia) return;
+    let cancelled=false;
 
     for (const [id, deviceId] of desired) {
       if (mediaRef.current.has(id)) continue;
+      if(deviceId==='timeline'){
+        const video=document.createElement('video');
+        const entry:MediaEntry={deviceId,video,visible:false};
+        entry.dispose=followTimelineVideo(video,visible=>{entry.visible=visible;});
+        mediaRef.current.set(id,entry);setMediaRevision(v=>v+1);continue;
+      }
+      if(!navigator.mediaDevices?.getUserMedia)continue;
       void navigator.mediaDevices.getUserMedia({
         video: { deviceId: { exact: deviceId } },
         audio: false
       }).then(async (stream) => {
+        if(cancelled){stream.getTracks().forEach(track=>track.stop());return;}
         const video = document.createElement('video');
         video.autoplay = true;
         video.muted = true;
         video.playsInline = true;
         video.srcObject = stream;
         try { await video.play(); } catch { /* redraw will show the screen fallback */ }
+        if(cancelled){stream.getTracks().forEach(track=>track.stop());video.srcObject=null;return;}
         mediaRef.current.set(id, { deviceId, video, stream });
         setMediaRevision((value) => value + 1);
       }).catch(() => {
@@ -780,13 +797,14 @@ export default function Visualizer3D({
     }
 
     return () => {
-      // Inputs stay alive across ordinary scene updates and are closed on unmount below.
+      cancelled=true;
     };
   }, [snapshot.elements]);
 
   useEffect(() => () => {
     for (const entry of mediaRef.current.values()) {
-      entry.stream.getTracks().forEach((track) => track.stop());
+      entry.dispose?.();
+      entry.stream?.getTracks().forEach((track) => track.stop());
       entry.video.srcObject = null;
     }
     mediaRef.current.clear();
@@ -805,13 +823,13 @@ export default function Visualizer3D({
 
     const draw = (now: number) => {
       if (disposed) return;
-      const targetFps = quality === 'quality' ? 30 : 24;
+      const targetFps = quality === 'high' ? 60 : quality === 'quality' ? 30 : 24;
       if (now - lastDraw >= 1000 / targetFps) {
         lastDraw = now;
         const bounds = host.getBoundingClientRect();
         const cssWidth = Math.max(320, Math.floor(bounds.width));
         const cssHeight = Math.max(compact ? 260 : 380, Math.floor(bounds.height));
-        const dpr = Math.min(window.devicePixelRatio || 1, quality === 'quality' ? 2 : 1.35);
+        const dpr = quality === 'high' ? Math.min(3, Math.max(2.5, window.devicePixelRatio || 1)) : Math.min(window.devicePixelRatio || 1, quality === 'quality' ? 2 : 1.35);
         const pixelWidth = Math.floor(cssWidth * dpr);
         const pixelHeight = Math.floor(cssHeight * dpr);
         if (canvas.width !== pixelWidth || canvas.height !== pixelHeight) {
@@ -853,14 +871,14 @@ export default function Visualizer3D({
         drawBeams(context, snapshot, camera, cssWidth, cssHeight, haze, quality);
 
         const faces = snapshot.elements.flatMap((element) => objectFaces(element, snapshot.dimensions, camera, cssWidth, cssHeight));
-        drawFaces(context, faces, mediaRef.current, quality, selectedElementId ?? undefined);
+        drawFaces(context, faces, mediaRef.current, quality, selectedElementId ?? undefined, showLabels);
         drawAssetDetails(context, snapshot.elements, snapshot.dimensions, camera, cssWidth, cssHeight, selectedElementId ?? undefined, quality);
         drawFixtureBodies(context, snapshot, camera, cssWidth, cssHeight);
         if (showCrowd) drawCrowd(context, camera, snapshot.dimensions, cssWidth, cssHeight, quality);
 
         const vignette = context.createRadialGradient(cssWidth / 2, cssHeight / 2, Math.min(cssWidth, cssHeight) * .2, cssWidth / 2, cssHeight / 2, Math.max(cssWidth, cssHeight) * .72);
         vignette.addColorStop(0, 'rgba(0,0,0,0)');
-        vignette.addColorStop(1, quality === 'quality' ? 'rgba(0,0,0,.38)' : 'rgba(0,0,0,.24)');
+        vignette.addColorStop(1, quality !== 'fast' ? 'rgba(0,0,0,.38)' : 'rgba(0,0,0,.24)');
         context.fillStyle = vignette;
         context.fillRect(0, 0, cssWidth, cssHeight);
 
@@ -877,7 +895,7 @@ export default function Visualizer3D({
       disposed = true;
       window.cancelAnimationFrame(frame);
     };
-  }, [snapshot, orbit, haze, showCrowd, quality, compact, playingFlyby, cameraSelection, orthographicZoom, target, mediaRevision, selectedElementId]);
+  }, [snapshot, orbit, haze, showCrowd, quality, compact, playingFlyby, cameraSelection, orthographicZoom, target, mediaRevision, selectedElementId, showLabels]);
 
   function beginOrbit(event: ReactPointerEvent<HTMLCanvasElement>) {
     if (event.button !== 0 && event.pointerType === 'mouse') return;
@@ -958,7 +976,8 @@ export default function Visualizer3D({
         <button onClick={() => selectCamera('foh')}>Reset View</button>
         <button className={playingFlyby ? 'active' : ''} onClick={toggleFlyby}>{playingFlyby ? 'Stop Flyby' : '▶ Flyby'}</button>
         <button onClick={() => setShowCrowd((value) => !value)} aria-pressed={showCrowd}>Crowd {showCrowd ? 'On' : 'Off'}</button>
-        <button onClick={() => setQuality((value) => value === 'quality' ? 'fast' : 'quality')}>Render {quality === 'quality' ? 'Quality' : 'Fast'}</button>
+        <button aria-pressed={showLabels} onClick={()=>{const next=!showLabels;setShowLabels(next);localStorage.setItem('lumarig.visualizer.labels.v1',next?'on':'off');window.dispatchEvent(new Event('lumarig-labels-changed'));}}>Labels {showLabels?'On':'Off'}</button>
+        <button onClick={() => setQuality(value=>value==='fast'?'quality':value==='quality'?'high':'fast')}>Render {quality==='high'?'High':quality==='quality'?'Quality':'Fast'}</button>
       </div>
       {!compact && <label className="visualizer-haze"><span>Haze {Math.round(haze * 100)}%</span><input type="range" min="0" max="1" step=".02" value={haze} onChange={(event) => setHaze(Number(event.target.value))}/></label>}
     </div>

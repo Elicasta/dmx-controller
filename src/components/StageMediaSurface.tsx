@@ -1,3 +1,4 @@
+import { followTimelineVideo } from '../lib/timeline-video';
 import { useEffect, useRef, useState } from 'react';
 import type { StageScreenSource } from '../lib/stage';
 
@@ -28,6 +29,7 @@ export function StageMediaSurface({ source }: { source?: StageScreenSource }) {
   const [status, setStatus] = useState<'idle' | 'connecting' | 'live' | 'error'>('idle');
 
   useEffect(() => {
+    if(source?.kind==='timeline' && videoRef.current){setStatus('connecting');return followTimelineVideo(videoRef.current,visible=>setStatus(visible?'live':'idle'));}
     if (!source || source.kind !== 'ndi' || !source.deviceId || !navigator.mediaDevices?.getUserMedia) {
       setStatus('idle');
       return;
@@ -68,7 +70,7 @@ export function StageMediaSurface({ source }: { source?: StageScreenSource }) {
 
   if (!source || source.kind === 'none') return null;
 
-  if (!source.deviceId) {
+  if (source.kind==='ndi' && !source.deviceId) {
     return <span className="stage-media-placeholder">NDI · select input</span>;
   }
 
@@ -79,8 +81,8 @@ export function StageMediaSurface({ source }: { source?: StageScreenSource }) {
       muted
       playsInline
       aria-label={source.sourceName ? `${source.sourceName} screen feed` : 'Live stage screen feed'}
-      style={{ objectFit: source.fit ?? 'contain' }}
+      style={{ objectFit: source.fit ?? 'contain',visibility:source.kind==='timeline' && status!=='live'?'hidden':undefined }}
     />
-    {status !== 'live' && <span className="stage-media-status">{status === 'connecting' ? 'Connecting…' : status === 'error' ? 'Input unavailable' : 'NDI'}</span>}
+    {status !== 'live' && <span className="stage-media-status">{status === 'connecting' ? 'Connecting…' : status === 'error' ? 'Input unavailable' : source.kind==='timeline' ? 'Load Timeline video' : 'NDI'}</span>}
   </span>;
 }

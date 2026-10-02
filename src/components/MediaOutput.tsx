@@ -1,24 +1,26 @@
 import { useEffect, useRef, useState, type RefObject } from 'react';
 import { invoke } from '@tauri-apps/api/core';
-const CHANNEL='lumarig-media-output-v1';
+export const MEDIA_CHANNEL='lumarig-media-output-v1';
+const CHANNEL=MEDIA_CHANNEL;
 export type MediaOutputFrame={url:string;name:string;position:number;playing:boolean;sentAt:number;};
-export function useMediaOutputPublisher(audioRef:RefObject<HTMLAudioElement|null>,url:string,name:string){
+export function useMediaOutputPublisher(audioRef:RefObject<HTMLAudioElement|null>,url:string,name:string,overrideRef?:RefObject<MediaOutputFrame|null>){
   useEffect(()=>{
     const channel=new BroadcastChannel(CHANNEL);
     let frame=0,last=0;
     const publish=()=>{
       const audio=audioRef.current;
       const state:MediaOutputFrame={url,name,position:audio?.currentTime??0,playing:Boolean(audio&&!audio.paused&&!audio.ended),sentAt:Date.now()};
-      channel.postMessage({type:'frame',state});
+      channel.postMessage({type:'frame',state:overrideRef?.current ? {...overrideRef.current,sentAt:Date.now()} : state});
     };
     channel.onmessage=e=>{if(e.data?.type==='ready')publish();};
     const audio=audioRef.current;
     const events=['play','pause','seeked','loadedmetadata','ended','emptied'];
     for(const event of events)audio?.addEventListener(event,publish);
     const tick=(now:number)=>{if(now-last>=50){publish();last=now;}frame=requestAnimationFrame(tick);};
+    const heartbeat=setInterval(publish,250);
     publish();frame=requestAnimationFrame(tick);
-    return()=>{cancelAnimationFrame(frame);for(const event of events)audio?.removeEventListener(event,publish);channel.postMessage({type:'frame',state:{url:'',name:'',position:0,playing:false,sentAt:Date.now()}});channel.close();};
-  },[audioRef,url,name]);
+    return()=>{clearInterval(heartbeat);cancelAnimationFrame(frame);for(const event of events)audio?.removeEventListener(event,publish);channel.postMessage({type:'frame',state:{url:'',name:'',position:0,playing:false,sentAt:Date.now()}});channel.close();};
+  },[audioRef,url,name,overrideRef]);
 }
 export async function openMediaOutput():Promise<void>{
   if('__TAURI_INTERNALS__'in window){await invoke('open_media_output');return;}
@@ -27,7 +29,7 @@ export async function openMediaOutput():Promise<void>{
 export default function MediaOutput(){
   const video=useRef<HTMLVideoElement|null>(null);
   const incoming=useRef<MediaOutputFrame|null>(null);
-  const [url,setUrl]=useState(''),[error,setError]=useState(''),[connected,setConnected]=useState(false);
+  const [url,setUrl]=useState(''),[error,setError]=useState('');
   const starting=useRef(false);
   function synchronize(){
     const element=video.current,state=incoming.current;
@@ -45,7 +47,7 @@ export default function MediaOutput(){
       if(e.data?.type!=='frame')return;
       const state=e.data.state as MediaOutputFrame;
       if(!state||typeof state.url!=='string'||!Number.isFinite(state.position))return;
-      incoming.current=state;setConnected(Boolean(state.url));setUrl(state.url);
+      incoming.current=state;setUrl(state.url);
       synchronize();
     };
     channel.postMessage({type:'ready'});
@@ -60,8 +62,8 @@ export default function MediaOutput(){
     }catch{setError('Fullscreen could not open. Use the window fullscreen control.');}
   }
   return <main className="media-output" onDoubleClick={()=>void fullscreen()} onClick={()=>{setError('');synchronize();}}>
-    <video ref={video} src={url||undefined} muted playsInline preload="auto" onLoadedMetadata={synchronize} onCanPlay={synchronize} onError={()=>setError('Video unavailable. Relink its Song media in LumaRig.')} aria-label="Synchronized video output" />
-    {!connected&&<p>Load a Song with video in LumaRig.</p>}
+    <video ref={video} src={url||undefined} muted playsInline preload="auto" onLoadedMetadata={synchronize} onCanPlay={synchronize} onError={()=>{if(incoming.current?.url)setError('Video unavailable. Relink its Song media in LumaRig.');}} aria-label="Synchronized video output" style={{visibility:url?'visible':'hidden'}} />
+
     {error&&<p role="status">{error}</p>}
     <button className="media-output-fullscreen" onClick={e=>{e.stopPropagation();void fullscreen();}}>Fullscreen</button>
   </main>;

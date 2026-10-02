@@ -25,6 +25,7 @@ export type StageAssetKind =
 
 export type StageScreenSource =
   | { kind: 'none' }
+  | { kind: 'timeline'; sourceName?: string; deviceId?: string; fit?: 'contain' | 'cover' }
   | {
       kind: 'ndi';
       deviceId?: string;
@@ -178,7 +179,7 @@ function isStageScreenSource(value: unknown): value is StageScreenSource {
   if (!value || typeof value !== 'object') return false;
   const source = value as Partial<StageScreenSource> & { fit?: unknown };
   if (source.kind === 'none') return true;
-  return source.kind === 'ndi'
+  return (source.kind === 'ndi' || source.kind === 'timeline')
     && (source.deviceId === undefined || typeof source.deviceId === 'string')
     && (source.sourceName === undefined || typeof source.sourceName === 'string')
     && (source.fit === undefined || source.fit === 'contain' || source.fit === 'cover');

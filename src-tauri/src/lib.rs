@@ -3,6 +3,7 @@ mod midi;
 mod output;
 mod studio_bridge;
 mod updates;
+mod video_export;
 
 use dmx::{DmxEngine, DmxStatus};
 use midi::{MidiEngine, MidiEvent, MidiInputInfo, MidiStatus};
@@ -134,6 +135,10 @@ pub fn run() {
         .manage(updates::UpdateState::default())
         .invoke_handler(tauri::generate_handler![
             open_stage_monitor,
+            video_export::begin_video_export,
+            video_export::append_video_export,
+            video_export::finish_video_export,
+            video_export::cancel_video_export,
             open_media_output,
             toggle_media_output_fullscreen,
             list_udmx_devices,
