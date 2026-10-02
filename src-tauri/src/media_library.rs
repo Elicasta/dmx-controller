@@ -496,13 +496,15 @@ pub fn media_pick_import(
 
         if mode == "reference" {
             let canonical = source.canonicalize().unwrap_or_else(|_| source.clone());
-            if let Some(existing) = registry
+            if let Some(index) = registry
                 .assets
                 .iter()
-                .find(|asset| asset.source_mode == "reference" && Path::new(&asset.path) == canonical)
+                .position(|asset| asset.source_mode == "reference" && Path::new(&asset.path) == canonical)
             {
                 allow_asset(&app, &canonical)?;
-                imported.push(asset_snapshot(existing));
+                registry.assets[index].folder_id = folder_id.clone();
+                registry.assets[index].modified_at = file_modified_ms(&canonical);
+                imported.push(asset_snapshot(&registry.assets[index]));
                 continue;
             }
         }
