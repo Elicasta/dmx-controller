@@ -881,7 +881,7 @@ fn restore_root(app: &AppHandle, token: &str) -> Result<PathBuf, String> {
 }
 
 #[tauri::command]
-pub fn media_import_portable_backup(
+pub async fn media_import_portable_backup(
     app: AppHandle,
     state: State<'_, MediaLibraryState>,
 ) -> Result<Option<PortableBackupImport>, String> {
@@ -896,91 +896,100 @@ pub fn media_import_portable_backup(
     let path = selected
         .into_path()
         .map_err(|error| io_error("Backup path is invalid", error))?;
+    let lock = state.lock.clone();
+    let task_app = app.clone();
 
-    let _guard = state.lock.lock().map_err(|_| "Media library lock failed.".to_string())?;
-    let source = File::open(&path).map_err(|error| io_error("Portable backup could not be opened", error))?;
-    let mut archive = ZipArchive::new(source).map_err(|error| io_error("Portable backup is not a valid archive", error))?;
-    let manifest_json = {
-        let mut manifest = archive
-            .by_name("manifest.json")
-            .map_err(|error| io_error("Portable backup has no manifest", error))?;
-        if manifest.size() > MAX_MANIFEST_BYTES {
-            return Err("Portable backup manifest is unexpectedly large.".to_string());
-        }
-        let mut text = String::new();
-        manifest
-            .read_to_string(&mut text)
-            .map_err(|error| io_error("Portable backup manifest could not be read", error))?;
-        text
-    };
-    let header: PortableBackupHeader =
-        serde_json::from_str(&manifest_json).map_err(|error| io_error("Portable backup manifest is invalid", error))?;
-    if header.format != BACKUP_FORMAT || header.version != BACKUP_VERSION {
-        return Err("This LumaRig backup version is not supported.".to_string());
-    }
-    if header.media.len() > 10_000 {
-        return Err("Portable backup contains too many media entries.".to_string());
-    }
-    let mut ids = HashSet::new();
-    for descriptor in &header.media {
-        if !valid_media_id(&descriptor.id) || descriptor.name.trim().is_empty() || descriptor.name.len() > 512 {
-            return Err("Portable backup contains an invalid media descriptor.".to_string());
-        }
-        if !ids.insert(descriptor.id.clone()) {
-            return Err(format!("Portable backup contains duplicate media id: {}", descriptor.id));
-        }
-    }
-
-    let restore_token = Uuid::new_v4().to_string();
-    let staging_root = restore_root(&app, &restore_token)?;
-    fs::create_dir_all(&staging_root)
-        .map_err(|error| io_error("Backup restore staging folder could not be created", error))?;
-
-    let restore_result = (|| -> Result<(), String> {
-        for descriptor in &header.media {
-            let entry_name = format!(
-                "media/{}/{}",
-                sanitize_file_name(&descriptor.id),
-                sanitize_file_name(&descriptor.name)
-            );
-            let mut entry = archive
-                .by_name(&entry_name)
-                .map_err(|_| format!("Portable backup is missing media: {}", descriptor.name))?;
-            if entry.is_dir() {
-                return Err(format!("Portable backup media entry is invalid: {}", descriptor.name));
+    run_file_task("Portable restore worker failed", move || {
+        let _guard = lock.lock().map_err(|_| "Media library lock failed.".to_string())?;
+        let source = File::open(&path)
+            .map_err(|error| io_error("Portable backup could not be opened", error))?;
+        let mut archive = ZipArchive::new(source)
+            .map_err(|error| io_error("Portable backup is not a valid archive", error))?;
+        let manifest_json = {
+            let mut manifest = archive
+                .by_name("manifest.json")
+                .map_err(|error| io_error("Portable backup has no manifest", error))?;
+            if manifest.size() > MAX_MANIFEST_BYTES {
+                return Err("Portable backup manifest is unexpectedly large.".to_string());
             }
-            let target = staging_root.join(format!(
-                "{}--{}",
-                sanitize_file_name(&descriptor.id),
-                sanitize_file_name(&descriptor.name)
-            ));
-            let mut output =
-                File::create(&target).map_err(|error| io_error("Restored media could not be staged", error))?;
-            std::io::copy(&mut entry, &mut output)
-                .map_err(|error| io_error("Restored media could not be extracted", error))?;
-        }
-        let plan = PortableRestorePlan {
-            media: header.media.clone(),
-            media_folders: header.media_folders.clone(),
+            let mut text = String::new();
+            manifest
+                .read_to_string(&mut text)
+                .map_err(|error| io_error("Portable backup manifest could not be read", error))?;
+            text
         };
-        let plan_json = serde_json::to_vec(&plan)
-            .map_err(|error| io_error("Portable restore plan could not be serialized", error))?;
-        fs::write(staging_root.join("plan.json"), plan_json)
-            .map_err(|error| io_error("Portable restore plan could not be staged", error))?;
-        Ok(())
-    })();
+        let header: PortableBackupHeader = serde_json::from_str(&manifest_json)
+            .map_err(|error| io_error("Portable backup manifest is invalid", error))?;
+        if header.format != BACKUP_FORMAT || header.version != BACKUP_VERSION {
+            return Err("This LumaRig backup version is not supported.".to_string());
+        }
+        if header.media.len() > 10_000 {
+            return Err("Portable backup contains too many media entries.".to_string());
+        }
+        let mut ids = HashSet::new();
+        for descriptor in &header.media {
+            if !valid_media_id(&descriptor.id)
+                || descriptor.name.trim().is_empty()
+                || descriptor.name.len() > 512
+            {
+                return Err("Portable backup contains an invalid media descriptor.".to_string());
+            }
+            if !ids.insert(descriptor.id.clone()) {
+                return Err(format!("Portable backup contains duplicate media id: {}", descriptor.id));
+            }
+        }
 
-    if let Err(error) = restore_result {
-        let _ = fs::remove_dir_all(&staging_root);
-        return Err(error);
-    }
+        let restore_token = Uuid::new_v4().to_string();
+        let staging_root = restore_root(&task_app, &restore_token)?;
+        fs::create_dir_all(&staging_root)
+            .map_err(|error| io_error("Backup restore staging folder could not be created", error))?;
 
-    Ok(Some(PortableBackupImport {
-        path: path.to_string_lossy().to_string(),
-        manifest_json,
-        imported_media: header.media.len(),
-        restore_token,
-    }))
+        let restore_result = (|| -> Result<(), String> {
+            for descriptor in &header.media {
+                let entry_name = format!(
+                    "media/{}/{}",
+                    sanitize_file_name(&descriptor.id),
+                    sanitize_file_name(&descriptor.name)
+                );
+                let mut entry = archive
+                    .by_name(&entry_name)
+                    .map_err(|_| format!("Portable backup is missing media: {}", descriptor.name))?;
+                if entry.is_dir() {
+                    return Err(format!("Portable backup media entry is invalid: {}", descriptor.name));
+                }
+                let target = staging_root.join(format!(
+                    "{}--{}",
+                    sanitize_file_name(&descriptor.id),
+                    sanitize_file_name(&descriptor.name)
+                ));
+                let mut output = File::create(&target)
+                    .map_err(|error| io_error("Restored media could not be staged", error))?;
+                std::io::copy(&mut entry, &mut output)
+                    .map_err(|error| io_error("Restored media could not be extracted", error))?;
+            }
+            let plan = PortableRestorePlan {
+                media: header.media.clone(),
+                media_folders: header.media_folders.clone(),
+            };
+            let plan_json = serde_json::to_vec(&plan)
+                .map_err(|error| io_error("Portable restore plan could not be serialized", error))?;
+            fs::write(staging_root.join("plan.json"), plan_json)
+                .map_err(|error| io_error("Portable restore plan could not be staged", error))?;
+            Ok(())
+        })();
+
+        if let Err(error) = restore_result {
+            let _ = fs::remove_dir_all(&staging_root);
+            return Err(error);
+        }
+
+        Ok(Some(PortableBackupImport {
+            path: path.to_string_lossy().to_string(),
+            manifest_json,
+            imported_media: header.media.len(),
+            restore_token,
+        }))
+    }).await
 }
 
 #[tauri::command]
