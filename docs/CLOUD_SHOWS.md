@@ -26,7 +26,7 @@ Song and MP4 media referenced by a Show is stored privately at:
 <operator-user-id>/<show-id>/<media-id>
 ```
 
-The media ID is generated when a file is attached in Song Bank, so the object is treated as immutable. Opening a Cloud Show on a new Mac downloads those blobs into the local `lumarig-song-media` IndexedDB before loading the Show.
+The media ID is generated when a file is attached in Song Bank, so the object is treated as immutable. Opening a Cloud Show on a new macOS or Windows computer downloads those blobs into the local `lumarig-song-media` IndexedDB before loading the Show.
 
 Paired anonymous controller users cannot read Cloud Shows or media.
 
