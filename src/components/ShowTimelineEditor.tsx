@@ -23,6 +23,7 @@ type Props = {
   positionBar?: number;
   onSelectClip?: (id: string, bar: number) => void;
   onRelease?: () => void;
+  onReset?: () => void;
   onAddFx?: (recipeId:string,startBar:number,lane:number)=>void;
   fxTargetName?: string;
   initialBar?: number;
@@ -206,6 +207,7 @@ export default function ShowTimelineEditor(props: Props) {
     setCursor(0);
     if (audioRef.current) audioRef.current.currentTime = mediaWindow(latest.current.timeline, latest.current.audioDurationMs).startMs / 1000;
     latest.current.onStop();
+    latest.current.onReset?.();
   }
   function seek(bar: number) {
     const next = clamp(bar, 0, 100000);

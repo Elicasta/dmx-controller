@@ -996,5 +996,12 @@ test('cue and Timeline selection remain authoritative across editors', async ({ 
   await page.getByRole('button',{name:'Timeline',exact:true}).click();
   await expect(page.getByRole('button',{name:`Timeline clip ${cue.name}`,exact:true})).toHaveClass(/selected/);
   await expect(page.getByLabel('Clip starts at bar')).toHaveValue(String(target.startBar+1));
+  await page.getByRole('button',{name:'Cues',exact:true}).click();
+  const firstCue=show.cues.find((item:any)=>item.id===timeline.clips[0].cueId);
+  await page.locator('.cue-line').filter({hasText:firstCue.name}).first().click();
+  await page.getByRole('button',{name:'Show Creator',exact:true}).click();
+  await expect(page.locator('.section-list>article.active .section-select')).toContainText(firstCue.name);
+  await page.getByRole('button',{name:'Timeline',exact:true}).click();
+  await expect(page.getByRole('button',{name:`Timeline clip ${firstCue.name}`,exact:true})).toHaveClass(/selected/);
   expect(errors).toEqual([]);
 });
