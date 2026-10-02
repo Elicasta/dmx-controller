@@ -43,6 +43,28 @@ function folderDepth(id: string, library: MediaLibrarySnapshot) {
   return depth;
 }
 
+function orderedFolders(library: MediaLibrarySnapshot) {
+  const result: MediaLibrarySnapshot['folders'] = [];
+  const seen = new Set<string>();
+  const visit = (parentId: string | null) => {
+    library.folders
+      .filter((folder) => folder.parentId === parentId)
+      .sort((a, b) => a.name.localeCompare(b.name))
+      .forEach((folder) => {
+        if (seen.has(folder.id)) return;
+        seen.add(folder.id);
+        result.push(folder);
+        visit(folder.id);
+      });
+  };
+  visit(null);
+  library.folders
+    .filter((folder) => !seen.has(folder.id))
+    .sort((a, b) => a.name.localeCompare(b.name))
+    .forEach((folder) => result.push(folder));
+  return result;
+}
+
 export default function MediaLibraryPanel(p: Props) {
   const native = nativeMediaLibraryAvailable();
   const [library, setLibrary] = useState<MediaLibrarySnapshot>(EMPTY);
@@ -65,6 +87,7 @@ export default function MediaLibraryPanel(p: Props) {
 
   const selectedFolder = library.folders.find((folder) => folder.id === view) ?? null;
   const destinationFolder = selectedFolder?.id ?? null;
+  const folders = useMemo(() => orderedFolders(library), [library]);
   const assets = useMemo(() => library.assets
     .filter((asset) => {
       if (view === 'missing') return asset.missing;
@@ -131,10 +154,7 @@ export default function MediaLibraryPanel(p: Props) {
         </div>
 
         <div className="media-folder-tree">
-          {library.folders
-            .slice()
-            .sort((a, b) => a.name.localeCompare(b.name))
-            .map((folder) => <button key={folder.id} className={view === folder.id ? 'active' : ''} style={{ paddingLeft: 14 + folderDepth(folder.id, library) * 14 }} onClick={() => {
+          {folders.map((folder) => <button key={folder.id} className={view === folder.id ? 'active' : ''} style={{ paddingLeft: 14 + folderDepth(folder.id, library) * 14 }} onClick={() => {
               setView(folder.id);
               setRenameName(folder.name);
             }}>
@@ -203,7 +223,7 @@ export default function MediaLibraryPanel(p: Props) {
                 await moveMediaAsset(asset.id, event.target.value || null);
               })}>
                 <option value="">Library Root</option>
-                {library.folders.map((folder) => <option key={folder.id} value={folder.id}>{'  '.repeat(folderDepth(folder.id, library))}{folder.name}</option>)}
+                {folders.map((folder) => <option key={folder.id} value={folder.id}>{'  '.repeat(folderDepth(folder.id, library))}{folder.name}</option>)}
               </select></label>
               <div className="media-asset-actions">
                 <button disabled={!p.activeSong || asset.missing || asset.kind === 'image' || !!busy} onClick={() => void run(`attach-${asset.id}`, async () => {
