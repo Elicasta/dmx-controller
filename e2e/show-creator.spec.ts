@@ -1129,9 +1129,9 @@ test('Timeline video display framing survives reload and follows media seeks on 
   await page.getByLabel('Import screen video').first().setInputFiles({name:'Screen transport test.mp4',mimeType:'video/mp4',buffer:bytes});
 
   await page.getByLabel('Build screen video fit').selectOption('cover');
-  const setRange=async(label:string,value:number)=>page.getByLabel(label).evaluate((element,next)=>{
-    const input=element as HTMLInputElement;input.value=String(next);input.dispatchEvent(new Event('input',{bubbles:true}));
-  },value);
+  const setRange=async(label:string,value:number)=>{
+    await page.getByRole('slider',{name:label,exact:true}).fill(String(value));
+  };
   await setRange('Build screen video size',150);
   await setRange('Build screen video horizontal position',20);
   await setRange('Build screen video vertical position',-25);
@@ -1167,7 +1167,7 @@ test('independent video clips import, trim, copy and undo on the Timeline',async
 
 test('Timeline track height resizes vertically and persists',async({page})=>{
   await seed(page);await page.goto('/');await page.getByRole('button',{name:'SHOW',exact:true}).click();await page.getByRole('button',{name:'Timeline',exact:true}).click();
-  const slider=page.getByLabel('Timeline track height');
+  const slider=page.getByRole('slider',{name:'Timeline track height',exact:true});
   await expect(slider).toHaveValue('80');
   await slider.evaluate((element)=>{
     const input=element as HTMLInputElement;input.value='120';input.dispatchEvent(new Event('input',{bubbles:true}));
