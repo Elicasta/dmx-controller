@@ -8,6 +8,12 @@ export type StageVideoInputOption = {
   label: string;
 };
 
+export type StageVideoInputScanResult = {
+  inputs: StageVideoInputOption[];
+  permission: 'granted' | 'limited';
+  warning?: string;
+};
+
 export type StageVideoInputErrorCode =
   | 'permission-denied'
   | 'device-busy'
@@ -54,24 +60,15 @@ function describeVideoInputFailure(error: unknown): StageVideoInputError {
   );
 }
 
-export async function requestStageVideoInputs(): Promise<StageVideoInputOption[]> {
-  if (!navigator.mediaDevices?.enumerateDevices || !navigator.mediaDevices?.getUserMedia) {
+export async function requestStageVideoInputs(): Promise<StageVideoInputScanResult> {
+  if (!navigator.mediaDevices?.enumerateDevices) {
     throw new StageVideoInputError(
       'unsupported',
-      'Video inputs are not available in this runtime.'
+      'Video input discovery is not available in this runtime.'
     );
   }
 
-  let permissionStream: MediaStream | null = null;
-  try {
-    permissionStream = await navigator.mediaDevices.getUserMedia({ video: true, audio: false });
-  } catch (error) {
-    throw describeVideoInputFailure(error);
-  } finally {
-    permissionStream?.getTracks().forEach((track) => track.stop());
-  }
-
-  try {
+  const enumerate = async () => {
     const devices = await navigator.mediaDevices.enumerateDevices();
     return devices
       .filter((device) => device.kind === 'videoinput')
@@ -79,11 +76,50 @@ export async function requestStageVideoInputs(): Promise<StageVideoInputOption[]
         deviceId: device.deviceId,
         label: device.label || `Video Input ${index + 1}`
       }));
+  };
+
+  let beforePermission: StageVideoInputOption[] = [];
+  try {
+    beforePermission = await enumerate();
+  } catch (error) {
+    throw describeVideoInputFailure(error);
+  }
+
+  const hasNamedInput = beforePermission.some((input) => !/^Video Input \d+$/i.test(input.label));
+  if (hasNamedInput) {
+    return { inputs: beforePermission, permission: 'granted' };
+  }
+
+  if (!navigator.mediaDevices.getUserMedia) {
+    if (beforePermission.length) {
+      return {
+        inputs: beforePermission,
+        permission: 'limited',
+        warning: 'Video inputs were found, but this runtime cannot request camera permission. Their names and live preview may remain unavailable.'
+      };
+    }
+    throw new StageVideoInputError('unsupported', 'Live video input access is not available in this runtime.');
+  }
+
+  let permissionStream: MediaStream | null = null;
+  try {
+    permissionStream = await navigator.mediaDevices.getUserMedia({ video: true, audio: false });
+  } catch (error) {
+    const described = describeVideoInputFailure(error);
+    if (described.code === 'permission-denied' && beforePermission.length) {
+      return { inputs: beforePermission, permission: 'limited', warning: described.message };
+    }
+    throw described;
+  } finally {
+    permissionStream?.getTracks().forEach((track) => track.stop());
+  }
+
+  try {
+    return { inputs: await enumerate(), permission: 'granted' };
   } catch (error) {
     throw describeVideoInputFailure(error);
   }
 }
-
 export function StageMediaSurface({ source }: { source?: StageScreenSource }) {
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const [status, setStatus] = useState<'idle' | 'connecting' | 'live' | 'error'>('idle');
