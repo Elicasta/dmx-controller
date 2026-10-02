@@ -1,7 +1,7 @@
 export type AbletonLocator = {
   id: string;
   name: string;
-  /** Arrangement position in Live beats from the start of the Set. */
+  /** Arrangement position in quarter-note beats from the start of the Live Set. */
   beat: number;
 };
 
@@ -9,7 +9,10 @@ export type AbletonLiveSnapshot = {
   setId: string;
   setName: string;
   bpm: number;
+  /** Length of one Arrangement bar in quarter-note beats. 6/8 = 3, 7/8 = 3.5. */
   beatsPerBar: number;
+  signatureNumerator?: number;
+  signatureDenominator?: number;
   currentBeat: number;
   playing: boolean;
   locators: AbletonLocator[];
@@ -27,13 +30,19 @@ const clamp = (value: number, min: number, max: number) =>
 
 export function abletonBeatToBar(beat: number, beatsPerBar: number) {
   const safeBeat = Math.max(0, finite(beat, 0));
-  const safeBeatsPerBar = clamp(Math.round(finite(beatsPerBar, 4)), 1, 12);
+  const safeBeatsPerBar = clamp(finite(beatsPerBar, 4), 0.25, 128);
   return safeBeat / safeBeatsPerBar;
 }
 
 export function sanitizeAbletonSnapshot(value: unknown): AbletonLiveSnapshot {
   const source = value && typeof value === 'object' ? value as Partial<AbletonLiveSnapshot> : {};
-  const beatsPerBar = clamp(Math.round(finite(source.beatsPerBar, 4)), 1, 12);
+  const beatsPerBar = clamp(finite(source.beatsPerBar, 4), 0.25, 128);
+  const numerator = source.signatureNumerator == null
+    ? undefined
+    : clamp(Math.round(finite(source.signatureNumerator, 4)), 1, 99);
+  const denominator = source.signatureDenominator == null
+    ? undefined
+    : clamp(Math.round(finite(source.signatureDenominator, 4)), 1, 64);
   const locators = Array.isArray(source.locators)
     ? source.locators.slice(0, 512).flatMap((item, index) => {
         if (!item || typeof item !== 'object') return [];
@@ -54,6 +63,8 @@ export function sanitizeAbletonSnapshot(value: unknown): AbletonLiveSnapshot {
     setName: typeof source.setName === 'string' ? source.setName.slice(0, 200) : '',
     bpm: clamp(finite(source.bpm, 120), 20, 300),
     beatsPerBar,
+    signatureNumerator: numerator,
+    signatureDenominator: denominator,
     currentBeat: clamp(finite(source.currentBeat, 0), 0, 10_000_000),
     playing: Boolean(source.playing),
     locators: locators.sort((a, b) => a.beat - b.beat || a.name.localeCompare(b.name)),
@@ -84,4 +95,24 @@ export function activeAbletonLocator(
 export function abletonTimelinePositionBar(snapshot: AbletonLiveSnapshot) {
   const safe = sanitizeAbletonSnapshot(snapshot);
   return abletonBeatToBar(safe.currentBeat, safe.beatsPerBar);
+}
+
+/**
+ * Converts Ableton's musical bar position into the elapsed-ms coordinate used by
+ * the current LumaRig Timeline. This keeps bars aligned even when the Live Set
+ * meter differs from the saved LumaRig Timeline meter.
+ */
+export function abletonTimelineElapsedMs(
+  snapshot: AbletonLiveSnapshot,
+  timelineBeatsPerBar: number,
+  timelineBpm: number,
+  lightingOffsetMs = 0,
+) {
+  const safe = sanitizeAbletonSnapshot(snapshot);
+  const externalBarMs = 60000 / safe.bpm * safe.beatsPerBar;
+  const timelineBarMs = 60000 / clamp(finite(timelineBpm, 120), 20, 300)
+    * clamp(finite(timelineBeatsPerBar, 4), 0.25, 128);
+  const rawBar = abletonTimelinePositionBar(safe);
+  const offsetBars = finite(lightingOffsetMs, 0) / externalBarMs;
+  return Math.max(0, rawBar + offsetBars) * timelineBarMs;
 }
