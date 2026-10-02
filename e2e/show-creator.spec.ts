@@ -699,7 +699,7 @@ for (const width of [650,820]) test(`P0 workspaces stay bounded at ${width}px`, 
     await page.screenshot({path:info.outputPath(`live-${name}-${width}.png`)});
   }
   await page.getByRole('button',{name:'SHOW',exact:true}).click();
-  for(const name of ['Show Creator','Cues','Timeline','Song Bank','Show Library']) {
+  for(const name of ['Show Creator','Cues','Timeline','Song Bank','Media Library','Show Library']) {
     await page.getByRole('button',{name,exact:true}).click();
     expect(await page.locator('.show-console-v3').evaluate(e=>e.scrollWidth<=e.clientWidth+1), name).toBe(true);
     if(name==='Show Creator') {
@@ -1171,4 +1171,17 @@ test('Select all, copy, paste and undo operate on Sections and fixture patch edi
   await page.locator('.section-list').press('Control+a');await page.keyboard.press('Control+c');await page.keyboard.press('Control+v');await expect(page.locator('.section-list>article')).toHaveCount(16);await page.keyboard.press('Control+z');await expect(page.locator('.section-list>article')).toHaveCount(8);
   await page.getByRole('button',{name:'BUILD',exact:true}).click();await page.getByRole('button',{name:'Fixtures',exact:true}).click();await page.keyboard.press('Control+a');await page.keyboard.press('Control+c');await page.keyboard.press('Control+v');
   await expect.poll(()=>page.evaluate(()=>{const p=JSON.parse(localStorage.getItem('dmx-controller.patch.v1')??'[]');return (Array.isArray(p)?p:p.fixtures).length;})).toBe(8);await page.keyboard.press('Control+z');await expect.poll(()=>page.evaluate(()=>{const p=JSON.parse(localStorage.getItem('dmx-controller.patch.v1')??'[]');return (Array.isArray(p)?p:p.fixtures).length;})).toBe(4);
+});
+
+
+test('Media Library degrades safely in browser preview', async ({page}, info) => {
+  await seed(page);
+  await page.setViewportSize({width: 900, height: 760});
+  await page.goto('/');
+  await page.getByRole('button', {name:'SHOW', exact:true}).click();
+  await page.locator('.show-subtabs').getByRole('button', {name:'Media Library', exact:true}).click();
+  await expect(page.locator('.media-library-unavailable')).toContainText('Open this in the installed LumaRig app.');
+  await expect(page.locator('.media-library-unavailable')).toContainText('macOS and Windows');
+  expect(await page.locator('.show-console-v3').evaluate(e => e.scrollWidth <= e.clientWidth + 1)).toBe(true);
+  await page.screenshot({path:info.outputPath('media-library-browser-preview.png')});
 });
