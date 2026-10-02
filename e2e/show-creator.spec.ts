@@ -1009,16 +1009,21 @@ test('cue and Timeline selection remain authoritative across editors', async ({ 
 test('cue targets focus the same fixture in Stage and Programmer', async ({page})=>{
   await seed(page);
   await page.addInitScript(()=>localStorage.setItem('dmx-controller.show.v1',JSON.stringify({
-    version:4,name:'Target authority',cues:[7,1].map((channel,index)=>({
+    version:4,name:'Target authority',recordings:[{id:'old-playback',name:'Older take',trackName:'',durationMs:30000,createdAt:'2026-10-02',frames:[{timeMs:0,updates:[[7,0]]},{timeMs:1000,updates:[[7,0]]}]}],cues:[7,1].map((channel,index)=>({
       id:`target-${index}`,number:index+1,name:`Target ${channel}`,fadeMs:0,
       values:{red:255,green:0,blue:0,uv:0,dimmer:255},changes:[[channel,255]],
     })),
   })));
   await page.goto('/');
+  await page.getByRole('button',{name:'SHOW',exact:true}).click();
+  await page.getByRole('button',{name:'Recordings',exact:true}).click();
+  await page.locator('.recorded-takes-console').getByRole('button',{name:'Play',exact:true}).click();
+  await expect(page.locator('.console-recording-bar.playback')).toBeVisible();
   for(const [channel,name] of [[7,'Wash 2'],[1,'Wash 1']] as const) {
     await page.getByRole('button',{name:'SHOW',exact:true}).click();
     await page.getByRole('button',{name:'Cues',exact:true}).click();
     await page.locator('.cue-line').filter({hasText:`Target ${channel}`}).click();
+    await expect(page.locator('.console-recording-bar.playback')).toHaveCount(0);
     await page.getByRole('button',{name:'BUILD',exact:true}).click();
     await page.getByRole('button',{name:'Stage',exact:true}).click();
     await expect(page.locator('.setup-inspector header')).toContainText(name);
