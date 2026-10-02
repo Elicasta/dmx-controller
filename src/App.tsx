@@ -158,6 +158,7 @@ import { orderFixtures, type FixtureOrderMode } from './core/fixture-order';
 import { phaserStepValue, type PhaserStep } from './core/phaser-engine';
 import { makeSelectionGrid, moveFixtureInSelectionGrid, normalizeSelectionGrid, type SelectionGridTraversal } from './core/selection-grid';
 import { RemoteRelay, type RelayCommandEnvelope, type RemoteRelayConfig, type RemoteRelayStatus } from './core/remote-relay';
+import { desktopDeviceId } from './core/supabase-client';
 import { StudioBridgeDispatcher } from './core/studio-bridge-dispatcher';
 import { QRCodeSVG } from 'qrcode.react';
 import {
@@ -301,6 +302,9 @@ const STAGE_BACKUP_STORAGE_KEY = 'dmx-controller.stage-elements.backup.v1';
 const STAGE_SETTINGS_STORAGE_KEY = 'dmx-controller.stage-settings.v2';
 const STAGE_PRESET_STORAGE_KEY = 'dmx-controller.stage-preset.v1';
 const REMOTE_RELAY_STORAGE_KEY = 'dmx-controller.remote-relay.v1';
+// Publishable Supabase credentials are safe to ship in desktop/web clients; RLS is the security boundary.
+const DEFAULT_SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL || 'https://jtvrrsyqvahslelpmtvv.supabase.co';
+const DEFAULT_SUPABASE_PUBLISHABLE_KEY = import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY || 'sb_publishable_mxvEMBRj6KAEBtS_N2uHaw_dXd5bMlj';
 const REMOTE_APP_URL = import.meta.env.VITE_REMOTE_APP_URL || 'https://mycontroller-three.vercel.app';
 const FADE_TIMES = [0, 500, 1000, 2000, 5000] as const;
 
@@ -565,8 +569,8 @@ function loadSettings(): AppSettings {
 
 function loadRemoteRelayConfig(): RemoteRelayConfig {
   const fallback: RemoteRelayConfig = {
-    url: import.meta.env.VITE_SUPABASE_URL || '',
-    publishableKey: import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY || '',
+    url: DEFAULT_SUPABASE_URL,
+    publishableKey: DEFAULT_SUPABASE_PUBLISHABLE_KEY,
     email: '',
     roomCode: '',
     password: '',
@@ -2008,7 +2012,7 @@ export default function App() {
     for (let index = 0; index < media.length; index += 1) {
       const song = media[index];
       const blob = await readSongMedia(song.mediaId);
-      if (!blob) throw new Error(`Media for "${song.name}" is missing on this Mac. Reattach it before cloud sync.`);
+      if (!blob) throw new Error(`Media for "${song.name}" is missing on this computer. Reattach it before cloud sync.`);
       setMessage(`Cloud syncing media ${index + 1}/${media.length} · ${song.mediaName || song.name}`);
       await uploadCloudShowMedia(remoteRelayConfig, snapshot.id, song.mediaId, blob);
     }
@@ -2019,7 +2023,7 @@ export default function App() {
       snapshot: { ...snapshot, cloudFolderId: folderId },
       folderId,
       expectedRevision: known?.revision ?? snapshot.cloudRevision ?? 0,
-      deviceId: 'lumarig-mac'
+      deviceId: desktopDeviceId()
     });
     if (result.conflict) {
       await refreshCloudLibrary();
@@ -3059,7 +3063,7 @@ export default function App() {
 
   async function startControllerPairing() {
     if (remoteRelayStatus !== 'connected') {
-      setRemoteRelayError('Connect Secure Cloud Relay before pairing an iPad.');
+      setRemoteRelayError('Connect Secure Cloud Relay before pairing a controller.');
       return;
     }
     setPairingBusy(true);
@@ -3068,7 +3072,7 @@ export default function App() {
       const session = await createControllerPairing(remoteRelayConfig, REMOTE_APP_URL);
       setPairingSession(session);
       setPairingNow(Date.now());
-      setMessage('Controller pairing opened for two minutes. Scan the QR or enter the six-digit code on the iPad.');
+      setMessage('Controller pairing opened for two minutes. Scan the QR or enter the six-digit code on the iPad controller.');
     } catch (error) {
       setRemoteRelayError(error instanceof Error ? error.message : String(error));
     } finally {
