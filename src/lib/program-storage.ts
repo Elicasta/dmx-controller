@@ -79,3 +79,23 @@ export function saveProgramState(show: ShowFile, options: Parameters<typeof chec
   pending = operation.catch(() => undefined);
   return operation;
 }
+
+/** Replace the transactional library from a validated portable backup. */
+export function replaceProgramState(value: ProgramState): Promise<ProgramState> {
+  const snapshot = structuredClone(validateProgramState(value));
+  const operation = pending.then(async () => {
+    const db = await database();
+    try {
+      return await new Promise<ProgramState>((resolve, reject) => {
+        const tx = db.transaction('state', 'readwrite', { durability: 'strict' });
+        tx.objectStore('state').put(snapshot, 'current');
+        tx.oncomplete = () => resolve(structuredClone(snapshot));
+        tx.onerror = tx.onabort = () => reject(tx.error ?? Error('Backup restore failed. Existing saved work is intact.'));
+      });
+    } finally {
+      db.close();
+    }
+  });
+  pending = operation.catch(() => undefined);
+  return operation;
+}
