@@ -124,6 +124,7 @@ test("solo creator builds an editable audio-aligned show and preserves the draft
   await expect(page.getByLabel("Clip starts at bar")).toHaveValue("3");
   await expect(page.getByLabel("Clip lane")).toHaveValue("1");
   const moved = page.locator('[data-lane="1"] .timeline-clip').first();
+  await moved.locator(".clip-resize").scrollIntoViewIfNeeded();
   box = (await moved.locator(".clip-resize").boundingBox())!;
   await page.mouse.move(box.x + 6, box.y + 20);
   await page.mouse.down();

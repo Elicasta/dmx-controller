@@ -939,10 +939,7 @@ export default function ShowTimelineEditor(props: Props) {
                       changeClip(selected.id, { lane: Number(e.target.value) })
                     }
                   >
-                    {(['video','take'] as const).map(kind=><div className="timeline-lane-row" key={kind}><div className="lane-label">{kind==='video'?'VIDEO':'TAKE'}</div><div className="timeline-lane asset-lane" style={{width:totalBars*zoom,'--bar-width':`${zoom}px`,'--beat-width':`${zoom/timeline.beatsPerBar}px`} as import('react').CSSProperties} onPointerDown={seekPointer} onDragOver={e=>{if(kind==='video' && e.dataTransfer.types.includes('Files')){e.preventDefault();e.stopPropagation();}}} onDrop={e=>{if(kind!=='video')return;const file=e.dataTransfer.files[0];if(file){e.preventDefault();e.stopPropagation();pause();props.onImportVideoClip?.(file,clamp((e.clientX-e.currentTarget.getBoundingClientRect().left)/zoom,0,100000));}}}>
-                {(kind==='video'?timeline.videoClips??[]:timeline.takeClips??[]).map(clip=><div key={clip.id} role="button" tabIndex={0} aria-label={`${kind==='video'?'Video':'Recorded take'} clip ${clip.name}`} className={`timeline-clip asset-clip ${selectedId===clip.id?'selected':''} ${clip.enabled?'':'muted'}`} style={{left:clip.startBar*zoom,width:clip.lengthBars*zoom,'--section-color':kind==='video'?'#64baff':'#d3a1ff'} as import('react').CSSProperties} onPointerDown={e=>beginAsset(e,clip,kind)} onPointerMove={movePointer} onPointerUp={endPointer} onPointerCancel={cancelPointer} onKeyDown={e=>{if(e.key==='Enter'){pause();setSelectedId(clip.id);seek(clip.startBar);}if(e.key==='ArrowLeft'||e.key==='ArrowRight'){e.preventDefault();assetChange(kind,clip.id,{startBar:Math.max(0,clip.startBar+(e.key==='ArrowRight'?snap:-snap))});}}}><strong>{clip.name}</strong><small>{((clip.trimOutMs-clip.trimInMs)/1000).toFixed(2)} s</small><span className="clip-resize" aria-label={`Resize ${kind} clip`} onPointerDown={e=>beginAsset(e,clip,kind,true)} onPointerMove={movePointer} onPointerUp={endPointer} onPointerCancel={cancelPointer}/></div>)}
-              </div></div>)}
-              {Array.from({ length: laneCount }, (_, i) => (
+                    {Array.from({ length: laneCount }, (_, i) => (
                       <option key={i} value={i}>
                         FX {i + 1}
                       </option>
