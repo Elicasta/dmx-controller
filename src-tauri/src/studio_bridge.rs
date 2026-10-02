@@ -65,7 +65,7 @@ impl StudioBridge {
         let run_flag = Arc::clone(&running);
         let clients = Arc::clone(&connected_clients);
         let error = Arc::clone(&last_error);
-        thread::spawn(move || match TcpListener::bind(("0.0.0.0", STUDIO_BRIDGE_PORT)) {
+        thread::spawn(move || match TcpListener::bind(("127.0.0.1", STUDIO_BRIDGE_PORT)) {
             Ok(listener) => {
                 run_flag.store(true, Ordering::SeqCst);
                 if let Err(err) = listener.set_nonblocking(true) {
