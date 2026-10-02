@@ -1738,7 +1738,12 @@ export default function App() {
     setSelectedGroupId(targetGroup?.id ?? null);
     if (layers[0]) { setFxEditor(structuredClone(layers[0].effect)); setSelectedFxBankId(layers[0].effect.id); }
   }
+  function takeEditingPlaybackAuthority() {
+    stopRecordedShowPlayback(false);
+    audioArmedRef.current=false; setAudioArmed(false);
+  }
   function adoptCueContext(cue: ShowCue, clipId?: string, position?: number) {
+    takeEditingPlaybackAuthority();
     const context = cueContext(showFile, cue.id, timelineShowId, clipId);
     const song = songsForShow(showFile).find(item => item.name === cue.trackName);
     if (song && song.id !== activeSongId) void selectBankSong(song);
@@ -3744,7 +3749,7 @@ export default function App() {
   }
   function renderTimelineFrame(elapsedMs:number) {
     ++cueLaunchGeneration.current;
-    if(!timelineBaseRef.current){stopRecordedShowPlayback(false);if(cueFollowTimerRef.current!==null)window.clearTimeout(cueFollowTimerRef.current);stopFade();stopEffect(false);setAudioArmed(false);timelineBaseRef.current=[...universeRef.current];}
+    if(!timelineBaseRef.current){takeEditingPlaybackAuthority();if(cueFollowTimerRef.current!==null)window.clearTimeout(cueFollowTimerRef.current);stopFade();stopEffect(false);setAudioArmed(false);timelineBaseRef.current=[...universeRef.current];}
     const timeline={...editingTimeline,bpm:masterTempoBpm};
     const bar=elapsedMs / (60000 / masterTempoBpm * timeline.beatsPerBar);
     timelinePositionRef.current=bar;
