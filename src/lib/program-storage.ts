@@ -163,3 +163,41 @@ export function importSongProgram(value: SongProgram): Promise<{ state: ProgramS
   pending = operation.catch(() => undefined);
   return operation;
 }
+
+
+/** Replace or add one validated library program from the signed-in Cloud Library. */
+export function upsertSongProgram(value: SongProgram): Promise<ProgramState> {
+  const incoming = structuredClone(value);
+  if (!isSongProgram(incoming)) return Promise.reject(Error('Cloud Song programming is invalid.'));
+  const operation = pending.then(async () => {
+    const db = await database();
+    try {
+      return await new Promise<ProgramState>((resolve, reject) => {
+        const tx = db.transaction('state', 'readwrite', { durability: 'strict' });
+        const store = tx.objectStore('state');
+        const request = store.get('current');
+        let next: ProgramState;
+        let error: unknown;
+        request.onsuccess = () => {
+          try {
+            const current = validateProgramState(request.result);
+            next = {
+              ...current,
+              programs: [incoming, ...current.programs.filter((program) => program.id !== incoming.id)],
+            };
+            store.put(next, 'current');
+          } catch (reason) {
+            error = reason;
+            tx.abort();
+          }
+        };
+        tx.oncomplete = () => resolve(structuredClone(next));
+        tx.onerror = tx.onabort = () => reject(error ?? tx.error ?? Error('Cloud Song sync failed. Existing library data is intact.'));
+      });
+    } finally {
+      db.close();
+    }
+  });
+  pending = operation.catch(() => undefined);
+  return operation;
+}
