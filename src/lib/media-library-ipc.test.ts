@@ -1,5 +1,6 @@
 import {it,expect,vi,beforeEach,afterEach} from 'vitest';
 vi.mock('@tauri-apps/api/core',()=>({invoke:vi.fn(),convertFileSrc:vi.fn()}));
+import {storeSongMedia} from './song-bank';
 import {invoke} from '@tauri-apps/api/core';
 import {persistManagedMedia,exportPortableBackup,countMediaIds,importPortableBackup} from './media-library';
 const call=vi.mocked(invoke);
@@ -24,3 +25,13 @@ it('refuses export when one required asset is missing',async()=>{
 });
 it('handles native picker cancellation without a state replacement',async()=>{call.mockResolvedValue(null);expect(await importPortableBackup()).toBeNull();});
 it('counts unusual media IDs without inheriting Object properties',()=>{expect(countMediaIds([{mediaId:'__proto__'},{mediaId:'constructor'},{mediaId:'constructor'}])).toEqual(JSON.parse('{"__proto__":1,"constructor":2}'));});
+
+it('stores desktop Song media without depending on browser storage quota', async () => {
+ call.mockImplementation(async command => command === 'media_begin_managed_write' ? 'job' : { id: 'asset' });
+ const open = vi.fn(() => { throw Error('browser quota exhausted'); });
+ vi.stubGlobal('indexedDB', { open });
+ const file = Object.assign(new Blob(['audio']), { name: 'song.wav' }) as File;
+ await storeSongMedia('asset', file);
+ expect(open).not.toHaveBeenCalled();
+ expect(call.mock.calls.some(args => args[0] === 'media_finish_managed_write')).toBe(true);
+});

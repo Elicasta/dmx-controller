@@ -1246,6 +1246,30 @@ pub fn media_commit_portable_backup(
 ) -> Result<(), String> {
     let _guard = state.lock.lock().map_err(|_| "Media lock failed.")?;
     let staging = restore_folder(&app, &restore_id)?;
+    let destination = managed_files_dir(&app)?.join(format!("restore-{restore_id}"));
+    // If the state database failed after media committed, allow the same checked
+    // restore to retry without creating a second set of assets.
+    if !staging.exists() && destination.exists() {
+        let committed: PortableBackupHeader = serde_json::from_slice(
+            &fs::read(destination.join("manifest.json")).map_err(|e| e.to_string())?,
+        )
+        .map_err(|e| e.to_string())?;
+        validate_backup_header(&committed)?;
+        let registry = read_registry(&app)?;
+        if committed.media.iter().all(|m| {
+            registry.assets.iter().any(|a| {
+                a.id == m.id
+                    && PathBuf::from(&a.path) == destination.join(format!("{}.asset", m.id))
+            })
+        }) && committed
+            .media_folders
+            .iter()
+            .all(|f| registry.folders.iter().any(|r| r.id == f.id))
+        {
+            return Ok(());
+        }
+        return Err("Restore media is incomplete. Reopen the backup.".into());
+    }
     let header: PortableBackupHeader = serde_json::from_slice(
         &fs::read(staging.join("manifest.json")).map_err(|e| e.to_string())?,
     )
@@ -1259,7 +1283,6 @@ pub fn media_commit_portable_backup(
     {
         return Err("Restore media IDs already exist. Reopen the backup.".into());
     }
-    let destination = managed_files_dir(&app)?.join(format!("restore-{restore_id}"));
     fs::create_dir_all(managed_files_dir(&app)?).map_err(|e| e.to_string())?;
     fs::rename(&staging, &destination).map_err(|e| e.to_string())?;
     let result = (|| -> Result<(), String> {
