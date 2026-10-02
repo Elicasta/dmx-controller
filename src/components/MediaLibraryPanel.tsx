@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   createMediaFolder,
   deleteMediaFolder,
@@ -13,13 +13,14 @@ import {
   type MediaLibrarySnapshot,
 } from '../lib/media-library';
 
+export type PreparedRestore={name:string;songs:number;media:number;apply:()=>Promise<void>;cancel:()=>Promise<void>};
 type Props = {
   activeSong?: { id: string; name: string } | null;
   mediaUseCounts: Record<string, number>;
   onAttachToActiveSong: (asset: MediaAsset) => Promise<void> | void;
   onAssetChanged: (asset: MediaAsset) => void;
   onExportBackup: () => Promise<void>;
-  onRestoreBackup: () => Promise<void>;
+  onPrepareRestore: () => Promise<PreparedRestore|null>;
 };
 
 const EMPTY: MediaLibrarySnapshot = { version: 1, folders: [], assets: [] };
@@ -74,7 +75,10 @@ export default function MediaLibraryPanel(p: Props) {
   const [renameName, setRenameName] = useState('');
   const [busy, setBusy] = useState('');
   const [error, setError] = useState('');
-  const [restoreArmed, setRestoreArmed] = useState(false);
+  const [prepared,setPrepared]=useState<PreparedRestore|null>(null);
+  const preparedRef=useRef<PreparedRestore|null>(null);
+  const busyRef=useRef(false);
+  useEffect(()=>()=>{if(preparedRef.current)void preparedRef.current.cancel().catch(()=>{});},[]);
 
   const refresh = async () => {
     if (!native) return;
@@ -99,7 +103,8 @@ export default function MediaLibraryPanel(p: Props) {
     .sort((a, b) => Number(b.missing) - Number(a.missing) || a.name.localeCompare(b.name)), [library.assets, query, view]);
 
   async function run(key: string, action: () => Promise<void>) {
-    if (busy) return;
+    if (busyRef.current) return;
+    busyRef.current=true;
     setBusy(key);
     setError('');
     try {
@@ -108,6 +113,7 @@ export default function MediaLibraryPanel(p: Props) {
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : String(reason));
     } finally {
+      busyRef.current=false;
       setBusy('');
     }
   }
@@ -126,23 +132,22 @@ export default function MediaLibraryPanel(p: Props) {
     <header className="media-library-command">
       <div>
         <span>LOCAL MEDIA LIBRARY</span>
-        <h2>Files that survive the WebView.</h2>
+        <h2>Your show’s media, in one place.</h2>
         <p>Copy media into LumaRig or reference files in place. Missing references stay visible until you relink them.</p>
       </div>
       <div className="media-library-backup-actions">
         <button disabled={!!busy} onClick={() => void run('backup-export', p.onExportBackup)}>
           {busy === 'backup-export' ? 'Building backup…' : 'Export Portable Backup'}
         </button>
-        {!restoreArmed
-          ? <button className="danger-outline" disabled={!!busy} onClick={() => setRestoreArmed(true)}>Restore Backup…</button>
-          : <><button className="danger-button" disabled={!!busy} onClick={() => void run('backup-restore', async () => {
-            await p.onRestoreBackup();
-            setRestoreArmed(false);
-          })}>{busy === 'backup-restore' ? 'Restoring…' : 'Confirm Restore Backup'}</button>
-          <button disabled={!!busy} onClick={() => setRestoreArmed(false)}>Cancel</button></>}
+        {!prepared
+          ? <button disabled={!!busy} onClick={()=>void run('backup-check',async()=>{const result=await p.onPrepareRestore();preparedRef.current=result;setPrepared(result);})}>{busy==='backup-check'?'Checking backup…':'Restore Backup…'}</button>
+          : <><button className="danger-button" disabled={!!busy} onClick={()=>void run('backup-restore',async()=>{await prepared.apply();preparedRef.current=null;setPrepared(null);})}>{busy==='backup-restore'?'Restoring…':'Restore checked backup'}</button>
+          <button disabled={!!busy} onClick={()=>void run('backup-cancel',async()=>{await prepared.cancel();preparedRef.current=null;setPrepared(null);})}>Cancel restore</button></>}
+
       </div>
     </header>
 
+    {prepared&&<section className="media-restore-report" role="status"><strong>Ready to restore: {prepared.name}</strong><p>{prepared.songs} saved Songs · {prepared.media} media files checked. The backup becomes your active workspace. Your current Show is kept in Recovery, and existing saved Songs and Shows are retained.</p></section>}
     {error && <p className="media-library-error" role="alert">{error}</p>}
 
     <div className="media-library-layout">
@@ -199,7 +204,7 @@ export default function MediaLibraryPanel(p: Props) {
           <button disabled={!!busy} onClick={() => void run('import-reference', async () => {
             await pickMediaAssets('reference', destinationFolder);
           })}>{busy === 'import-reference' ? 'Linking…' : 'Reference In Place'}</button>
-          <button disabled={!!busy} onClick={() => void refresh()}>Refresh</button>
+          <button disabled={!!busy} onClick={() => void run('refresh',refresh)}>Refresh</button>
         </div>
 
         <div className="media-library-summary">
@@ -219,16 +224,16 @@ export default function MediaLibraryPanel(p: Props) {
                 <small>{bytes(asset.size)} · {asset.missing ? 'MISSING' : 'Available'} · used {useCount}×</small>
                 <code title={asset.path}>{asset.path}</code>
               </div>
-              <label className="media-folder-select"><span>Folder</span><select value={asset.folderId ?? ''} onChange={(event) => void run(`move-${asset.id}`, async () => {
+              <label className="media-folder-select"><span>Folder</span><select disabled={!!busy} value={asset.folderId ?? ''} onChange={(event) => void run(`move-${asset.id}`, async () => {
                 await moveMediaAsset(asset.id, event.target.value || null);
               })}>
                 <option value="">Library Root</option>
                 {folders.map((folder) => <option key={folder.id} value={folder.id}>{'  '.repeat(folderDepth(folder.id, library))}{folder.name}</option>)}
               </select></label>
               <div className="media-asset-actions">
-                <button disabled={!p.activeSong || asset.missing || asset.kind === 'image' || !!busy} onClick={() => void run(`attach-${asset.id}`, async () => {
+                <button disabled={!p.activeSong || asset.kind==='image' || asset.missing || !!busy} onClick={() => void run(`attach-${asset.id}`, async () => {
                   await p.onAttachToActiveSong(asset);
-                })}>{asset.kind === 'image' ? 'Screen asset' : p.activeSong ? `Use on ${p.activeSong.name}` : 'Select a Song first'}</button>
+                })}>{asset.kind==='image'?'Screen asset':p.activeSong ? `Use on ${p.activeSong.name}` : 'Select a Song first'}</button>
                 <button className={asset.missing ? 'console-primary' : ''} disabled={!!busy} onClick={() => void run(`relink-${asset.id}`, async () => {
                   const updated = await relinkMediaAsset(asset.id);
                   if (updated) p.onAssetChanged(updated);

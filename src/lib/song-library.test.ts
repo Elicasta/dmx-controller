@@ -118,3 +118,14 @@ describe('independent Song Programs and checkpoints', () => {
     expect(result.song).toMatchObject({bpm:130.5,tempoLocked:true});
   });
 });
+
+it('restore retains prior Songs, remaps colliding library IDs and captures outgoing workspace',async()=>{
+ const {prepareRestoredState}=await import('./program-storage');
+ const current=checkpointState(emptyProgramState(),programmed());
+ const imported=structuredClone(current);imported.working!.songs![0].libraryId=imported.programs[0].id;
+ const restored=prepareRestoredState(current,imported);
+ expect(restored.programs).toHaveLength(2);expect(restored.programs[0]).toEqual(current.programs[0]);
+ expect(restored.programs[1].id).not.toBe(current.programs[0].id);
+ expect(restored.working!.songs![0].libraryId).toBe(restored.programs[1].id);
+ expect(restored.recovery[0].show).toEqual(current.working);expect(current.recovery).toHaveLength(0);
+});

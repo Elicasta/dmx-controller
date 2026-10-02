@@ -65,9 +65,9 @@ A missing referenced file blocks export instead of producing a knowingly broken 
 
 1. The archive is opened and its media is extracted into a private staging directory.
 2. Backup format, media descriptors, and the ProgramState are validated before the staged files are committed.
-3. Existing healthy local assets with the same media ID are preserved.
-4. New or currently missing assets are committed into managed storage with their original IDs.
-5. The transactional ProgramState is replaced only after validation and media commit.
+3. The operator reviews a report before applying the checked backup.
+4. Restored media and folder IDs receive fresh IDs, and every programming reference is remapped. Existing files are never overwritten.
+5. The transactional ProgramState is committed after media validation and commit. The outgoing working Show is saved in Recovery; existing saved Songs and Shows remain available.
 6. LumaRig reloads from the restored checkpoint.
 
 An invalid manifest does not replace the user's saved program checkpoint or healthy local media.
@@ -82,7 +82,9 @@ Referenced absolute paths are intentionally machine-local. Portable backup conve
 
 - Missing reference: asset stays visible and can be relinked.
 - Failed managed copy: the Song is not switched to the incomplete native asset.
-- Failed registry write: the previous registry file is restored from its temporary backup.
+- Failed registry write: the previous complete registry revision remains authoritative.
 - Failed backup validation: staged restore data is discarded.
-- Failed backup media commit: already committed files from that restore attempt are removed and the existing registry is left unchanged.
+- Failed backup media commit: the isolated restore directory returns to staging and the existing registry remains unchanged.
 - Cloud unavailable: local media and portable backup remain independent of Cloud Shows.
+
+Managed writes use separate job IDs, raw 1 MiB IPC chunks, expected byte offsets and final size validation. Interrupted imports are cancelled without publishing partial files. Registry updates use immutable, synced revisions, and archive exports publish an adjacent temporary file only after ZIP finalization.

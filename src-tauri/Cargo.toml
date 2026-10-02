@@ -24,3 +24,5 @@ tungstenite = "0.27"
 # Vendored libusb keeps the app independent from a Homebrew runtime dependency.
 rusb = { version = "0.9", features = ["vendored"] }
 midir = "0.10"
+
+tempfile = "3"

@@ -1,6 +1,7 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import type { ShowFile } from "../lib/show";
 import { songsForShow, type SongRecord } from "../lib/song-bank";
+import { nativeMediaLibraryAvailable, readMediaLibrary, type MediaAsset } from '../lib/media-library';
 import type { SongProgram } from '../lib/song-library';
 type Props = {
   library: SongProgram[];
@@ -22,6 +23,21 @@ export default function SongBank(p: Props) {
     [busy, setBusy] = useState(""),
     [error, setError] = useState("");
   const songs = songsForShow(p.show);
+  const [mediaAssets, setMediaAssets] = useState<MediaAsset[]>([]);
+  useEffect(() => {
+    let active = true;
+    if (nativeMediaLibraryAvailable()) {
+      void readMediaLibrary().then(library => { if (active) setMediaAssets(library.assets); }).catch(() => {});
+    }
+    return () => { active = false; };
+  }, [p.show, busy]);
+  function mediaSource(id?: string) {
+    if (!id) return '';
+    const asset = mediaAssets.find(item => item.id === id);
+    if (asset?.missing) return 'Missing media';
+    if (asset) return asset.sourceMode === 'reference' ? 'Referenced file' : 'Managed copy';
+    return nativeMediaLibraryAvailable() ? 'Legacy browser media' : 'Browser media';
+  }
   async function attach(song: SongRecord, file?: File) {
     if (!file || busy) return;
     setBusy(song.id);
@@ -115,6 +131,7 @@ export default function SongBank(p: Props) {
                   <span>
                     {song.mediaName || "Drop audio or MP4 here, or link media"}
                   </span>
+                  {song.mediaId && <small>{mediaSource(song.mediaId)}</small>}
                 </div>
                 <div className="song-bank-actions">
                   <label className="file-button">

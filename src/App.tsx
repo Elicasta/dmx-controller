@@ -12,12 +12,12 @@ import RecorderTransport from './components/RecorderTransport';
 import { useEditHistory } from './lib/edit-history';
 import TempoPulse from './components/TempoPulse';
 import { useMediaOutputPublisher } from "./components/MediaOutput";
-import { readProgramState, replaceProgramState, saveProgramState, validateProgramState, type Recovery } from './lib/program-storage';
+import { readProgramState, prepareRestoredState, replaceProgramState, saveProgramState, validateProgramState, type Recovery } from './lib/program-storage';
 import { insertSongProgram, programId, type SongProgram } from './lib/song-library';
 import SongBank from './components/SongBank';
-import MediaLibraryPanel from './components/MediaLibraryPanel';
+import MediaLibraryPanel, {type PreparedRestore} from './components/MediaLibraryPanel';
 import { buildSong, songsForShow, renameSong, storeSongMedia, readSongMedia, type SongRecord } from './lib/song-bank';
-import { cancelPortableBackupRestore, collectMediaIds, commitPortableBackupRestore, countMediaIds, exportPortableBackup, importPortableBackup, mediaNameForId, persistManagedMedia, readMediaAsset, type MediaAsset } from './lib/media-library';
+import { commitPortableBackup, discardPortableBackup, collectMediaIds, countMediaIds, exportPortableBackup, importPortableBackup, mediaNameForId, persistManagedMedia, readMediaAsset, type MediaAsset } from './lib/media-library';
 import ResizableWorkspace from './components/ResizableWorkspace';
 import DraggablePanelDeck from './components/DraggablePanelDeck';
 import StageMonitor, { openStageWindow, useStagePublisher } from './components/StageMonitor';
@@ -3966,7 +3966,7 @@ export default function App() {
   }
   const songBank = songsForShow(showFile);
   const creatorSong = songBank.find(song => song.id === activeSongId);
-  const mediaUseCounts = useMemo(() => countMediaIds({ working: showFile, songLibrary, showLibrary, showRecovery }), [showFile, songLibrary, showLibrary, showRecovery]);
+  const mediaUseCounts = useMemo(() => countMediaIds({ working: showFile, songLibrary, showLibrary, recovery:showRecovery }), [showFile, songLibrary, showLibrary, showRecovery]);
   useEffect(() => {
     try { writeCompatibilityStorage('lumarig-active-song:' + showFile.name, activeSongId); } catch { /* Working show still autosaves. */ }
   }, [activeSongId, showFile.name]);
@@ -4040,14 +4040,11 @@ export default function App() {
   }
   function applyMediaAssetName(asset: MediaAsset) {
     setShowFile((current) => {
-      const previousNames = new Set(
-        songsForShow(current)
-          .filter((song) => song.mediaId === asset.id && song.mediaName)
-          .map((song) => song.mediaName!)
-      );
+      const linkedMediaNames = new Set(songsForShow(current).filter(song=>song.mediaId===asset.id).map(song=>song.mediaName));
+      const linkedSongNames = new Set(songsForShow(current).filter((song) => song.mediaId === asset.id).map((song) => song.name));
       const updateTimeline = (timeline: typeof current.timeline) => timeline ? {
         ...timeline,
-        audioName: timeline.audioName && previousNames.has(timeline.audioName) ? asset.name : timeline.audioName,
+        audioName: linkedMediaNames.has(timeline.audioName) ? asset.name : timeline.audioName,
         videoClips: timeline.videoClips?.map((clip) => clip.mediaId === asset.id ? { ...clip, name: asset.name } : clip),
       } : timeline;
       return {
@@ -4056,7 +4053,9 @@ export default function App() {
         timeline: updateTimeline(current.timeline),
         timelineShows: current.timelineShows?.map((item) => ({
           ...item,
-          timeline: updateTimeline(item.timeline)!,
+          timeline: linkedSongNames.has(item.name)
+            ? { ...updateTimeline(item.timeline)!, audioName: asset.name }
+            : updateTimeline(item.timeline)!,
         })),
       };
     });
@@ -4066,13 +4065,13 @@ export default function App() {
     const song = songsForShow(showFileRef.current).find((candidate) => candidate.id === activeSongId);
     if (!song) throw Error('Select a Song in Song Bank before assigning media.');
     if (asset.kind === 'image') throw Error('Still images belong to screen sources, not Song audio.');
+    const media = await readSongMedia(asset.id);
+    if (!media) throw Error(`Relink missing media: ${asset.name}`);
     setShowFile((current) => ({
       ...current,
       songs: songsForShow(current).map((candidate) => candidate.id === song.id ? { ...candidate, mediaId: asset.id, mediaName: asset.name } : candidate),
       timelineShows: current.timelineShows?.map((item) => item.name === song.name ? { ...item, timeline: { ...item.timeline, audioName: asset.name } } : item),
     }));
-    const media = await readSongMedia(asset.id);
-    if (!media) throw Error(`Relink missing media: ${asset.name}`);
     activateMedia(media, asset.name);
     setMessage(`${asset.name} linked to ${song.name} from Media Library.`);
   }
@@ -4097,29 +4096,34 @@ export default function App() {
     if (path) setMessage(`Portable backup saved · ${mediaIds.length} media file${mediaIds.length === 1 ? '' : 's'} included.`);
   }
 
-  async function restoreLocalPortableBackup() {
-    setMessage('Opening portable backup…');
-    const imported = await importPortableBackup();
-    if (!imported) return;
+  async function prepareLocalPortableBackup():Promise<PreparedRestore|null> {
+    if(!libraryReady||transitionRef.current)throw Error('Wait for the current save to finish.');
+    setMessage('Checking portable backup…');
+    const imported=await importPortableBackup();if(!imported)return null;
     try {
-      const state = validateProgramState(imported.manifest.programState);
-      if (state.workspace && !isAppWorkspaceCheckpoint(state.workspace)) throw Error('Backup workspace is invalid. Existing work was not replaced.');
-      if (state.recovery.some((item) => item.workspace && !isAppWorkspaceCheckpoint(item.workspace))) throw Error('Backup recovery data is invalid. Existing work was not replaced.');
-
-      // Validate first, commit staged media second, replace the transactional
-      // program checkpoint last. An invalid backup never touches live assets.
-      const committedMedia = await commitPortableBackupRestore(imported.restoreToken);
-      try {
-        await replaceProgramState(state);
-      } catch (error) {
-        throw Error(`Backup media was restored, but the program checkpoint could not be replaced: ${String(error)}`);
-      }
-      setMessage(`Backup restored · ${committedMedia} new media file${committedMedia === 1 ? '' : 's'} committed. Reloading LumaRig…`);
-      window.location.reload();
-    } catch (error) {
-      await cancelPortableBackupRestore(imported.restoreToken).catch(() => {});
-      throw error;
-    }
+      const state=validateProgramState(imported.manifest.programState);
+      if(!state.working)throw Error('Backup has no working Show.');
+      if(state.workspace&&!isAppWorkspaceCheckpoint(state.workspace))throw Error('Backup workspace is invalid.');
+      if(state.recovery.some(r=>r.workspace&&!isAppWorkspaceCheckpoint(r.workspace)))throw Error('Backup recovery workspace is invalid.');
+      return {
+        name:state.working.name,songs:state.programs.length,media:imported.importedMedia,
+        cancel:()=>discardPortableBackup(imported.restoreId).then(()=>{}),
+        apply:async()=>{
+          if(!libraryReady||transitionRef.current)throw Error('Wait for the current save to finish.');
+          transitionRef.current=true;setTransitionBusy(true);++saveSequence.current;
+          try{
+            window.dispatchEvent(new Event('lumarig-stop-timeline'));stopTimeline();stopFade();stopEffect(false);
+            const current=await saveAppProgramState(showFileRef.current,{workspace:currentWorkspaceCheckpoint()});
+            const restored=prepareRestoredState(current,state);
+            await commitPortableBackup(imported.restoreId);
+            await replaceProgramState(restored);
+            setLibraryReady(false);
+            setMessage(`Backup restored · ${imported.importedMedia} media files. Previous programming remains in Recovery.`);
+            window.location.reload();
+          }finally{transitionRef.current=false;setTransitionBusy(false);}
+        },
+      };
+    }catch(error){await discardPortableBackup(imported.restoreId).catch(()=>{});throw error;}
   }
   async function selectBankSong(song: SongRecord, mode?: 'creator' | 'timeline') {
     window.dispatchEvent(new Event('lumarig-stop-timeline')); stopTimeline();
@@ -5177,7 +5181,8 @@ export default function App() {
           ['songs','Song Bank'],['creator','Show Creator'],['cues','Cues'],['timeline','Timeline'],['tracks','Tracks'],['media','Media Library'],['library','Show Library'],['sync','MIDI & Sync'],['recordings','Recordings']
         ] as Array<[ShowMode,string]>).map(([id,label]) => <button key={id} aria-label={label} title={label} data-compact-label={{songs:'Songs',creator:'Creator',cues:'Cues',timeline:'Timeline',tracks:'Tracks',media:'Media',library:'Library',sync:'Sync',recordings:'Record'}[id]} className={showMode === id ? 'active' : ''} onClick={() => setShowMode(id)}>{label}</button>)}</nav>
 
-        {showMode === 'songs' && <SongBank library={songLibrary} ready={libraryReady} saveStatus={saveStatus} onSave={saveBankSong} onUse={useLibrarySong} show={showFile} activeId={activeSongId} onAdd={addBankSong} onSelect={selectBankSong} onRename={renameBankSong} onMedia={attachBankMedia} onOpenMediaLibrary={(song) => { setActiveSongId(song.id); setShowMode('media'); }}/>}\n        {showMode === 'media' && <MediaLibraryPanel activeSong={creatorSong ?? null} mediaUseCounts={mediaUseCounts} onAttachToActiveSong={attachLibraryAssetToActiveSong} onAssetChanged={applyMediaAssetName} onExportBackup={exportLocalPortableBackup} onRestoreBackup={restoreLocalPortableBackup}/>}
+        {showMode === 'songs' && <SongBank library={songLibrary} ready={libraryReady} saveStatus={saveStatus} onSave={saveBankSong} onUse={useLibrarySong} show={showFile} activeId={activeSongId} onAdd={addBankSong} onSelect={selectBankSong} onRename={renameBankSong} onMedia={attachBankMedia} onOpenMediaLibrary={(song) => { setActiveSongId(song.id); setShowMode('media'); }}/>}
+        {showMode === 'media' && <MediaLibraryPanel activeSong={creatorSong ?? null} mediaUseCounts={mediaUseCounts} onAttachToActiveSong={attachLibraryAssetToActiveSong} onAssetChanged={applyMediaAssetName} onExportBackup={exportLocalPortableBackup} onPrepareRestore={prepareLocalPortableBackup}/>}
         {showMode === 'cues' && <ResizableWorkspace className={`show-cue-layout ${cueTimelineSong!==null ? 'cue-with-timeline' : ''}`} storageKey="lumarig.cue-columns.v1" leftLabel="Rundown" rightLabel="Cue Inspector" leftDefault={250} rightDefault={245} rightEnabled={cueTimelineSong===null} centerMinimum={400}>
           <SongCueLibrary cues={showFile.cues} sections={showFile.rundownSections??[]} activeId={activeCueId} timelineNames={(showFile.timelineShows??[]).map(item=>item.name)} onRun={runCue} onDelete={deleteCue} onCapture={captureCue} onMove={(id,direction)=>setShowFile(current=>({...current,cues:moveCue(current.cues,id,direction)}))} onMoveSong={(sectionId,name,direction)=>setShowFile(current=>({...current,cues:moveRundownItemCues(current.cues,sectionId,name,direction)}))} onSectionsChange={(rundownSections)=>setShowFile(current=>({...current,rundownSections}))} onTimeline={openSongTimeline} onImport={importTimelineShow}/>
 
