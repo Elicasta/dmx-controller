@@ -1946,6 +1946,99 @@ export default function App() {
     if (activeCueId === id) setActiveCueId(null);
   }
 
+  async function refreshCloudLibrary() {
+    if (remoteRelayStatus !== 'connected') {
+      setCloudStatus('offline');
+      setCloudError('Connect Secure Cloud Relay to use Cloud Shows.');
+      return;
+    }
+    setCloudStatus('loading');
+    setCloudError('');
+    try {
+      const library = await fetchCloudShowLibrary(remoteRelayConfig);
+      setCloudFolders(library.folders);
+      setCloudShows(library.shows);
+      setCloudFolderId((current) => current && !library.folders.some((folder) => folder.id === current) ? '' : current);
+      setCloudStatus('synced');
+    } catch (error) {
+      setCloudStatus('error');
+      setCloudError(error instanceof Error ? error.message : String(error));
+    }
+  }
+
+  async function createCloudFolderFromInput() {
+    if (!cloudFolderName.trim() || cloudBusy) return;
+    setCloudBusy(true);
+    setCloudError('');
+    try {
+      const folder = await createCloudShowFolder(remoteRelayConfig, cloudFolderName.trim());
+      setCloudFolderName('');
+      setCloudFolders((current) => [...current, folder].sort((a, b) => a.name.localeCompare(b.name)));
+      setCloudFolderId(folder.id);
+      setCloudStatus('synced');
+    } catch (error) {
+      setCloudStatus('error');
+      setCloudError(error instanceof Error ? error.message : String(error));
+    } finally {
+      setCloudBusy(false);
+    }
+  }
+
+  async function syncShowSnapshotToCloud(snapshot: ShowProjectSnapshot) {
+    const known = cloudShows.find((item) => item.showId === snapshot.id);
+    const folderId = cloudFolderId || null;
+    const result = await saveCloudShow(remoteRelayConfig, {
+      showId: snapshot.id,
+      name: snapshot.name,
+      status: snapshot.status,
+      snapshot: { ...snapshot, cloudFolderId: folderId },
+      folderId,
+      expectedRevision: known?.revision ?? snapshot.cloudRevision ?? 0,
+      deviceId: 'lumarig-mac'
+    });
+    if (result.conflict) {
+      await refreshCloudLibrary();
+      throw new Error(`Cloud copy changed on another computer (R${result.revision}). Local save is safe. Load the cloud copy or save again after reviewing it.`);
+    }
+
+    const clouded: ShowProjectSnapshot = {
+      ...snapshot,
+      cloudRevision: result.revision,
+      cloudFolderId: folderId
+    };
+    const projects = [clouded, ...showLibrary.filter((item) => item.id !== clouded.id)].slice(0, 40);
+    await saveAppProgramState(showFileRef.current, { workspace: { ...currentWorkspaceCheckpoint(), projects } });
+    setShowLibrary(projects);
+    try { writeCompatibilityStorage(SHOW_LIBRARY_STORAGE_KEY, JSON.stringify(projects)); } catch { /* IndexedDB is authoritative. */ }
+    await refreshCloudLibrary();
+    return result;
+  }
+
+  async function importCloudShow(document: CloudShowDocument) {
+    if (!isShowProjectSnapshot(document.snapshot)) {
+      setCloudError(`${document.name} has an invalid cloud snapshot and was not loaded.`);
+      return;
+    }
+    const snapshot: ShowProjectSnapshot = {
+      ...structuredClone(document.snapshot),
+      savedAt: document.updatedAt,
+      cloudRevision: document.revision,
+      cloudFolderId: document.folderId,
+      lastEditor: document.lastEditor === 'lumaviz' ? 'lumaviz' : 'lumarig'
+    };
+    const projects = [snapshot, ...showLibrary.filter((item) => item.id !== snapshot.id)].slice(0, 40);
+    try {
+      await saveAppProgramState(showFileRef.current, { workspace: { ...currentWorkspaceCheckpoint(), projects } });
+      setShowLibrary(projects);
+      try { writeCompatibilityStorage(SHOW_LIBRARY_STORAGE_KEY, JSON.stringify(projects)); } catch { /* IndexedDB is authoritative. */ }
+      setCloudFolderId(document.folderId || '');
+      await loadShowProject(snapshot);
+      setMessage(`${document.name} downloaded from Cloud Shows and stored locally.`);
+    } catch (error) {
+      setCloudError(error instanceof Error ? error.message : String(error));
+    }
+  }
+
   async function saveShowProject(status: 'template' | 'draft' | 'show' = 'show') {
     if (!libraryReady) { setMessage('Song Library is not ready to save.'); return; }
     const cleanName = showFile.name.trim() || 'Untitled Show';
@@ -1958,6 +2051,8 @@ export default function App() {
       templateId: status === 'template' ? undefined : showLibrary.find((item) => item.status === 'template')?.id,
       revision: sharedShowRevisionRef.current,
       lastEditor: 'lumarig',
+      cloudRevision: existing?.cloudRevision,
+      cloudFolderId: existing?.cloudFolderId,
       show: sanitizeShow({ ...showFile, name: cleanName }),
       patch: patch.map((fixture, index) => migratePatchedFixture(fixture, index, patch.length, stageSettings.dimensions)),
       stageElements: stageElements.map((element) => migrateStageElement(element, stageSettings.dimensions)),
@@ -1968,9 +2063,33 @@ export default function App() {
     try {
       await saveAppProgramState(showFileRef.current, { workspace: { ...currentWorkspaceCheckpoint(), projects: nextLibrary } });
       try { writeCompatibilityStorage(SHOW_LIBRARY_STORAGE_KEY, JSON.stringify(nextLibrary)); } catch { /* Authoritative checkpoint already committed. */ }
-    } catch (error) { setSaveStatus('Save failed'); setMessage(`Show Save failed: ${String(error)}`); return; }
+    } catch (error) {
+      setSaveStatus('Save failed');
+      setMessage(`Show Save failed: ${String(error)}`);
+      return;
+    }
+
     setShowLibrary(nextLibrary);
-    setMessage(`${cleanName} saved to the show library as ${status === 'template' ? 'a template' : status === 'draft' ? 'a draft' : 'a service show'}.`);
+    const localMessage = `${cleanName} saved locally as ${status === 'template' ? 'a template' : status === 'draft' ? 'a draft' : 'a service show'}.`;
+    if (remoteRelayStatus !== 'connected') {
+      setMessage(`${localMessage} Cloud sync is offline.`);
+      return;
+    }
+
+    setCloudBusy(true);
+    try {
+      const result = await syncShowSnapshotToCloud(snapshot);
+      setCloudStatus('synced');
+      setCloudError('');
+      setMessage(`${localMessage} Cloud Shows synced at R${result.revision}.`);
+    } catch (error) {
+      const detail = error instanceof Error ? error.message : String(error);
+      setCloudStatus('error');
+      setCloudError(detail);
+      setMessage(`${localMessage} Cloud sync failed: ${detail}`);
+    } finally {
+      setCloudBusy(false);
+    }
   }
 
   async function checkpointShowChange(next: ShowFile, workspace = currentWorkspaceCheckpoint()): Promise<boolean> {
@@ -2027,11 +2146,18 @@ export default function App() {
     setMessage('New Show started. Your songs are saved in Song Library and the previous Show is available in Recovery.');
   }
 
-  function deleteShowProject(id: string) {
+  async function deleteShowProject(id: string) {
     const item = showLibrary.find((entry) => entry.id === id);
-    if (!item) return;
-    setShowLibrary((current) => current.filter((entry) => entry.id !== id));
-    setMessage(`${item.name} removed from the show library.`);
+    if (!item || !libraryReady) return;
+    const projects = showLibrary.filter((entry) => entry.id !== id);
+    try {
+      await saveAppProgramState(showFileRef.current, { workspace: { ...currentWorkspaceCheckpoint(), projects } });
+      setShowLibrary(projects);
+      try { writeCompatibilityStorage(SHOW_LIBRARY_STORAGE_KEY, JSON.stringify(projects)); } catch { /* IndexedDB is authoritative. */ }
+      setMessage(`${item.name} removed from the local show library. Cloud copy is unchanged.`);
+    } catch (error) {
+      setMessage(`Could not remove ${item.name}: ${String(error)}`);
+    }
   }
 
   async function loadShowAudioFile(file: File) {
