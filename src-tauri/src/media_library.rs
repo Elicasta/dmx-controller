@@ -816,6 +816,8 @@ fn valid_restore_token(value: &str) -> bool {
 fn valid_media_id(value: &str) -> bool {
     !value.is_empty()
         && value.len() <= 180
+        && !value.contains("..")
+        && value.chars().next().map(|ch| ch.is_ascii_alphanumeric()).unwrap_or(false)
         && value
             .chars()
             .all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '-' | '_' | '.' | ':'))
@@ -1027,4 +1029,32 @@ pub fn media_commit_portable_backup_restore(
 
     let _ = fs::remove_dir_all(&staging_root);
     Ok(imported)
+}
+
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn file_names_cannot_escape_managed_storage() {
+        assert_eq!(sanitize_file_name("../../Sunday / opener.mp4"), "Sunday _ opener.mp4");
+        assert_eq!(sanitize_file_name(""), "media.bin");
+    }
+
+    #[test]
+    fn portable_media_ids_reject_traversal_and_bad_prefixes() {
+        assert!(valid_media_id("8b4e2fa6-1e50-46cf-aad2-1951d36154fb"));
+        assert!(valid_media_id("legacy:audio_01"));
+        assert!(!valid_media_id("../escape"));
+        assert!(!valid_media_id(".hidden"));
+        assert!(!valid_media_id(""));
+    }
+
+    #[test]
+    fn restore_tokens_must_be_real_uuids() {
+        let token = Uuid::new_v4().to_string();
+        assert!(valid_restore_token(&token));
+        assert!(!valid_restore_token("../../restore"));
+    }
 }
