@@ -1,0 +1,9 @@
+{
+  "name": "lumarig-ableton-bridge",
+  "private": true,
+  "version": "0.1.0",
+  "description": "Node for Max bridge between Ableton LiveAPI and LumaRig",
+  "dependencies": {
+    "ws": "^8.18.0"
+  }
+}

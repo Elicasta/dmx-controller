@@ -3283,3 +3283,31 @@ body,#root { min-width:0; width:100%; overflow:hidden; }
 .lumalive-now strong{font-size:10px}.lumalive-now span{font-size:8px;color:#7f8c96}
 .lumalive-pair-row{display:grid;grid-template-columns:minmax(120px,1fr) auto;gap:7px;margin-top:9px}
 .lumalive-pair-row input{height:36px;padding:0 10px;border:1px solid #313b44;border-radius:7px;background:#090c0f;color:#eef3f6;font:700 14px ui-monospace,SFMono-Regular,Menlo,monospace;letter-spacing:3px}
+
+
+/* Ableton Live Arrangement locators */
+.bar-ruler{position:relative;overflow:visible}
+.timeline-external-marker{
+  position:absolute;
+  z-index:4;
+  top:2px;
+  transform:translateX(-1px);
+  max-width:150px;
+  min-height:20px;
+  padding:2px 6px;
+  border:0;
+  border-left:2px solid currentColor;
+  border-radius:0 4px 4px 0;
+  background:#17221e;
+  color:#9fe9c2;
+  font-size:9px;
+  font-weight:700;
+  letter-spacing:.03em;
+  line-height:16px;
+  overflow:hidden;
+  text-overflow:ellipsis;
+  white-space:nowrap;
+}
+.timeline-external-marker:hover,
+.timeline-external-marker:focus-visible{background:#20332a;color:#d8ffe7;outline:1px solid #55e98d}
+.ableton-sync-card .sync-metrics strong{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}

@@ -164,6 +164,7 @@ import { makeSelectionGrid, moveFixtureInSelectionGrid, normalizeSelectionGrid, 
 import { RemoteRelay, type RelayCommandEnvelope, type RemoteRelayConfig, type RemoteRelayStatus } from './core/remote-relay';
 import { desktopDeviceId } from './core/supabase-client';
 import { StudioBridgeDispatcher } from './core/studio-bridge-dispatcher';
+import { abletonTimelineElapsedMs, abletonTimelineMarkers, abletonTimelinePositionBar, activeAbletonLocator, sanitizeAbletonSnapshot, type AbletonLiveSnapshot } from './core/ableton-live-sync';
 import { TransportEngine, type TransportSource, type TransportUpdate } from './core/transport-engine';
 import { ConnectionManager, type ConnectionRecord } from './core/connection-manager';
 import { lumaLivePositionMs, loadLumaLiveConnection, pairLumaLive, readLumaLiveState, saveLumaLiveConnection, scanLumaLive, sendLumaLiveCommand, type LumaLiveConnection, type LumaLiveEndpoint, type LumaLiveState } from './core/lumalive-client';
@@ -756,6 +757,32 @@ export default function App() {
   const lumaLiveLastPositionRef = useRef(0);
 
   const [studioBridgeStatus, setStudioBridgeStatus] = useState<StudioBridgeStatus>({ listening: false, port: 47777, connectedClients: 0 });
+  const [abletonSnapshot, setAbletonSnapshot] = useState<AbletonLiveSnapshot | null>(null);
+  const [abletonConnected, setAbletonConnected] = useState(false);
+  const abletonSnapshotRef = useRef<AbletonLiveSnapshot | null>(null);
+  const abletonLastSeenRef = useRef(0);
+  const abletonUiUpdateRef = useRef(0);
+  const abletonConnectionUpdateRef = useRef(0);
+  useEffect(() => {
+    const timer = window.setInterval(() => {
+      if (!abletonLastSeenRef.current || Date.now() - abletonLastSeenRef.current <= 2500) return;
+      abletonLastSeenRef.current = 0;
+      setAbletonConnected(false);
+      connectionManagerRef.current!.upsert({
+        id:'ableton',
+        kind:'ableton',
+        name:'Ableton Live',
+        status:'off',
+        capabilities:['transport','tempo','song-position'],
+        lastSeenAt:null,
+        lastError:'',
+        detail:'Waiting for Max for Live bridge'
+      });
+      refreshConnectionRecords();
+      if (transportEngineRef.current!.snapshot().source === 'ableton') releaseSharedTransport('ableton');
+    }, 1000);
+    return () => window.clearInterval(timer);
+  }, []);
   useEffect(() => {
     const refresh = () => {
       void invoke<StudioBridgeStatus>('studio_bridge_status')
@@ -3080,6 +3107,57 @@ export default function App() {
     await setBlackoutState(!dmxStatus.blackout, 'ui');
   }
 
+  function applyAbletonRuntimeSnapshot(input: AbletonLiveSnapshot, publishMetadata = false) {
+    const snapshot = sanitizeAbletonSnapshot(input);
+    const now = Date.now();
+    const wasDisconnected = !abletonLastSeenRef.current || now - abletonLastSeenRef.current > 2500;
+    abletonSnapshotRef.current = snapshot;
+    abletonLastSeenRef.current = now;
+
+    if (wasDisconnected) setAbletonConnected(true);
+    if (publishMetadata || wasDisconnected || now - abletonUiUpdateRef.current >= 100) {
+      abletonUiUpdateRef.current = now;
+      setAbletonSnapshot(snapshot);
+    }
+    if (wasDisconnected || now - abletonConnectionUpdateRef.current >= 1000) {
+      abletonConnectionUpdateRef.current = now;
+      connectionManagerRef.current!.upsert({
+        id:'ableton',
+        kind:'ableton',
+        name:'Ableton Live',
+        status:'connected',
+        capabilities:['transport','tempo','song-position','locators'],
+        lastSeenAt:now,
+        lastError:'',
+        detail:`${snapshot.locators.length} locators · ${snapshot.bpm.toFixed(1)} BPM`
+      });
+      refreshConnectionRecords();
+    }
+
+    const rawPositionMs = snapshot.currentBeat * 60000 / snapshot.bpm;
+    const result = applySharedTransport({
+      source:'ableton',
+      playing:snapshot.playing,
+      positionMs:rawPositionMs,
+      bpm:snapshot.bpm,
+      claim:snapshot.playing,
+      release:!snapshot.playing
+    });
+    if (!result.accepted) return;
+
+    const bar = abletonTimelinePositionBar(snapshot);
+    const lightingTimelineElapsedMs = abletonTimelineElapsedMs(
+      snapshot,
+      editingTimeline.beatsPerBar,
+      masterTempoBpm,
+      externalTrack.lightingOffsetMs,
+    );
+    setShowTrackPositionMs(result.state.positionMs);
+    timelinePositionRef.current = bar;
+    setTimelinePositionBar(bar);
+    renderTimelineFrame(lightingTimelineElapsedMs);
+  }
+
   async function dispatchStudioBridgeCommand(id: string, command: StudioBridgeCommand) {
     const dispatcher = new StudioBridgeDispatcher({
       createShow: (identity: StudioSongIdentity) => {
@@ -3185,6 +3263,19 @@ export default function App() {
           release:!playing
         });
         if(!result.accepted) throw new Error(`Transport authority is currently held by ${result.state.source}.`);
+      },
+      syncAbletonSnapshot: (snapshot) => applyAbletonRuntimeSnapshot(snapshot, true),
+      syncAbletonTransport: (playing, currentBeat, bpm, beatsPerBar) => {
+        const current = abletonSnapshotRef.current;
+        applyAbletonRuntimeSnapshot({
+          setId: current?.setId ?? '',
+          setName: current?.setName ?? 'Ableton Live',
+          bpm,
+          beatsPerBar,
+          currentBeat,
+          playing,
+          locators: current?.locators ?? [],
+        });
       }
     });
     return dispatcher.dispatch(id, command);
@@ -6087,7 +6178,7 @@ export default function App() {
         {showMode === 'cues' && <ResizableWorkspace className={`show-cue-layout ${cueTimelineSong!==null ? 'cue-with-timeline' : ''}`} storageKey="lumarig.cue-columns.v1" leftLabel="Rundown" rightLabel="Cue Inspector" leftDefault={250} rightDefault={245} rightEnabled={cueTimelineSong===null} centerMinimum={400}>
           <SongCueLibrary cues={showFile.cues} sections={showFile.rundownSections??[]} activeId={activeCueId} timelineNames={(showFile.timelineShows??[]).map(item=>item.name)} onRun={runCue} onDelete={deleteCue} onCapture={captureCue} onMove={(id,direction)=>setShowFile(current=>({...current,cues:moveCue(current.cues,id,direction)}))} onMoveSong={(sectionId,name,direction)=>setShowFile(current=>({...current,cues:moveRundownItemCues(current.cues,sectionId,name,direction)}))} onSectionsChange={(rundownSections)=>setShowFile(current=>({...current,rundownSections}))} onTimeline={openSongTimeline} onImport={importTimelineShow}/>
 
-          {cueTimelineSong!==null ? <main className="cue-integrated-timeline"><header><strong>{cueTimelineSong}</strong><button onClick={()=>{releaseTimeline();setCueTimelineSong(null);}}>Close timeline</button></header><Suspense fallback={<p>Loading timeline…</p>}><ShowTimelineEditor onRecord={recordIntoTimeline} keepMediaOnRelease={()=>Boolean(timelineRecordingOrigin.current && showRecordingActiveRef.current)} onExportVideo={exportTimelineVideo} onImportVideoClip={importTimelineVideoClip} onPlayingChange={changeTimelinePlaying} fxRecipes={fxLibrary(customEffects)} screens={stageElements.filter(e=>e.type==='led-screen')} displayId={stageElements.find(e=>e.mediaSource?.kind==='timeline')?.id ?? ''} onDisplayChange={routeTimelineVideo} selectedClipId={activeTimelineClipId} positionBar={timelinePositionBar} onSelectClip={selectTimelineClip} onRelease={releaseTimeline} onReset={() => { commitUniverse(makeUniverse()); timelinePositionRef.current=0; setTimelinePositionBar(0); activeTimelineClipRef.current=''; setActiveTimelineClipId(''); setActiveCueId(null); setActiveSectionId(''); }} key={timelineShowId+cueTimelineSong} timeline={editingTimeline} cues={showFile.cues.filter(c => !timelineShowId || c.trackName === showFile.timelineShows?.find(t => t.id === timelineShowId)?.name)} initialBar={timelineStartBar} songFilter={cueTimelineSong} audioRef={showTrackAudioRef} audioUrl={editingTimeline.audioName===showTrackName?showTrackUrl:''} audioName={editingTimeline.audioName??''} audioDurationMs={editingTimeline.audioName===showTrackName?showTrackDurationMs:0} masterBpm={masterTempoBpm} onMasterBpmChange={setMasterTempo} tempoLocked={tempoLocked} onTempoLockChange={changeTempoLock} tempoAnalysis={creatorSong?.tempoAnalysis} onDownbeatChange={correctActiveSongDownbeat} onOpenStepEditor={openTimelineStepEditor} onLoadAudio={loadShowAudioFile} onChange={updateEditingTimeline} onAddFx={addTimelineFx} fxTargetName={selectedGroup?.name??'All patched fixtures'} onFrame={renderTimelineFrame} onStop={stopTimeline} onCreator={()=>setShowMode('creator')}/></Suspense></main> : <>          <main className="cue-preview-console"><header><span>{directStatus.clients > 0 ? 'LUMAVIZ LIVE PREVIEW' : 'STAGE / CUE PREVIEW'}</span><b>{activeCue?.name ?? 'Live output'}</b></header><div className={`show-viz-preview ${liveLumaVizPreview ? 'linked external-feed' : directStatus.clients > 0 ? 'linked' : ''}`}>{liveLumaVizPreview ? <img src={liveLumaVizPreview.dataUrl} alt={`LumaViz ${liveLumaVizPreview.view ?? 'live'} preview`} /> : renderStagePreview()}</div><div className="cue-preview-meta"><span>CURRENT<strong>{activeCue ? `${activeCue.number}. ${activeCue.name}` : 'Ready'}</strong></span><span>NEXT<strong>{nextCue ? `${nextCue.number}. ${nextCue.name}` : 'End of show'}</strong></span></div></main></>}
+          {cueTimelineSong!==null ? <main className="cue-integrated-timeline"><header><strong>{cueTimelineSong}</strong><button onClick={()=>{releaseTimeline();setCueTimelineSong(null);}}>Close timeline</button></header><Suspense fallback={<p>Loading timeline…</p>}><ShowTimelineEditor externalSourceLabel={abletonSnapshot ? 'Ableton Live' : undefined} externalMarkers={abletonSnapshot ? abletonTimelineMarkers(abletonSnapshot) : undefined} onRecord={recordIntoTimeline} keepMediaOnRelease={()=>Boolean(timelineRecordingOrigin.current && showRecordingActiveRef.current)} onExportVideo={exportTimelineVideo} onImportVideoClip={importTimelineVideoClip} onPlayingChange={changeTimelinePlaying} fxRecipes={fxLibrary(customEffects)} screens={stageElements.filter(e=>e.type==='led-screen')} displayId={stageElements.find(e=>e.mediaSource?.kind==='timeline')?.id ?? ''} onDisplayChange={routeTimelineVideo} selectedClipId={activeTimelineClipId} positionBar={timelinePositionBar} onSelectClip={selectTimelineClip} onRelease={releaseTimeline} onReset={() => { commitUniverse(makeUniverse()); timelinePositionRef.current=0; setTimelinePositionBar(0); activeTimelineClipRef.current=''; setActiveTimelineClipId(''); setActiveCueId(null); setActiveSectionId(''); }} key={timelineShowId+cueTimelineSong} timeline={editingTimeline} cues={showFile.cues.filter(c => !timelineShowId || c.trackName === showFile.timelineShows?.find(t => t.id === timelineShowId)?.name)} initialBar={timelineStartBar} songFilter={cueTimelineSong} audioRef={showTrackAudioRef} audioUrl={editingTimeline.audioName===showTrackName?showTrackUrl:''} audioName={editingTimeline.audioName??''} audioDurationMs={editingTimeline.audioName===showTrackName?showTrackDurationMs:0} masterBpm={masterTempoBpm} onMasterBpmChange={setMasterTempo} tempoLocked={tempoLocked} onTempoLockChange={changeTempoLock} tempoAnalysis={creatorSong?.tempoAnalysis} onDownbeatChange={correctActiveSongDownbeat} onOpenStepEditor={openTimelineStepEditor} onLoadAudio={loadShowAudioFile} onChange={updateEditingTimeline} onAddFx={addTimelineFx} fxTargetName={selectedGroup?.name??'All patched fixtures'} onFrame={renderTimelineFrame} onStop={stopTimeline} onCreator={()=>setShowMode('creator')}/></Suspense></main> : <>          <main className="cue-preview-console"><header><span>{directStatus.clients > 0 ? 'LUMAVIZ LIVE PREVIEW' : 'STAGE / CUE PREVIEW'}</span><b>{activeCue?.name ?? 'Live output'}</b></header><div className={`show-viz-preview ${liveLumaVizPreview ? 'linked external-feed' : directStatus.clients > 0 ? 'linked' : ''}`}>{liveLumaVizPreview ? <img src={liveLumaVizPreview.dataUrl} alt={`LumaViz ${liveLumaVizPreview.view ?? 'live'} preview`} /> : renderStagePreview()}</div><div className="cue-preview-meta"><span>CURRENT<strong>{activeCue ? `${activeCue.number}. ${activeCue.name}` : 'Ready'}</strong></span><span>NEXT<strong>{nextCue ? `${nextCue.number}. ${nextCue.name}` : 'End of show'}</strong></span></div></main></>}
 
           <aside className="cue-inspector-console"><header><span>CUE INSPECTOR</span><strong>{activeCue?.name ?? 'New cue'}</strong></header>{activeCue ? <><label><span>Cue Name</span><input value={activeCue.name} onChange={(event)=>updateCueProperties(activeCue.id,{name:event.target.value})}/></label><label><span>Cue Color</span><input type="color" value={activeCue.color ?? '#55e98d'} onChange={(event)=>updateCueProperties(activeCue.id,{color:event.target.value})}/></label><label><span>Description</span><textarea value={activeCue.description ?? ''} onChange={(event)=>updateCueProperties(activeCue.id,{description:event.target.value})}/></label><div className="inspector-pair"><label><span>Fade In ms</span><input type="number" min="0" value={activeCue.fadeMs} onChange={(event)=>updateCueProperties(activeCue.id,{fadeMs:Number(event.target.value)})}/></label><label><span>Fade Out ms</span><input type="number" min="0" value={activeCue.fadeOutMs ?? activeCue.fadeMs} onChange={(event)=>updateCueProperties(activeCue.id,{fadeOutMs:Number(event.target.value)})}/></label></div><div className="inspector-pair"><label><span>Delay ms</span><input type="number" min="0" value={activeCue.delayMs ?? 0} onChange={(event)=>updateCueProperties(activeCue.id,{delayMs:Number(event.target.value)})}/></label><label><span>Follow ms</span><input type="number" min="0" value={activeCue.followMs ?? 0} onChange={(event)=>updateCueProperties(activeCue.id,{followMs:Number(event.target.value)})}/></label></div><section className="cue-timing-overrides"><header><span>ATTRIBUTE TIMING</span><small>Override only what needs different timing</small></header>{(['intensity','color','position','beam'] as CueTimingFamily[]).map((family)=>{const rule=cueTimingRule(activeCue,family);return <div className="cue-timing-row" key={family}><strong>{family.toUpperCase()}</strong><label><span>Fade ms</span><input type="number" min="0" max="60000" value={rule.fadeMs} onChange={(event)=>updateCueTiming(activeCue.id,family,{fadeMs:Number(event.target.value)})}/></label><label><span>Delay ms</span><input type="number" min="0" max="60000" value={rule.delayMs} onChange={(event)=>updateCueTiming(activeCue.id,family,{delayMs:Number(event.target.value)})}/></label><label><span>Curve</span><select value={rule.curve} onChange={(event)=>updateCueTiming(activeCue.id,family,{curve:event.target.value as CueTimingRule['curve']})}><option value="ease">Ease</option><option value="linear">Linear</option><option value="snap">Snap</option></select></label></div>})}</section><label><span>Linked Effect</span><select value={activeCue.linkedEffectId ?? ''} onChange={(event)=>updateCueProperties(activeCue.id,{linkedEffectId:event.target.value})}><option value="">None</option>{EFFECT_PRESETS.map((effect)=><option key={effect.id} value={effect.id}>{effect.name}</option>)}</select></label><label><span>Show Section</span><select aria-label="Cue show section" value={activeCue.rundownSectionId ?? ''} onChange={(event)=>updateCueProperties(activeCue.id,{rundownSectionId:event.target.value})}><option value="">Unfiled</option>{(showFile.rundownSections??[]).map(section=><option key={section.id} value={section.id}>{section.name}</option>)}</select></label><label><span>Item Type</span><select aria-label="Cue item type" value={activeCue.trackKind ?? 'song'} onChange={(event)=>updateCueProperties(activeCue.id,{trackKind:event.target.value as 'song'|'media'})}><option value="song">Song</option><option value="media">Media</option></select></label><label><span>Song / media item</span><input value={activeCue.trackName ?? ''} onChange={(event)=>updateCueProperties(activeCue.id,{trackName:event.target.value})}/></label><button className="console-primary" onClick={()=>updateCue(activeCue.id)}>Update Look From Output</button></> : <><label><span>New Cue Name</span><input value={cueName} placeholder={`Cue ${showFile.cues.length+1}`} onChange={(event)=>setCueName(event.target.value)}/></label><label><span>Fade In</span><select value={cueFadeMs} onChange={(event)=>setCueFadeMs(Number(event.target.value))}>{FADE_TIMES.map((time)=><option key={time} value={time}>{time===0?'Snap':`${time/1000}s`}</option>)}</select></label><button className="console-primary" onClick={captureCue}>Capture Current Look</button></>}<label><span>Show Notes</span><textarea value={showFile.notes ?? ''} placeholder="Set list, transitions, safety notes…" onChange={(event)=>setShowFile((current)=>({...current,notes:event.target.value}))}/></label></aside>
 
@@ -6100,7 +6191,7 @@ export default function App() {
           const next = typeof action === 'function' ? action(editing) : action;
           return {...current,creatorSections:creatorSong ? [...all.filter(section => section.song !== creatorSong.name), ...next.map(section => ({...section,song:creatorSong.name}))] : next};
         })} groups={showFile.groups ?? []} fixtures={patch} masterBpm={masterTempoBpm} onMasterBpmChange={setMasterTempo} tempoLocked={tempoLocked} onTempoLockChange={changeTempoLock} onBuild={buildCreatorSections} onPreview={previewCreatorSection} onStop={() => { stopFade(); stopEffect(); }} onTimeline={() => { if (creatorSong) void selectBankSong(creatorSong, 'timeline'); else setShowMode('timeline'); }} onEditFx={(effect) => { setFxEditor(effect); setWorkspace('create'); setProgramMode('fx'); }}/></Suspense>}
-        {showMode === 'timeline' && <div className="timeline-workspace"><label className="timeline-show-select">Timeline show <select aria-label="Timeline show" value={timelineShowId} onChange={e=>{window.dispatchEvent(new Event('lumarig-stop-timeline'));stopTimeline();const item=showFile.timelineShows?.find(t=>t.id===e.target.value);const song=songBank.find(s=>s.name===item?.name);if(song)void selectBankSong(song,'timeline');else{++mediaLoadToken.current;setActiveSongId('');setTimelineShowId(e.target.value);showTrackAudioRef.current?.pause();}}}><option value="">Current show</option>{(showFile.timelineShows??[]).map(item=><option key={item.id} value={item.id}>{item.name}</option>)}</select></label><Suspense fallback={<p>Loading Timeline…</p>}><ShowTimelineEditor onRecord={recordIntoTimeline} keepMediaOnRelease={()=>Boolean(timelineRecordingOrigin.current && showRecordingActiveRef.current)} onExportVideo={exportTimelineVideo} onImportVideoClip={importTimelineVideoClip} onPlayingChange={changeTimelinePlaying} fxRecipes={fxLibrary(customEffects)} screens={stageElements.filter(e=>e.type==='led-screen')} displayId={stageElements.find(e=>e.mediaSource?.kind==='timeline')?.id ?? ''} onDisplayChange={routeTimelineVideo} selectedClipId={activeTimelineClipId} positionBar={timelinePositionBar} onSelectClip={selectTimelineClip} onRelease={releaseTimeline} onReset={() => { commitUniverse(makeUniverse()); timelinePositionRef.current=0; setTimelinePositionBar(0); activeTimelineClipRef.current=''; setActiveTimelineClipId(''); setActiveCueId(null); setActiveSectionId(''); }} key={timelineShowId} timeline={editingTimeline} cues={showFile.cues.filter(c => !timelineShowId || c.trackName === showFile.timelineShows?.find(t => t.id === timelineShowId)?.name)} audioRef={showTrackAudioRef} audioUrl={editingTimeline.audioName===showTrackName?showTrackUrl:''} audioName={editingTimeline.audioName??''} audioDurationMs={editingTimeline.audioName===showTrackName?showTrackDurationMs:0} masterBpm={masterTempoBpm} onMasterBpmChange={setMasterTempo} tempoLocked={tempoLocked} onTempoLockChange={changeTempoLock} tempoAnalysis={creatorSong?.tempoAnalysis} onDownbeatChange={correctActiveSongDownbeat} onOpenStepEditor={openTimelineStepEditor} onLoadAudio={loadShowAudioFile} onChange={updateEditingTimeline} onAddFx={addTimelineFx} fxTargetName={selectedGroup?.name??'All patched fixtures'} onFrame={renderTimelineFrame} onStop={stopTimeline} onCreator={() => changeShowMode('creator')}/></Suspense></div>}
+        {showMode === 'timeline' && <div className="timeline-workspace"><label className="timeline-show-select">Timeline show <select aria-label="Timeline show" value={timelineShowId} onChange={e=>{window.dispatchEvent(new Event('lumarig-stop-timeline'));stopTimeline();const item=showFile.timelineShows?.find(t=>t.id===e.target.value);const song=songBank.find(s=>s.name===item?.name);if(song)void selectBankSong(song,'timeline');else{++mediaLoadToken.current;setActiveSongId('');setTimelineShowId(e.target.value);showTrackAudioRef.current?.pause();}}}><option value="">Current show</option>{(showFile.timelineShows??[]).map(item=><option key={item.id} value={item.id}>{item.name}</option>)}</select></label><Suspense fallback={<p>Loading Timeline…</p>}><ShowTimelineEditor externalSourceLabel={abletonSnapshot ? 'Ableton Live' : undefined} externalMarkers={abletonSnapshot ? abletonTimelineMarkers(abletonSnapshot) : undefined} onRecord={recordIntoTimeline} keepMediaOnRelease={()=>Boolean(timelineRecordingOrigin.current && showRecordingActiveRef.current)} onExportVideo={exportTimelineVideo} onImportVideoClip={importTimelineVideoClip} onPlayingChange={changeTimelinePlaying} fxRecipes={fxLibrary(customEffects)} screens={stageElements.filter(e=>e.type==='led-screen')} displayId={stageElements.find(e=>e.mediaSource?.kind==='timeline')?.id ?? ''} onDisplayChange={routeTimelineVideo} selectedClipId={activeTimelineClipId} positionBar={timelinePositionBar} onSelectClip={selectTimelineClip} onRelease={releaseTimeline} onReset={() => { commitUniverse(makeUniverse()); timelinePositionRef.current=0; setTimelinePositionBar(0); activeTimelineClipRef.current=''; setActiveTimelineClipId(''); setActiveCueId(null); setActiveSectionId(''); }} key={timelineShowId} timeline={editingTimeline} cues={showFile.cues.filter(c => !timelineShowId || c.trackName === showFile.timelineShows?.find(t => t.id === timelineShowId)?.name)} audioRef={showTrackAudioRef} audioUrl={editingTimeline.audioName===showTrackName?showTrackUrl:''} audioName={editingTimeline.audioName??''} audioDurationMs={editingTimeline.audioName===showTrackName?showTrackDurationMs:0} masterBpm={masterTempoBpm} onMasterBpmChange={setMasterTempo} tempoLocked={tempoLocked} onTempoLockChange={changeTempoLock} tempoAnalysis={creatorSong?.tempoAnalysis} onDownbeatChange={correctActiveSongDownbeat} onOpenStepEditor={openTimelineStepEditor} onLoadAudio={loadShowAudioFile} onChange={updateEditingTimeline} onAddFx={addTimelineFx} fxTargetName={selectedGroup?.name??'All patched fixtures'} onFrame={renderTimelineFrame} onStop={stopTimeline} onCreator={() => changeShowMode('creator')}/></Suspense></div>}
 
         {showMode === 'tracks' && <div className="tracks-console tracks-console-v3">
           <section className="console-panel track-source"><header><div><span>LOCAL AUDIO TRACK</span><h2>{showTrackName || 'No track loaded'}</h2></div><label className="file-button"><input type="file" accept="audio/*" onChange={loadShowTrack}/>{showTrackName?'Change Track':'Load Track'}</label></header><div className="track-timeline"><span>{formatShowTime(showTrackPositionMs)}</span><input type="range" min="0" max={Math.max(1,showTrackDurationMs)} value={Math.min(showTrackPositionMs,Math.max(1,showTrackDurationMs))} onChange={(event)=>{const next=Number(event.target.value);if(showTrackAudioRef.current)showTrackAudioRef.current.currentTime=next/1000;setShowTrackPositionMs(next);}}/><span>{formatShowTime(showTrackDurationMs)}</span></div><div className="track-actions"><button onClick={toggleShowTrackPreview}>Play / Pause</button><button onClick={()=>setShowMode('timeline')}>Open Timeline</button></div></section>
@@ -6147,6 +6238,7 @@ export default function App() {
             {lumaLiveError && <p className="artnet-error">{lumaLiveError}</p>}
             <small>LumaLive remains the Ableton owner. LumaRig follows its authenticated transport instead of creating a second competing LiveAPI controller.</small>
           </section>
+          <section className="console-panel sync-status-card ableton-sync-card"><header><div><span>ABLETON LIVE</span><h2>{abletonSnapshot?.setName || 'Locator Bridge'}</h2></div><b className={abletonConnected?'healthy':''}>{abletonConnected?'LINKED':'WAITING'}</b></header><div className="sync-metrics"><span><small>LOCATORS</small><strong>{abletonSnapshot?.locators.length ?? 0}</strong></span><span><small>SECTION</small><strong>{abletonSnapshot ? (activeAbletonLocator(abletonSnapshot)?.name ?? 'Pre-roll') : '—'}</strong></span><span><small>POSITION</small><strong>{abletonSnapshot ? `B${abletonSnapshot.currentBeat.toFixed(1)}` : '—'}</strong></span><span><small>AUTHORITY</small><strong>{sharedTransport.source === 'ableton' ? 'ABLETON' : sharedTransport.source.toUpperCase()}</strong></span></div><p>Arrangement locators are mirrored onto LumaRig Timeline. Live supplies musical position; LumaRig resolves the lighting show.</p></section>
           <section className="console-panel sync-status-card"><header><div><span>LUMASTUDIO</span><h2>Transport Authority</h2></div><b className={studioBridgeStatus.connectedClients>0?'healthy':''}>{studioBridgeStatus.connectedClients>0?'CONNECTED':studioBridgeStatus.listening?'READY':'OFFLINE'}</b></header><div className="sync-metrics"><span><small>PORT</small><strong>{studioBridgeStatus.port}</strong></span><span><small>CLIENTS</small><strong>{studioBridgeStatus.connectedClients}</strong></span><span><small>TRANSPORT</small><strong>{externalTransportRunning?'FOLLOWING':'LOCAL'}</strong></span><span><small>AUTHORITY</small><strong>RIG LIGHTING</strong></span></div><p>Studio controls transport and song position. LumaRig keeps authority over cue execution, FX and DMX output.</p></section>
           <section className="console-panel sync-status-card"><header><div><span>MIDI</span><h2>Clock + Transport</h2></div><b className={midiStatus.connected?'healthy':''}>{midiStatus.connected?'CONNECTED':'OFFLINE'}</b></header><div className="sync-metrics"><span><small>INPUT</small><strong>{midiStatus.input_name || '—'}</strong></span><span><small>CLOCK</small><strong>{midiClockSeen?'SEEN':'WAITING'}</strong></span><span><small>BPM</small><strong>{midiBpm || effectBpm}</strong></span><span><small>MESSAGES</small><strong>{midiStatus.messages_received}</strong></span></div><button onClick={()=>{setWorkspace('build');setSetupView('settings');}}>Open Connections</button></section>
           <section className="console-panel sync-status-card"><header><div><span>LUMAVIZ</span><h2>Preview + Shared Show</h2></div><b className={directStatus.clients>0?'healthy':''}>{directStatus.clients>0?'CONNECTED':directStatus.listening?'READY':'OFFLINE'}</b></header><div className="sync-metrics"><span><small>DIRECT PORT</small><strong>{directStatus.port}</strong></span><span><small>CLIENTS</small><strong>{directStatus.clients}</strong></span><span><small>FRAMES</small><strong>{directStatus.framesSent}</strong></span><span><small>LOCATION</small><strong>{activeLocation?.name || '—'}</strong></span></div></section>

@@ -16,7 +16,7 @@ Studio identifies both its current Studio Show and stable Song ID. LumaRig resol
 
 ## Commands
 
-hello, song.resolve, show.load, cue.go, scene.fire, fx.start, fx.stop, record.start, record.stop, record.play, record.stopPlayback, blackout, transport.
+hello, song.resolve, show.load, cue.go, scene.fire, fx.start, fx.stop, record.start, record.stop, record.play, record.stopPlayback, blackout, transport, ableton.snapshot, ableton.transport.
 
 The bridge handler must dispatch into the existing ShowRuntime/recording paths. It must not create a second lighting runtime.
 

@@ -22,7 +22,10 @@ import {
   type TimelineMediaClip,
   type TimelineTakeClip,
 } from "../lib/show-design";
+type ExternalTimelineMarker = { id: string; name: string; beat: number; bar: number };
 type Props = {
+  externalMarkers?: ExternalTimelineMarker[];
+  externalSourceLabel?: string;
   onRecord?: (bar:number,overdub:boolean)=>void;
   keepMediaOnRelease?: ()=>boolean;
   onImportVideoClip?: (file:File,startBar:number)=>void;
@@ -144,7 +147,8 @@ export default function ShowTimelineEditor(props: Props) {
   const audioEnd = timeline.audioOffsetBars + bounds.durationMs / msPerBar;
   const waveformWidth = Math.max(1, bounds.durationMs / msPerBar * zoom);
   const peaks = waveform ? displayPeaks(waveform, bounds.startMs, bounds.endMs, waveformWidth) : [];
-  const endBar = Math.max(16, clipEnd, audioEnd);
+  const markerEnd = Math.max(0, ...(props.externalMarkers ?? []).map((marker) => marker.bar));
+  const endBar = Math.max(16, clipEnd, audioEnd, markerEnd);
   const totalBars = Math.max(32, Math.ceil(endBar + 8));
   const laneCount = Math.max(lanes, ...timeline.clips.map((c) => c.lane + 1));
   const selectedVideo=timeline.videoClips?.find(c=>c.id===selectedId);
@@ -708,6 +712,19 @@ export default function ShowTimelineEditor(props: Props) {
                     <span key={i} style={{ left: i * zoom, width: zoom }}>
                       {zoom >= 30 || i % Math.ceil(40 / zoom) === 0 ? i + 1 : ""}
                     </span>
+                  ))}
+                  {(props.externalMarkers ?? []).map((marker) => (
+                    <button
+                      type="button"
+                      key={marker.id}
+                      className="timeline-external-marker"
+                      style={{ left: marker.bar * zoom }}
+                      title={`${props.externalSourceLabel ?? 'External'} · Beat ${marker.beat.toFixed(2)}`}
+                      onPointerDown={(event) => event.stopPropagation()}
+                      onClick={() => seek(marker.bar)}
+                    >
+                      {marker.name}
+                    </button>
                   ))}
                 </div>
               </div>
