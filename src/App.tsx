@@ -824,6 +824,13 @@ export default function App() {
   }, [patch, showFile.name, showLibrary, directStatus.clients, activeLocation]);
 
   const [remoteRelayConfig, setRemoteRelayConfig] = useState<RemoteRelayConfig>(loadRemoteRelayConfig);
+  const [cloudAccount, setCloudAccount] = useState<CloudAccount | null>(null);
+  const [cloudLoginEmail, setCloudLoginEmail] = useState(() => loadRemoteRelayConfig().email);
+  const [cloudLoginPassword, setCloudLoginPassword] = useState('');
+  const [cloudAccountBusy, setCloudAccountBusy] = useState(false);
+  const [cloudSongDocuments, setCloudSongDocuments] = useState<CloudSongDocument[]>([]);
+  const [cloudRecordingLabels, setCloudRecordingLabels] = useState<CloudRecordingLabel[]>([]);
+  const cloudLibraryUnsubscribeRef = useRef<(() => void) | null>(null);
   const [remoteRelayStatus, setRemoteRelayStatus] = useState<RemoteRelayStatus>('disconnected');
   const [remoteRelayError, setRemoteRelayError] = useState('');
   const [pairingSession, setPairingSession] = useState<ControllerPairingSession | null>(null);
