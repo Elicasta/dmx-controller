@@ -3022,11 +3022,15 @@ export default function App() {
       stopRecordingPlayback: () => stopRecordedShowPlayback(false),
       setBlackout: (enabled) => setBlackoutState(enabled, 'remote'),
       syncTransport: (playing, positionMs, bpm) => {
-        setExternalSongPositionMs(positionMs);
-        externalSongPositionMsRef.current = positionMs;
-        setExternalTransportRunning(playing);
-        externalTransportRunningRef.current = playing;
-        if (!tempoLockedRef.current) { setEffectBpm(bpm); effectBpmRef.current = bpm; }
+        const result=applySharedTransport({
+          source:'studio',
+          playing,
+          positionMs,
+          bpm,
+          claim:playing,
+          release:!playing
+        });
+        if(!result.accepted) throw new Error(`Transport authority is currently held by ${result.state.source}.`);
       }
     });
     return dispatcher.dispatch(id, command);
@@ -4810,7 +4814,24 @@ export default function App() {
     const active=activeVideoClip({...editingTimeline,bpm:masterTempoBpm},elapsedMs);
     videoOutputOverrideRef.current={url:active?videoAssetsRef.current.get(active.clip.mediaId)??'':'',name:active?.clip.name??'',position:active?.position??0,playing:timelinePlayingRef.current,sentAt:Date.now()};
   }
-  function changeTimelinePlaying(playing:boolean){timelinePlayingRef.current=playing;setTimelinePlaying(playing);updateTimelineVideoFrame(timelinePositionRef.current*60000/masterTempoBpm*editingTimeline.beatsPerBar);}
+  function changeTimelinePlaying(playing:boolean){
+    const positionMs=timelinePositionRef.current*60000/masterTempoBpm*editingTimeline.beatsPerBar;
+    const result=applySharedTransport({
+      source:'timeline',
+      playing,
+      positionMs,
+      bpm:masterTempoBpm,
+      claim:playing,
+      release:!playing
+    });
+    if(!result.accepted){
+      setMessage(`Timeline transport is waiting for ${result.state.source} authority to release.`);
+      return;
+    }
+    timelinePlayingRef.current=playing;
+    setTimelinePlaying(playing);
+    updateTimelineVideoFrame(positionMs);
+  }
   function addTimelineFx(recipeId:string,startBar:number,lane:number) {
     const recipe=fxLibrary(customEffects).find(r=>r.id===recipeId);if(!recipe)return;
     if(showFile.cues.length>=200||editingTimeline.clips.length>=1000){setMessage('Cue or timeline clip limit reached.');return;}
