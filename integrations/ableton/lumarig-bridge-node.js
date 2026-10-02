@@ -22,6 +22,7 @@ function scheduleReconnect() {
 }
 
 function sendCommand(command) {
+  if (manualDisconnect) return false;
   if (!socket || socket.readyState !== WebSocket.OPEN) {
     connect();
     return false;
