@@ -150,12 +150,13 @@ export async function saveCloudShow(config: RemoteRelayConfig, input: {
     p_device_id: input.deviceId || 'mac'
   }).single();
   dbError(result.error, 'Cloud show could not be saved.');
-  if (!result.data) throw new Error('Cloud show save returned no result.');
+  const data = result.data as { show_id?: unknown; revision?: unknown; updated_at?: unknown; conflict?: unknown } | null;
+  if (!data?.show_id || data.revision == null || !data.updated_at) throw new Error('Cloud show save returned no result.');
   return {
-    showId: String(result.data.show_id),
-    revision: Number(result.data.revision),
-    updatedAt: String(result.data.updated_at),
-    conflict: Boolean(result.data.conflict)
+    showId: String(data.show_id),
+    revision: Number(data.revision),
+    updatedAt: String(data.updated_at),
+    conflict: Boolean(data.conflict)
   };
 }
 
