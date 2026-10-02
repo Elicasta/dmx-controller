@@ -900,6 +900,10 @@ export default function App() {
     void refreshPairedControllerList();
     void refreshCloudAccountLibrary();
   }, [remoteRelayStatus]);
+  useEffect(() => {
+    if (!cloudAccount || remoteRelayStatus !== 'disconnected' || !remoteRelayConfig.roomCode) return;
+    void connectRemoteRelay();
+  }, [cloudAccount?.userId, remoteRelayConfig.roomCode]);
   const [message, setMessage] = useState('Control station ready. Connect DMX when you want physical output.');
   const [appVersion, setAppVersion] = useState('0.2.7');
   const [updateStatus, setUpdateStatus] = useState<UpdateStatus>('idle');
