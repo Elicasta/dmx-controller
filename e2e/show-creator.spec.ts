@@ -491,6 +491,22 @@ test('integrated visualizer keeps venue presets isolated and opens the renderer'
 });
 
 
+test('Show Creator preview clears a stale Timeline blackout layer',async({page})=>{
+  await seed(page);await page.goto('/');
+  await page.getByRole('button',{name:'SHOW',exact:true}).click();
+  await page.getByRole('button',{name:'Show Creator',exact:true}).click();
+  await page.getByRole('button',{name:/Worship Song/}).click();
+  await page.getByRole('button',{name:'Build / Update 8 Sections',exact:true}).click();
+  await page.getByRole('button',{name:'Timeline',exact:true}).click();
+  await page.getByRole('button',{name:'Mute FX lane 1',exact:true}).click();
+  await page.locator('.workspace-utility-bar').getByRole('button',{name:'Visualizer',exact:true}).click();
+  const level=()=>page.locator('.floating-stage-monitor [data-fixture="f0"]').getAttribute('data-level');
+  await expect.poll(level).toBe('0');
+  await page.getByRole('button',{name:'Show Creator',exact:true}).click();
+  await page.locator('.section-preview-controls').getByRole('button',{name:/Preview/}).click();
+  await expect.poll(async()=>Number(await level())).toBeGreaterThan(0);
+});
+
 test('master tempo stays consistent from Creator through Timeline and LIVE',async({page})=>{
  await seed(page);
  await page.setViewportSize({width:1280,height:800});
