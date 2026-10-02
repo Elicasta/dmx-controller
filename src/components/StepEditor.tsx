@@ -1,7 +1,8 @@
 import { useState } from 'react';
 import type { CustomEffect } from '../lib/effects';
+type TriggerOption={id:string;name:string;effect:CustomEffect};
 import { clearStepProgram,copyStep,pasteStep,resizeStepProgram,setStepValue,stepCount,stepValue,STEP_PARAMETERS } from '../lib/step-program';
-export default function StepEditor({effect,onChange}:{effect:CustomEffect;onChange:(effect:CustomEffect)=>void}){
+export default function StepEditor({effect,onChange,triggerOptions=[]}:{effect:CustomEffect;onChange:(effect:CustomEffect)=>void;triggerOptions?:TriggerOption[]}){
   const [selected,setSelected]=useState(0),[copied,setCopied]=useState<ReturnType<typeof copyStep>|null>(null),[error,setError]=useState('');
   const count=stepCount(effect),beats=effect.cycleBeats??4,resolution=count/beats,index=Math.min(selected,count-1);
   function resize(nextBeats:number,nextResolution:number){
@@ -28,6 +29,18 @@ export default function StepEditor({effect,onChange}:{effect:CustomEffect;onChan
       <label>Color<input aria-label="Step color" type="color" value={effect.colorPalette?.[index]??'#ffffff'} onChange={e=>{
         const next=structuredClone(effect);next.colorPalette??=Array(count).fill('#ffffff');next.colorPalette[index]=e.target.value;onChange(next);
       }}/></label>
+      <label>Step FX<select aria-label="Step FX trigger" value={effect.stepTriggers?.find(trigger=>trigger.step===index)?.effect.id ?? ''} onChange={event=>{
+        const next=structuredClone(effect);
+        next.stepTriggers=(next.stepTriggers??[]).filter(trigger=>trigger.step!==index);
+        const option=triggerOptions.find(item=>item.id===event.target.value);
+        if(option){
+          const embedded=structuredClone(option.effect);
+          embedded.stepTriggers=undefined;
+          next.stepTriggers.push({step:index,name:option.name,effect:embedded});
+        }
+        if(!next.stepTriggers.length)next.stepTriggers=undefined;
+        onChange(next);
+      }}><option value="">No triggered FX</option>{triggerOptions.map(option=><option key={option.id} value={option.id}>{option.name}</option>)}</select></label>
       {STEP_PARAMETERS.map(({parameter,label})=><label key={parameter}>
         {parameter!=='dimmer'&&<input aria-label={`Program step ${label}`} type="checkbox" checked={Boolean(effect.lanes?.some(l=>l.parameter===parameter))} onChange={e=>onChange(e.target.checked?setStepValue(effect,parameter,index,parameter==='pan'||parameter==='tilt'?50:0):{...effect,lanes:effect.lanes?.filter(l=>l.parameter!==parameter)})}/>}
         {label}<input aria-label={`Step ${label}`} type="number" min={0} max={100} step={1} value={stepValue(effect,parameter,index)} disabled={!effect.lanes?.some(l=>l.parameter===parameter)} onChange={e=>onChange(setStepValue(effect,parameter,index,Number(e.target.value)))}/>
