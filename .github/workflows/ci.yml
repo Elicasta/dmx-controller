@@ -42,6 +42,12 @@ jobs:
       - name: Native tests
         run: cargo test --manifest-path src-tauri/Cargo.toml
 
+      - name: Capture resolved Cargo lock
+        uses: actions/upload-artifact@v4
+        with:
+          name: resolved-cargo-lock
+          path: src-tauri/Cargo.lock
+
   browser:
     runs-on: ubuntu-latest
     timeout-minutes: 10
