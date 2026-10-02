@@ -3263,3 +3263,31 @@ body,#root { min-width:0; width:100%; overflow:hidden; }
 .timeline-tempo-analysis b{font-size:8px;color:#b7e7c9}
 .timeline-tempo-analysis small{font-size:7px;color:#72877b}
 @media(max-width:780px){.song-tempo-analysis{align-items:stretch;flex-direction:column}.song-tempo-analysis>div{justify-content:flex-start}}
+
+
+/* Ableton Live Arrangement locators */
+.bar-ruler{position:relative;overflow:visible}
+.timeline-external-marker{
+  position:absolute;
+  z-index:4;
+  top:2px;
+  transform:translateX(-1px);
+  max-width:150px;
+  min-height:20px;
+  padding:2px 6px;
+  border:0;
+  border-left:2px solid currentColor;
+  border-radius:0 4px 4px 0;
+  background:#17221e;
+  color:#9fe9c2;
+  font-size:9px;
+  font-weight:700;
+  letter-spacing:.03em;
+  line-height:16px;
+  overflow:hidden;
+  text-overflow:ellipsis;
+  white-space:nowrap;
+}
+.timeline-external-marker:hover,
+.timeline-external-marker:focus-visible{background:#20332a;color:#d8ffe7;outline:1px solid #55e98d}
+.ableton-sync-card .sync-metrics strong{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
