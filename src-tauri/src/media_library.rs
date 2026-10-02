@@ -133,6 +133,16 @@ fn io_error(context: &str, error: impl std::fmt::Display) -> String {
     format!("{context}: {error}")
 }
 
+async fn run_file_task<T, F>(context: &'static str, task: F) -> Result<T, String>
+where
+    T: Send + 'static,
+    F: FnOnce() -> Result<T, String> + Send + 'static,
+{
+    tauri::async_runtime::spawn_blocking(task)
+        .await
+        .map_err(|error| io_error(context, error))?
+}
+
 fn library_root(app: &AppHandle) -> Result<PathBuf, String> {
     app.path()
         .app_local_data_dir()
@@ -451,7 +461,7 @@ pub fn media_delete_folder(
 }
 
 #[tauri::command]
-pub fn media_pick_import(
+pub async fn media_pick_import(
     app: AppHandle,
     state: State<'_, MediaLibraryState>,
     mode: String,
@@ -472,71 +482,74 @@ pub fn media_pick_import(
             ],
         )
         .blocking_pick_files();
-
     let Some(files) = selected else {
         return Ok(Vec::new());
     };
-
     let paths: Vec<PathBuf> = files
         .into_iter()
         .map(|file| file.into_path().map_err(|error| io_error("Selected media path is invalid", error)))
         .collect::<Result<_, _>>()?;
+    let lock = state.lock.clone();
+    let task_app = app.clone();
 
-    let _guard = state.lock.lock().map_err(|_| "Media library lock failed.".to_string())?;
-    let mut registry = read_registry(&app)?;
-    ensure_folder(&registry, &folder_id)?;
-    fs::create_dir_all(managed_files_dir(&app)?)
-        .map_err(|error| io_error("Managed media folder could not be created", error))?;
+    run_file_task("Media import worker failed", move || {
+        let _guard = lock.lock().map_err(|_| "Media library lock failed.".to_string())?;
+        let mut registry = read_registry(&task_app)?;
+        ensure_folder(&registry, &folder_id)?;
+        fs::create_dir_all(managed_files_dir(&task_app)?)
+            .map_err(|error| io_error("Managed media folder could not be created", error))?;
 
-    let mut imported = Vec::new();
-    for source in paths {
-        if !source.is_file() {
-            continue;
-        }
-
-        if mode == "reference" {
-            let canonical = source.canonicalize().unwrap_or_else(|_| source.clone());
-            if let Some(index) = registry
-                .assets
-                .iter()
-                .position(|asset| asset.source_mode == "reference" && Path::new(&asset.path) == canonical)
-            {
-                allow_asset(&app, &canonical)?;
-                registry.assets[index].folder_id = folder_id.clone();
-                registry.assets[index].modified_at = file_modified_ms(&canonical);
-                imported.push(asset_snapshot(&registry.assets[index]));
+        let mut imported = Vec::new();
+        for source in paths {
+            if !source.is_file() {
                 continue;
             }
-        }
+            if mode == "reference" {
+                let canonical = source.canonicalize().unwrap_or_else(|_| source.clone());
+                if let Some(index) = registry
+                    .assets
+                    .iter()
+                    .position(|asset| asset.source_mode == "reference" && Path::new(&asset.path) == canonical)
+                {
+                    allow_asset(&task_app, &canonical)?;
+                    registry.assets[index].folder_id = folder_id.clone();
+                    registry.assets[index].modified_at = file_modified_ms(&canonical);
+                    imported.push(asset_snapshot(&registry.assets[index]));
+                    continue;
+                }
+            }
 
-        let id = Uuid::new_v4().to_string();
-        let name = file_name(&source);
-        let kind = detect_kind(&source);
-        let destination = if mode == "copy" {
-            let target = managed_path(&app, &id, &name)?;
-            fs::copy(&source, &target).map_err(|error| io_error("Media could not be copied into LumaRig", error))?;
-            target
-        } else {
-            source.canonicalize().unwrap_or(source)
-        };
-        allow_asset(&app, &destination)?;
-        let metadata = fs::metadata(&destination).map_err(|error| io_error("Imported media metadata is unavailable", error))?;
-        let asset = StoredMediaAsset {
-            id,
-            name,
-            folder_id: folder_id.clone(),
-            source_mode: mode.clone(),
-            path: destination.to_string_lossy().to_string(),
-            kind,
-            size: metadata.len(),
-            created_at: now_ms(),
-            modified_at: file_modified_ms(&destination),
-        };
-        imported.push(asset_snapshot(&asset));
-        registry.assets.push(asset);
-    }
-    write_registry(&app, &registry)?;
-    Ok(imported)
+            let id = Uuid::new_v4().to_string();
+            let name = file_name(&source);
+            let kind = detect_kind(&source);
+            let destination = if mode == "copy" {
+                let target = managed_path(&task_app, &id, &name)?;
+                fs::copy(&source, &target)
+                    .map_err(|error| io_error("Media could not be copied into LumaRig", error))?;
+                target
+            } else {
+                source.canonicalize().unwrap_or(source)
+            };
+            allow_asset(&task_app, &destination)?;
+            let metadata = fs::metadata(&destination)
+                .map_err(|error| io_error("Imported media metadata is unavailable", error))?;
+            let asset = StoredMediaAsset {
+                id,
+                name,
+                folder_id: folder_id.clone(),
+                source_mode: mode.clone(),
+                path: destination.to_string_lossy().to_string(),
+                kind,
+                size: metadata.len(),
+                created_at: now_ms(),
+                modified_at: file_modified_ms(&destination),
+            };
+            imported.push(asset_snapshot(&asset));
+            registry.assets.push(asset);
+        }
+        write_registry(&task_app, &registry)?;
+        Ok(imported)
+    }).await
 }
 
 #[tauri::command]
