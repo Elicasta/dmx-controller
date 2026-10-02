@@ -768,7 +768,7 @@ pub fn media_finish_managed_write(
 }
 
 #[tauri::command]
-pub fn media_export_portable_backup(
+pub async fn media_export_portable_backup(
     app: AppHandle,
     state: State<'_, MediaLibraryState>,
     manifest_json: String,
@@ -781,21 +781,6 @@ pub fn media_export_portable_backup(
         return Err("Backup manifest format is not supported.".to_string());
     }
 
-    let _guard = state.lock.lock().map_err(|_| "Media library lock failed.".to_string())?;
-    let registry = read_registry(&app)?;
-    let mut assets = Vec::new();
-    for id in &media_ids {
-        let asset = registry
-            .assets
-            .iter()
-            .find(|asset| &asset.id == id)
-            .ok_or_else(|| format!("Media {id} is not in the local media library."))?;
-        if !Path::new(&asset.path).is_file() {
-            return Err(format!("Relink missing media before backup: {}", asset.name));
-        }
-        assets.push(asset.clone());
-    }
-
     let default_name = if suggested_name.trim().is_empty() {
         "LumaRig Backup.lumarigbackup".to_string()
     } else if suggested_name.to_ascii_lowercase().ends_with(".lumarigbackup") {
@@ -803,14 +788,12 @@ pub fn media_export_portable_backup(
     } else {
         format!("{}.lumarigbackup", suggested_name)
     };
-
     let selected = app
         .dialog()
         .file()
         .add_filter("LumaRig Portable Backup", &["lumarigbackup"])
         .set_file_name(default_name)
         .blocking_save_file();
-
     let Some(selected) = selected else {
         return Ok(None);
     };
@@ -826,34 +809,54 @@ pub fn media_export_portable_backup(
         path.set_extension("lumarigbackup");
     }
 
-    let file = File::create(&path).map_err(|error| io_error("Portable backup could not be created", error))?;
-    let mut archive = ZipWriter::new(file);
-    let options = SimpleFileOptions::default().compression_method(CompressionMethod::Stored);
-    archive
-        .start_file("manifest.json", options)
-        .map_err(|error| io_error("Backup manifest entry could not be created", error))?;
-    archive
-        .write_all(manifest_json.as_bytes())
-        .map_err(|error| io_error("Backup manifest could not be written", error))?;
+    let lock = state.lock.clone();
+    let task_app = app.clone();
+    run_file_task("Portable backup worker failed", move || {
+        let _guard = lock.lock().map_err(|_| "Media library lock failed.".to_string())?;
+        let registry = read_registry(&task_app)?;
+        let mut assets = Vec::new();
+        for id in &media_ids {
+            let asset = registry
+                .assets
+                .iter()
+                .find(|asset| &asset.id == id)
+                .ok_or_else(|| format!("Media {id} is not in the local media library."))?;
+            if !Path::new(&asset.path).is_file() {
+                return Err(format!("Relink missing media before backup: {}", asset.name));
+            }
+            assets.push(asset.clone());
+        }
 
-    for asset in assets {
-        let entry = format!(
-            "media/{}/{}",
-            sanitize_file_name(&asset.id),
-            sanitize_file_name(&asset.name)
-        );
+        let file = File::create(&path)
+            .map_err(|error| io_error("Portable backup could not be created", error))?;
+        let mut archive = ZipWriter::new(file);
+        let options = SimpleFileOptions::default().compression_method(CompressionMethod::Stored);
         archive
-            .start_file(entry, options)
-            .map_err(|error| io_error("Backup media entry could not be created", error))?;
-        let mut source =
-            File::open(&asset.path).map_err(|error| io_error("Backup media could not be opened", error))?;
-        std::io::copy(&mut source, &mut archive)
-            .map_err(|error| io_error("Backup media could not be written", error))?;
-    }
-    archive
-        .finish()
-        .map_err(|error| io_error("Portable backup could not be finalized", error))?;
-    Ok(Some(path.to_string_lossy().to_string()))
+            .start_file("manifest.json", options)
+            .map_err(|error| io_error("Backup manifest entry could not be created", error))?;
+        archive
+            .write_all(manifest_json.as_bytes())
+            .map_err(|error| io_error("Backup manifest could not be written", error))?;
+
+        for asset in assets {
+            let entry = format!(
+                "media/{}/{}",
+                sanitize_file_name(&asset.id),
+                sanitize_file_name(&asset.name)
+            );
+            archive
+                .start_file(entry, options)
+                .map_err(|error| io_error("Backup media entry could not be created", error))?;
+            let mut source = File::open(&asset.path)
+                .map_err(|error| io_error("Backup media could not be opened", error))?;
+            std::io::copy(&mut source, &mut archive)
+                .map_err(|error| io_error("Backup media could not be written", error))?;
+        }
+        archive
+            .finish()
+            .map_err(|error| io_error("Portable backup could not be finalized", error))?;
+        Ok(Some(path.to_string_lossy().to_string()))
+    }).await
 }
 
 fn valid_restore_token(value: &str) -> bool {
