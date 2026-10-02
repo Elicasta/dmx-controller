@@ -3353,19 +3353,42 @@ export default function App() {
   }
 
   async function connectMidi() {
+    connectionManagerRef.current!.upsert({
+      id:'midi',kind:'midi',name:'MIDI / DAW',status:'connecting',
+      capabilities:['clock','transport','controls'],detail:'Opening selected MIDI input'
+    });
+    refreshConnectionRecords();
     try {
       await invoke('connect_midi', { inputId: Number(selectedMidiInput) });
-      setMidiStatus(await invoke<MidiStatus>('midi_status'));
+      const status=await invoke<MidiStatus>('midi_status');
+      setMidiStatus(status);
+      connectionManagerRef.current!.upsert({
+        id:'midi',kind:'midi',name:status.input_name || 'MIDI / DAW',status:'connected',
+        capabilities:['clock','transport','controls'],lastSeenAt:Date.now(),detail:status.last_event || 'Waiting for MIDI'
+      });
+      refreshConnectionRecords();
       setMessage('MIDI connected. Notes, CC, clock, and transport are being monitored.');
-    } catch (error) { setMessage(`MIDI connection failed: ${String(error)}`); }
+    } catch (error) {
+      connectionManagerRef.current!.fail('midi',String(error));
+      refreshConnectionRecords();
+      setMessage(`MIDI connection failed: ${String(error)}`);
+    }
   }
 
   async function disconnectMidi() {
     try {
       await invoke('disconnect_midi');
-      setMidiStatus(await invoke<MidiStatus>('midi_status'));
+      const status=await invoke<MidiStatus>('midi_status');
+      setMidiStatus(status);
+      connectionManagerRef.current!.disconnect('midi','Disconnected by operator');
+      refreshConnectionRecords();
+      releaseSharedTransport('midi');
       setMessage('MIDI disconnected.');
-    } catch (error) { setMessage(`MIDI disconnect failed: ${String(error)}`); }
+    } catch (error) {
+      connectionManagerRef.current!.fail('midi',String(error));
+      refreshConnectionRecords();
+      setMessage(`MIDI disconnect failed: ${String(error)}`);
+    }
   }
 
   async function refreshPairedControllerList() {
@@ -3649,16 +3672,36 @@ export default function App() {
   };
 
   useEffect(() => {
-    if (!midiStatus.connected) return;
+    if (!midiStatus.connected) {
+      connectionManagerRef.current!.disconnect('midi');
+      refreshConnectionRecords();
+      return;
+    }
     const interval = window.setInterval(async () => {
       try {
         const events = await invoke<MidiEvent[]>('drain_midi_events');
         events.forEach((event) => midiActionRef.current(event));
-        setMidiStatus(await invoke<MidiStatus>('midi_status'));
-      } catch { /* connection may be rebuilding */ }
+        const status=await invoke<MidiStatus>('midi_status');
+        setMidiStatus(status);
+        if(status.connected){
+          connectionManagerRef.current!.upsert({
+            id:'midi',kind:'midi',name:status.input_name || 'MIDI / DAW',status:'connected',
+            capabilities:['clock','transport','controls'],
+            lastSeenAt:status.messages_received>0?Date.now():connectionManagerRef.current!.get('midi')?.lastSeenAt ?? null,
+            lastError:status.last_error ?? '',
+            detail:status.last_event || (midiClockSeen?'Clock received':'Waiting for MIDI')
+          });
+        }else{
+          connectionManagerRef.current!.disconnect('midi','Native MIDI input closed');
+        }
+        refreshConnectionRecords();
+      } catch (error) {
+        connectionManagerRef.current!.fail('midi',String(error),true);
+        refreshConnectionRecords();
+      }
     }, MIDI_POLL_MS);
     return () => window.clearInterval(interval);
-  }, [midiStatus.connected]);
+  }, [midiStatus.connected, midiClockSeen]);
 
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
