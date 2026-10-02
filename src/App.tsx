@@ -859,9 +859,46 @@ export default function App() {
     };
   }, [pairingSession]);
   useEffect(() => {
+    let active = true;
+    void currentCloudAccount(remoteRelayConfig).then((account) => {
+      if (!active || !account) return;
+      setCloudAccount(account);
+      setCloudLoginEmail(account.email);
+      setRemoteRelayConfig((current) => ({
+        ...current,
+        email: account.email,
+        roomCode: current.roomCode || (crypto.randomUUID().replace(/-/g, '') + crypto.randomUUID().replace(/-/g, '')),
+        password: '',
+      }));
+    }).catch(() => {});
+    return () => { active = false; };
+  }, []);
+
+  useEffect(() => {
+    if (!cloudAccount) return;
+    let disposed = false;
+    void refreshCloudAccountLibrary();
+    void watchCloudLibrary(remoteRelayConfig, () => { if (!disposed) void refreshCloudAccountLibrary(); })
+      .then((unsubscribe) => {
+        if (disposed) unsubscribe();
+        else {
+          cloudLibraryUnsubscribeRef.current?.();
+          cloudLibraryUnsubscribeRef.current = unsubscribe;
+        }
+      })
+      .catch((error) => setCloudError(error instanceof Error ? error.message : String(error)));
+    return () => {
+      disposed = true;
+      cloudLibraryUnsubscribeRef.current?.();
+      cloudLibraryUnsubscribeRef.current = null;
+    };
+  }, [cloudAccount?.userId, remoteRelayConfig.url, remoteRelayConfig.publishableKey]);
+
+  useEffect(() => {
     if (remoteRelayStatus !== 'connected') return;
     void refreshCloudLibrary();
     void refreshPairedControllerList();
+    void refreshCloudAccountLibrary();
   }, [remoteRelayStatus]);
   const [message, setMessage] = useState('Control station ready. Connect DMX when you want physical output.');
   const [appVersion, setAppVersion] = useState('0.2.7');
