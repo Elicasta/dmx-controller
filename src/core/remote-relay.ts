@@ -1,4 +1,5 @@
 import type { RealtimeChannel, SupabaseClient } from '@supabase/supabase-js';
+import { getLumaSupabaseClient } from './supabase-client';
 
 export type RemoteRelayConfig = {
   url: string;
@@ -50,9 +51,7 @@ export class RemoteRelay {
     await this.disconnect();
     this.setStatus('connecting', onStatus);
     const url = config.url.trim().replace(/\/$/, '');
-    const storageKey = `dmx-controller-relay-${new URL(url).hostname.replace(/[^a-z0-9]/gi, '-')}`;
-    const { createClient } = await import('@supabase/supabase-js');
-    const client = createClient(url, config.publishableKey.trim(), { auth: { persistSession: true, storageKey } });
+    const client = getLumaSupabaseClient(url, config.publishableKey);
     this.client = client;
 
     let session = (await client.auth.getSession()).data.session;
