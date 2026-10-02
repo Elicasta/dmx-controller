@@ -160,11 +160,14 @@ export default function SongCueLibrary(p: Props) {
                       <small>{item.cues.length} cues{p.timelineNames.includes(item.name) ? ' · timeline show' : ''}</small>
                     </span>
                   </button>
-                  <div>
-                    <button aria-label={`Move ${item.kind} ${item.name} up`} disabled={itemIndex === 0} onClick={() => p.onMoveSong(section.id, item.name, -1)}>↑</button>
-                    <button aria-label={`Move ${item.kind} ${item.name} down`} disabled={itemIndex === items.length - 1} onClick={() => p.onMoveSong(section.id, item.name, 1)}>↓</button>
-                    {(item.kind === 'song' || p.timelineNames.includes(item.name)) && <button aria-label={`Open timeline for ${item.name}`} onClick={() => p.onTimeline(item.name)}>Timeline</button>}
-                  </div>
+                  <details className="cue-context-menu rundown-item-menu">
+                    <summary aria-label={`Actions for ${item.name}`} title={`Actions for ${item.name}`}>•••</summary>
+                    <div>
+                      <button disabled={itemIndex === 0} onClick={(event) => { (event.currentTarget.closest('details') as HTMLDetailsElement).open=false; p.onMoveSong(section.id, item.name, -1); }}>Move item up</button>
+                      <button disabled={itemIndex === items.length - 1} onClick={(event) => { (event.currentTarget.closest('details') as HTMLDetailsElement).open=false; p.onMoveSong(section.id, item.name, 1); }}>Move item down</button>
+                      {(item.kind === 'song' || p.timelineNames.includes(item.name)) && <button onClick={(event) => { (event.currentTarget.closest('details') as HTMLDetailsElement).open=false; p.onTimeline(item.name); }}>Open Timeline</button>}
+                    </div>
+                  </details>
                 </header>
 
                 {expanded && item.cues.map((cue) => <article key={cue.id} className={p.activeId === cue.id ? 'active' : ''}>
@@ -176,11 +179,16 @@ export default function SongCueLibrary(p: Props) {
                       <small>{cue.fadeMs / 1000}s fade · {cue.effectStack?.length || 0} FX</small>
                     </span>
                   </button>
-                  <div>
-                    <button aria-label={`Move ${cue.name} up`} onClick={() => p.onMove(cue.id, -1)}>↑</button>
-                    <button aria-label={`Move ${cue.name} down`} onClick={() => p.onMove(cue.id, 1)}>↓</button>
-                    <button aria-label={`Delete ${cue.name}`} onClick={() => p.onDelete(cue.id)}>×</button>
-                  </div>
+                  <details className="cue-context-menu">
+                    <summary aria-label={`Actions for cue ${cue.name}`} title={`Actions for ${cue.name}`}>•••</summary>
+                    <div>
+                      <button onClick={(event) => { (event.currentTarget.closest('details') as HTMLDetailsElement).open=false; p.onRun(cue); }}>Run cue</button>
+                      <button onClick={(event) => { (event.currentTarget.closest('details') as HTMLDetailsElement).open=false; p.onMove(cue.id, -1); }}>Move up</button>
+                      <button onClick={(event) => { (event.currentTarget.closest('details') as HTMLDetailsElement).open=false; p.onMove(cue.id, 1); }}>Move down</button>
+                      {(cue.trackKind !== 'media' || p.timelineNames.includes(cueItemName(cue))) && <button onClick={(event) => { (event.currentTarget.closest('details') as HTMLDetailsElement).open=false; p.onTimeline(cueItemName(cue)); }}>Open Timeline</button>}
+                      <button className="danger-menu-item" onClick={(event) => { (event.currentTarget.closest('details') as HTMLDetailsElement).open=false; p.onDelete(cue.id); }}>Delete cue</button>
+                    </div>
+                  </details>
                 </article>)}
               </section>;
             })}
