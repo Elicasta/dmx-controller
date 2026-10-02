@@ -2986,7 +2986,7 @@ export default function App() {
         setExternalTransportRunning(playing);
         externalTransportRunningRef.current = playing;
         if (!tempoLockedRef.current) { setEffectBpm(bpm); effectBpmRef.current = bpm; }
-      ,
+      },
       syncAbletonSnapshot: (snapshot) => applyAbletonRuntimeSnapshot(snapshot),
       syncAbletonTransport: (playing, currentBeat, bpm, beatsPerBar) => {
         const current = abletonSnapshotRef.current;
