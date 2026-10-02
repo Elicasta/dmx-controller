@@ -212,7 +212,8 @@ function quadPoint(points: readonly Projected[], u: number, v: number): Projecte
   return {
     x:p0.x*w0+p1.x*w1+p2.x*w2+p3.x*w3,
     y:p0.y*w0+p1.y*w1+p2.y*w2+p3.y*w3,
-    depth:p0.depth*w0+p1.depth*w1+p2.depth*w2+p3.depth*w3
+    depth:p0.depth*w0+p1.depth*w1+p2.depth*w2+p3.depth*w3,
+    visible:p0.visible||p1.visible||p2.visible||p3.visible
   };
 }
 
