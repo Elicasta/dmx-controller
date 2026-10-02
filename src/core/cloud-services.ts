@@ -59,7 +59,7 @@ async function operatorClient(config: RemoteRelayConfig): Promise<{ client: Supa
   let session = (await client.auth.getSession()).data.session;
   const desiredEmail = config.email.trim().toLowerCase();
   if (!session || session.user.email?.toLowerCase() !== desiredEmail || session.user.is_anonymous) {
-    if (!config.password) throw new Error('Connect Secure Cloud Relay on this Mac first.');
+    if (!config.password) throw new Error('Connect Secure Cloud Relay on this computer first.');
     const result = await client.auth.signInWithPassword({ email: desiredEmail, password: config.password });
     if (result.error) throw result.error;
     session = result.data.session;
@@ -229,7 +229,7 @@ export async function createControllerPairing(config: RemoteRelayConfig, remoteA
   if (relayRoom.length < 12) throw new Error('Generate a relay room before pairing a controller.');
   const { client, userId } = await operatorClient(config);
 
-  // A Mac only needs one active claim window. Claimed devices remain paired.
+  // A LumaRig desktop only needs one active claim window. Claimed devices remain paired.
   const cleanup = await client.from('lumarig_controller_pairings')
     .delete()
     .eq('operator_id', userId)
