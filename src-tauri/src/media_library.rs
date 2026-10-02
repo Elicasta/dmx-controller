@@ -1,8 +1,8 @@
 use serde::{Deserialize, Serialize};
 use std::{
-    collections::HashSet,
+    collections::{HashMap, HashSet},
     fs::{self, File, OpenOptions},
-    io::{Read, Write},
+    io::{Read, Seek, Write},
     path::{Path, PathBuf},
     sync::Mutex,
     time::{SystemTime, UNIX_EPOCH},
@@ -86,7 +86,7 @@ impl Default for MediaRegistry {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct PortableMediaDescriptor {
     id: String,
@@ -112,14 +112,7 @@ pub struct PortableBackupImport {
     pub path: String,
     pub manifest_json: String,
     pub imported_media: usize,
-    pub restore_token: String,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct PortableRestorePlan {
-    media: Vec<PortableMediaDescriptor>,
-    media_folders: Vec<MediaFolder>,
+    pub restore_id: String,
 }
 
 fn now_ms() -> u64 {
@@ -180,10 +173,14 @@ fn managed_path(app: &AppHandle, id: &str, name: &str) -> Result<PathBuf, String
         "{}--{}",
         sanitize_file_name(id),
         sanitize_file_name(name)
+            .chars()
+            .take(70)
+            .collect::<String>()
     )))
 }
 
 fn incoming_path(app: &AppHandle, id: &str) -> Result<PathBuf, String> {
+    valid_asset_id(id)?;
     Ok(incoming_dir(app)?.join(format!("{}.part", sanitize_file_name(id))))
 }
 
@@ -197,19 +194,31 @@ fn file_modified_ms(path: &Path) -> u64 {
 }
 
 fn read_registry(app: &AppHandle) -> Result<MediaRegistry, String> {
-    let path = registry_path(app)?;
     let root = library_root(app)?;
+    let generations = root.join("registry-revisions");
+    let mut revisions = if generations.exists() {
+        fs::read_dir(&generations)
+            .map_err(|e| io_error("Registry revisions could not be read", e))?
+            .filter_map(Result::ok)
+            .map(|e| e.path())
+            .filter(|p| p.extension().is_some_and(|e| e == "json"))
+            .collect::<Vec<_>>()
+    } else {
+        Vec::new()
+    };
+    revisions.sort();
+    let path = revisions.last().cloned().unwrap_or(registry_path(app)?);
     let backup = root.join("registry.json.bak");
     if !path.exists() && backup.exists() {
-        fs::rename(&backup, &path)
-            .map_err(|error| io_error("Media registry recovery failed", error))?;
+        fs::rename(&backup, &path).map_err(|e| io_error("Media registry recovery failed", e))?;
     }
     if !path.exists() {
         return Ok(MediaRegistry::default());
     }
-    let bytes = fs::read(&path).map_err(|error| io_error("Media registry could not be read", error))?;
-    let registry: MediaRegistry =
-        serde_json::from_slice(&bytes).map_err(|error| io_error("Media registry is invalid", error))?;
+    let bytes =
+        fs::read(&path).map_err(|error| io_error("Media registry could not be read", error))?;
+    let registry: MediaRegistry = serde_json::from_slice(&bytes)
+        .map_err(|error| io_error("Media registry is invalid", error))?;
     if registry.version != REGISTRY_VERSION {
         return Err(format!(
             "Media registry version {} is not supported.",
@@ -219,34 +228,50 @@ fn read_registry(app: &AppHandle) -> Result<MediaRegistry, String> {
     Ok(registry)
 }
 
+fn commit_registry(root: &Path, registry: &MediaRegistry) -> Result<(), String> {
+    let folder = root.join("registry-revisions");
+    fs::create_dir_all(&folder).map_err(|e| io_error("Registry folder could not be created", e))?;
+    let latest = fs::read_dir(&folder)
+        .map_err(|e| io_error("Registry revisions could not be read", e))?
+        .filter_map(Result::ok)
+        .filter_map(|e| {
+            e.path()
+                .file_stem()
+                .and_then(|s| s.to_str())
+                .and_then(|s| s.parse::<u64>().ok())
+        })
+        .max()
+        .unwrap_or(0);
+    let next = latest
+        .checked_add(1)
+        .ok_or("Registry revision limit reached.")?;
+    let temp = folder.join(format!("{next:020}.tmp"));
+    let mut file = File::create(&temp).map_err(|e| io_error("Registry could not be staged", e))?;
+    file.write_all(
+        &serde_json::to_vec_pretty(registry).map_err(|e| io_error("Registry is invalid", e))?,
+    )
+    .map_err(|e| io_error("Registry write failed", e))?;
+    file.sync_all()
+        .map_err(|e| io_error("Registry sync failed", e))?;
+    fs::rename(temp, folder.join(format!("{next:020}.json")))
+        .map_err(|e| io_error("Registry commit failed", e))
+}
 fn write_registry(app: &AppHandle, registry: &MediaRegistry) -> Result<(), String> {
-    let root = library_root(app)?;
-    fs::create_dir_all(&root).map_err(|error| io_error("Media library folder could not be created", error))?;
-    let path = registry_path(app)?;
-    let temp = root.join("registry.json.tmp");
-    let backup = root.join("registry.json.bak");
-    let data = serde_json::to_vec_pretty(registry)
-        .map_err(|error| io_error("Media registry could not be serialized", error))?;
-    fs::write(&temp, data).map_err(|error| io_error("Media registry could not be staged", error))?;
-
-    if backup.exists() {
-        let _ = fs::remove_file(&backup);
-    }
-    if path.exists() {
-        fs::rename(&path, &backup)
-            .map_err(|error| io_error("Previous media registry could not be protected", error))?;
-    }
-    if let Err(error) = fs::rename(&temp, &path) {
-        if backup.exists() {
-            let _ = fs::rename(&backup, &path);
-        }
-        let _ = fs::remove_file(&temp);
-        return Err(io_error("Media registry could not be committed", error));
-    }
-    if backup.exists() {
-        let _ = fs::remove_file(&backup);
+    commit_registry(&library_root(app)?, registry)
+}
+fn valid_asset_id(id: &str) -> Result<(), String> {
+    if id.is_empty()
+        || id.len() > 120
+        || !id
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'-' | b'_' | b':'))
+    {
+        return Err("Invalid media asset ID.".into());
     }
     Ok(())
+}
+fn unique_managed_path(app: &AppHandle, id: &str, name: &str) -> Result<PathBuf, String> {
+    managed_path(app, &format!("{}-{}", id, Uuid::new_v4()), name)
 }
 
 fn asset_snapshot(asset: &StoredMediaAsset) -> MediaAsset {
@@ -257,7 +282,9 @@ fn asset_snapshot(asset: &StoredMediaAsset) -> MediaAsset {
         source_mode: asset.source_mode.clone(),
         path: asset.path.clone(),
         kind: asset.kind.clone(),
-        size: asset.size,
+        size: fs::metadata(&asset.path)
+            .map(|m| m.len())
+            .unwrap_or(asset.size),
         created_at: asset.created_at,
         modified_at: asset.modified_at,
         missing: !Path::new(&asset.path).is_file(),
@@ -303,18 +330,11 @@ fn allow_asset(app: &AppHandle, path: &Path) -> Result<(), String> {
 
 pub fn restore_asset_scopes(app: &AppHandle) -> Result<(), String> {
     let root = library_root(app)?;
-    // Incomplete writes/restores are never authoritative. Clear them after a
-    // restart so a crash cannot leave gigabytes of orphaned staging data.
     for stale in [root.join(".incoming"), root.join(".restore")] {
         if stale.exists() {
             let _ = fs::remove_dir_all(stale);
         }
     }
-    let temp = root.join("registry.json.tmp");
-    if temp.exists() {
-        let _ = fs::remove_file(temp);
-    }
-
     let registry = read_registry(app)?;
     for asset in registry.assets {
         let path = PathBuf::from(asset.path);
@@ -345,7 +365,10 @@ pub fn media_library_snapshot(
     app: AppHandle,
     state: State<'_, MediaLibraryState>,
 ) -> Result<MediaLibrarySnapshot, String> {
-    let _guard = state.lock.lock().map_err(|_| "Media library lock failed.".to_string())?;
+    let _guard = state
+        .lock
+        .lock()
+        .map_err(|_| "Media library lock failed.".to_string())?;
     read_registry(&app).map(snapshot)
 }
 
@@ -357,13 +380,16 @@ pub fn media_create_folder(
     parent_id: Option<String>,
 ) -> Result<MediaFolder, String> {
     let clean = name.trim();
-    if clean.is_empty() {
-        return Err("Folder name is required.".to_string());
+    if clean.is_empty() || clean.chars().count() > 120 {
+        return Err("Enter a folder name of 1 to 120 characters.".to_string());
     }
     if clean.chars().count() > 120 {
         return Err("Folder names are limited to 120 characters.".to_string());
     }
-    let _guard = state.lock.lock().map_err(|_| "Media library lock failed.".to_string())?;
+    let _guard = state
+        .lock
+        .lock()
+        .map_err(|_| "Media library lock failed.".to_string())?;
     let mut registry = read_registry(&app)?;
     if let Some(parent) = &parent_id {
         if !registry.folders.iter().any(|folder| &folder.id == parent) {
@@ -396,13 +422,13 @@ pub fn media_rename_folder(
     name: String,
 ) -> Result<MediaFolder, String> {
     let clean = name.trim();
-    if clean.is_empty() {
-        return Err("Folder name is required.".to_string());
+    if clean.is_empty() || clean.chars().count() > 120 {
+        return Err("Enter a folder name of 1 to 120 characters.".to_string());
     }
-    if clean.chars().count() > 120 {
-        return Err("Folder names are limited to 120 characters.".to_string());
-    }
-    let _guard = state.lock.lock().map_err(|_| "Media library lock failed.".to_string())?;
+    let _guard = state
+        .lock
+        .lock()
+        .map_err(|_| "Media library lock failed.".to_string())?;
     let mut registry = read_registry(&app)?;
     let index = registry
         .folders
@@ -429,7 +455,10 @@ pub fn media_delete_folder(
     state: State<'_, MediaLibraryState>,
     folder_id: String,
 ) -> Result<(), String> {
-    let _guard = state.lock.lock().map_err(|_| "Media library lock failed.".to_string())?;
+    let _guard = state
+        .lock
+        .lock()
+        .map_err(|_| "Media library lock failed.".to_string())?;
     let mut registry = read_registry(&app)?;
     if registry
         .folders
@@ -451,7 +480,7 @@ pub fn media_delete_folder(
 }
 
 #[tauri::command]
-pub fn media_pick_import(
+pub async fn media_pick_import(
     app: AppHandle,
     state: State<'_, MediaLibraryState>,
     mode: String,
@@ -479,10 +508,16 @@ pub fn media_pick_import(
 
     let paths: Vec<PathBuf> = files
         .into_iter()
-        .map(|file| file.into_path().map_err(|error| io_error("Selected media path is invalid", error)))
+        .map(|file| {
+            file.into_path()
+                .map_err(|error| io_error("Selected media path is invalid", error))
+        })
         .collect::<Result<_, _>>()?;
 
-    let _guard = state.lock.lock().map_err(|_| "Media library lock failed.".to_string())?;
+    let _guard = state
+        .lock
+        .lock()
+        .map_err(|_| "Media library lock failed.".to_string())?;
     let mut registry = read_registry(&app)?;
     ensure_folder(&registry, &folder_id)?;
     fs::create_dir_all(managed_files_dir(&app)?)
@@ -496,11 +531,9 @@ pub fn media_pick_import(
 
         if mode == "reference" {
             let canonical = source.canonicalize().unwrap_or_else(|_| source.clone());
-            if let Some(index) = registry
-                .assets
-                .iter()
-                .position(|asset| asset.source_mode == "reference" && Path::new(&asset.path) == canonical)
-            {
+            if let Some(existing) = registry.assets.iter().find(|asset| {
+                asset.source_mode == "reference" && Path::new(&asset.path) == canonical
+            }) {
                 allow_asset(&app, &canonical)?;
                 registry.assets[index].folder_id = folder_id.clone();
                 registry.assets[index].modified_at = file_modified_ms(&canonical);
@@ -514,13 +547,15 @@ pub fn media_pick_import(
         let kind = detect_kind(&source);
         let destination = if mode == "copy" {
             let target = managed_path(&app, &id, &name)?;
-            fs::copy(&source, &target).map_err(|error| io_error("Media could not be copied into LumaRig", error))?;
+            fs::copy(&source, &target)
+                .map_err(|error| io_error("Media could not be copied into LumaRig", error))?;
             target
         } else {
             source.canonicalize().unwrap_or(source)
         };
         allow_asset(&app, &destination)?;
-        let metadata = fs::metadata(&destination).map_err(|error| io_error("Imported media metadata is unavailable", error))?;
+        let metadata = fs::metadata(&destination)
+            .map_err(|error| io_error("Imported media metadata is unavailable", error))?;
         let asset = StoredMediaAsset {
             id,
             name,
@@ -546,7 +581,10 @@ pub fn media_move_asset(
     asset_id: String,
     folder_id: Option<String>,
 ) -> Result<MediaAsset, String> {
-    let _guard = state.lock.lock().map_err(|_| "Media library lock failed.".to_string())?;
+    let _guard = state
+        .lock
+        .lock()
+        .map_err(|_| "Media library lock failed.".to_string())?;
     let mut registry = read_registry(&app)?;
     ensure_folder(&registry, &folder_id)?;
     let asset = registry
@@ -566,7 +604,10 @@ pub fn media_remove_asset(
     state: State<'_, MediaLibraryState>,
     asset_id: String,
 ) -> Result<(), String> {
-    let _guard = state.lock.lock().map_err(|_| "Media library lock failed.".to_string())?;
+    let _guard = state
+        .lock
+        .lock()
+        .map_err(|_| "Media library lock failed.".to_string())?;
     let mut registry = read_registry(&app)?;
     let asset = registry
         .assets
@@ -574,18 +615,16 @@ pub fn media_remove_asset(
         .find(|asset| asset.id == asset_id)
         .cloned()
         .ok_or("Media asset no longer exists.")?;
-    if asset.source_mode == "copy" {
-        let path = PathBuf::from(&asset.path);
-        if path.is_file() {
-            fs::remove_file(&path).map_err(|error| io_error("Managed media could not be removed", error))?;
-        }
-    }
     registry.assets.retain(|item| item.id != asset_id);
-    write_registry(&app, &registry)
+    write_registry(&app, &registry)?;
+    if asset.source_mode == "copy" && Path::new(&asset.path).is_file() {
+        let _ = fs::remove_file(&asset.path);
+    }
+    Ok(())
 }
 
 #[tauri::command]
-pub fn media_relink_asset(
+pub async fn media_relink_asset(
     app: AppHandle,
     state: State<'_, MediaLibraryState>,
     asset_id: String,
@@ -611,7 +650,10 @@ pub fn media_relink_asset(
         return Err("Selected media file is unavailable.".to_string());
     }
 
-    let _guard = state.lock.lock().map_err(|_| "Media library lock failed.".to_string())?;
+    let _guard = state
+        .lock
+        .lock()
+        .map_err(|_| "Media library lock failed.".to_string())?;
     let mut registry = read_registry(&app)?;
     let index = registry
         .assets
@@ -621,22 +663,18 @@ pub fn media_relink_asset(
     let original = registry.assets[index].clone();
     let name = file_name(&source);
     let destination = if original.source_mode == "copy" {
-        let target = managed_path(&app, &original.id, &name)?;
+        let target = unique_managed_path(&app, &original.id, &name)?;
         fs::create_dir_all(managed_files_dir(&app)?)
             .map_err(|error| io_error("Managed media folder could not be created", error))?;
-        fs::copy(&source, &target).map_err(|error| io_error("Relinked media could not be copied into LumaRig", error))?;
-        if original.path != target.to_string_lossy() {
-            let old_path = PathBuf::from(&original.path);
-            if old_path.is_file() {
-                let _ = fs::remove_file(old_path);
-            }
-        }
+        fs::copy(&source, &target)
+            .map_err(|error| io_error("Relinked media could not be copied into LumaRig", error))?;
         target
     } else {
         source.canonicalize().unwrap_or(source)
     };
     allow_asset(&app, &destination)?;
-    let metadata = fs::metadata(&destination).map_err(|error| io_error("Relinked media metadata is unavailable", error))?;
+    let metadata = fs::metadata(&destination)
+        .map_err(|error| io_error("Relinked media metadata is unavailable", error))?;
     registry.assets[index].name = name;
     registry.assets[index].path = destination.to_string_lossy().to_string();
     registry.assets[index].kind = detect_kind(&destination);
@@ -653,9 +691,16 @@ pub fn media_asset(
     state: State<'_, MediaLibraryState>,
     asset_id: String,
 ) -> Result<Option<MediaAsset>, String> {
-    let _guard = state.lock.lock().map_err(|_| "Media library lock failed.".to_string())?;
+    let _guard = state
+        .lock
+        .lock()
+        .map_err(|_| "Media library lock failed.".to_string())?;
     let registry = read_registry(&app)?;
-    let result = registry.assets.iter().find(|asset| asset.id == asset_id).map(asset_snapshot);
+    let result = registry
+        .assets
+        .iter()
+        .find(|asset| asset.id == asset_id)
+        .map(asset_snapshot);
     if let Some(asset) = &result {
         if !asset.missing {
             allow_asset(&app, Path::new(&asset.path))?;
@@ -669,14 +714,21 @@ pub fn media_begin_managed_write(
     app: AppHandle,
     state: State<'_, MediaLibraryState>,
     asset_id: String,
-) -> Result<(), String> {
-    let _guard = state.lock.lock().map_err(|_| "Media library lock failed.".to_string())?;
-    let path = incoming_path(&app, &asset_id)?;
+) -> Result<String, String> {
+    let _guard = state
+        .lock
+        .lock()
+        .map_err(|_| "Media library lock failed.".to_string())?;
+    valid_asset_id(&asset_id)?;
+    let job_id = Uuid::new_v4().to_string();
+    let path = incoming_path(&app, &job_id)?;
     if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent).map_err(|error| io_error("Media staging folder could not be created", error))?;
+        fs::create_dir_all(parent)
+            .map_err(|error| io_error("Media staging folder could not be created", error))?;
     }
-    File::create(&path).map_err(|error| io_error("Media staging file could not be created", error))?;
-    Ok(())
+    File::create(&path)
+        .map_err(|error| io_error("Media staging file could not be created", error))?;
+    Ok(job_id)
 }
 
 #[tauri::command]
@@ -687,15 +739,34 @@ pub fn media_append_managed_write(
 ) -> Result<(), String> {
     let asset_id = request
         .headers()
-        .get("x-lumarig-media-id")
+        .get("x-lumarig-media-job")
         .and_then(|value| value.to_str().ok())
         .filter(|value| !value.trim().is_empty())
         .ok_or("Media chunk is missing its asset id.")?;
     let tauri::ipc::InvokeBody::Raw(chunk) = request.body() else {
         return Err("Media chunk must use Tauri's binary IPC body.".to_string());
     };
-    let _guard = state.lock.lock().map_err(|_| "Media library lock failed.".to_string())?;
+    if chunk.len() > 1_048_576 {
+        return Err("Media chunk exceeds 1 MiB.".into());
+    }
+    let offset = request
+        .headers()
+        .get("x-lumarig-media-offset")
+        .and_then(|v| v.to_str().ok())
+        .and_then(|v| v.parse::<u64>().ok())
+        .ok_or("Media chunk offset is missing.")?;
+    let _guard = state
+        .lock
+        .lock()
+        .map_err(|_| "Media library lock failed.".to_string())?;
     let path = incoming_path(&app, asset_id)?;
+    if fs::metadata(&path)
+        .map_err(|e| io_error("Media staging file is missing", e))?
+        .len()
+        != offset
+    {
+        return Err("Media chunks arrived out of order.".into());
+    }
     let mut file = OpenOptions::new()
         .append(true)
         .open(&path)
@@ -709,28 +780,49 @@ pub fn media_finish_managed_write(
     app: AppHandle,
     state: State<'_, MediaLibraryState>,
     asset_id: String,
+    job_id: String,
+    expected_size: u64,
     name: String,
     folder_id: Option<String>,
     kind: Option<String>,
 ) -> Result<MediaAsset, String> {
-    let _guard = state.lock.lock().map_err(|_| "Media library lock failed.".to_string())?;
+    let _guard = state
+        .lock
+        .lock()
+        .map_err(|_| "Media library lock failed.".to_string())?;
     let mut registry = read_registry(&app)?;
     ensure_folder(&registry, &folder_id)?;
-    let staged = incoming_path(&app, &asset_id)?;
+    valid_asset_id(&asset_id)?;
+    let staged = incoming_path(&app, &job_id)?;
     if !staged.is_file() {
         return Err("Staged media is missing. Import the file again.".to_string());
     }
     fs::create_dir_all(managed_files_dir(&app)?)
         .map_err(|error| io_error("Managed media folder could not be created", error))?;
-    let destination = managed_path(&app, &asset_id, &name)?;
-    if destination.is_file() {
-        fs::remove_file(&destination).map_err(|error| io_error("Previous managed media could not be replaced", error))?;
+    if fs::metadata(&staged)
+        .map_err(|e| io_error("Staged media is unavailable", e))?
+        .len()
+        != expected_size
+    {
+        return Err("Incomplete media import.".into());
     }
+    OpenOptions::new()
+        .write(true)
+        .open(&staged)
+        .map_err(|e| e.to_string())?
+        .sync_all()
+        .map_err(|e| e.to_string())?;
+    let destination = unique_managed_path(&app, &asset_id, &name)?;
     fs::rename(&staged, &destination)
         .map_err(|error| io_error("Managed media could not be committed", error))?;
     allow_asset(&app, &destination)?;
-    let metadata = fs::metadata(&destination).map_err(|error| io_error("Managed media metadata is unavailable", error))?;
-    let previous = registry.assets.iter().find(|asset| asset.id == asset_id).cloned();
+    let metadata = fs::metadata(&destination)
+        .map_err(|error| io_error("Managed media metadata is unavailable", error))?;
+    let previous = registry
+        .assets
+        .iter()
+        .find(|asset| asset.id == asset_id)
+        .cloned();
     let asset = StoredMediaAsset {
         id: asset_id,
         name,
@@ -739,7 +831,10 @@ pub fn media_finish_managed_write(
         path: destination.to_string_lossy().to_string(),
         kind: kind.unwrap_or_else(|| detect_kind(&destination)),
         size: metadata.len(),
-        created_at: previous.as_ref().map(|asset| asset.created_at).unwrap_or_else(now_ms),
+        created_at: previous
+            .as_ref()
+            .map(|asset| asset.created_at)
+            .unwrap_or_else(now_ms),
         modified_at: file_modified_ms(&destination),
     };
     let result = asset_snapshot(&asset);
@@ -749,20 +844,34 @@ pub fn media_finish_managed_write(
 }
 
 #[tauri::command]
-pub fn media_export_portable_backup(
+pub async fn media_export_portable_backup(
     app: AppHandle,
     state: State<'_, MediaLibraryState>,
     manifest_json: String,
     media_ids: Vec<String>,
     suggested_name: String,
 ) -> Result<Option<String>, String> {
-    let header: PortableBackupHeader =
-        serde_json::from_str(&manifest_json).map_err(|error| io_error("Backup manifest is invalid", error))?;
+    let header: PortableBackupHeader = serde_json::from_str(&manifest_json)
+        .map_err(|error| io_error("Backup manifest is invalid", error))?;
     if header.format != BACKUP_FORMAT || header.version != BACKUP_VERSION {
         return Err("Backup manifest format is not supported.".to_string());
     }
+    validate_backup_header(&header)?;
+    let provided: HashSet<String> = media_ids.iter().cloned().collect();
+    let expected: HashSet<String> = header.media.iter().map(|m| m.id.clone()).collect();
+    let program: serde_json::Value =
+        serde_json::from_str(&manifest_json).map_err(|e| e.to_string())?;
+    if provided.len() != media_ids.len()
+        || provided != expected
+        || !collect_state_media(&program["programState"]).is_subset(&provided)
+    {
+        return Err("Backup media manifest is incomplete or duplicated.".into());
+    }
 
-    let _guard = state.lock.lock().map_err(|_| "Media library lock failed.".to_string())?;
+    let _guard = state
+        .lock
+        .lock()
+        .map_err(|_| "Media library lock failed.".to_string())?;
     let registry = read_registry(&app)?;
     let mut assets = Vec::new();
     for id in &media_ids {
@@ -772,14 +881,20 @@ pub fn media_export_portable_backup(
             .find(|asset| &asset.id == id)
             .ok_or_else(|| format!("Media {id} is not in the local media library."))?;
         if !Path::new(&asset.path).is_file() {
-            return Err(format!("Relink missing media before backup: {}", asset.name));
+            return Err(format!(
+                "Relink missing media before backup: {}",
+                asset.name
+            ));
         }
         assets.push(asset.clone());
     }
 
     let default_name = if suggested_name.trim().is_empty() {
         "LumaRig Backup.lumarigbackup".to_string()
-    } else if suggested_name.to_ascii_lowercase().ends_with(".lumarigbackup") {
+    } else if suggested_name
+        .to_ascii_lowercase()
+        .ends_with(".lumarigbackup")
+    {
         suggested_name
     } else {
         format!("{}.lumarigbackup", suggested_name)
@@ -807,8 +922,12 @@ pub fn media_export_portable_backup(
         path.set_extension("lumarigbackup");
     }
 
-    let file = File::create(&path).map_err(|error| io_error("Portable backup could not be created", error))?;
-    let mut archive = ZipWriter::new(file);
+    let parent = path
+        .parent()
+        .ok_or("Backup destination has no parent folder.")?;
+    let mut staged = tempfile::NamedTempFile::new_in(parent)
+        .map_err(|e| io_error("Backup could not be staged", e))?;
+    let mut archive = ZipWriter::new(staged.as_file_mut());
     let options = SimpleFileOptions::default().compression_method(CompressionMethod::Stored);
     archive
         .start_file("manifest.json", options)
@@ -826,40 +945,24 @@ pub fn media_export_portable_backup(
         archive
             .start_file(entry, options)
             .map_err(|error| io_error("Backup media entry could not be created", error))?;
-        let mut source =
-            File::open(&asset.path).map_err(|error| io_error("Backup media could not be opened", error))?;
+        let mut source = File::open(&asset.path)
+            .map_err(|error| io_error("Backup media could not be opened", error))?;
         std::io::copy(&mut source, &mut archive)
             .map_err(|error| io_error("Backup media could not be written", error))?;
     }
     archive
         .finish()
-        .map_err(|error| io_error("Portable backup could not be finalized", error))?;
+        .map_err(|error| io_error("Portable backup could not be finalized", error))?
+        .sync_all()
+        .map_err(|e| io_error("Backup sync failed", e))?;
+    staged
+        .persist(&path)
+        .map_err(|e| io_error("Backup could not be committed", e))?;
     Ok(Some(path.to_string_lossy().to_string()))
 }
 
-fn valid_restore_token(value: &str) -> bool {
-    Uuid::parse_str(value).is_ok()
-}
-
-fn valid_media_id(value: &str) -> bool {
-    !value.is_empty()
-        && value.len() <= 180
-        && !value.contains("..")
-        && value.chars().next().map(|ch| ch.is_ascii_alphanumeric()).unwrap_or(false)
-        && value
-            .chars()
-            .all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '-' | '_' | '.' | ':'))
-}
-
-fn restore_root(app: &AppHandle, token: &str) -> Result<PathBuf, String> {
-    if !valid_restore_token(token) {
-        return Err("Portable restore token is invalid.".to_string());
-    }
-    Ok(library_root(app)?.join(".restore").join(token))
-}
-
 #[tauri::command]
-pub fn media_import_portable_backup(
+pub async fn media_import_portable_backup(
     app: AppHandle,
     state: State<'_, MediaLibraryState>,
 ) -> Result<Option<PortableBackupImport>, String> {
@@ -875,9 +978,14 @@ pub fn media_import_portable_backup(
         .into_path()
         .map_err(|error| io_error("Backup path is invalid", error))?;
 
-    let _guard = state.lock.lock().map_err(|_| "Media library lock failed.".to_string())?;
-    let source = File::open(&path).map_err(|error| io_error("Portable backup could not be opened", error))?;
-    let mut archive = ZipArchive::new(source).map_err(|error| io_error("Portable backup is not a valid archive", error))?;
+    let _guard = state
+        .lock
+        .lock()
+        .map_err(|_| "Media library lock failed.".to_string())?;
+    let source = File::open(&path)
+        .map_err(|error| io_error("Portable backup could not be opened", error))?;
+    let mut archive = ZipArchive::new(source)
+        .map_err(|error| io_error("Portable backup is not a valid archive", error))?;
     let manifest_json = {
         let mut manifest = archive
             .by_name("manifest.json")
@@ -891,198 +999,452 @@ pub fn media_import_portable_backup(
             .map_err(|error| io_error("Portable backup manifest could not be read", error))?;
         text
     };
-    let header: PortableBackupHeader =
-        serde_json::from_str(&manifest_json).map_err(|error| io_error("Portable backup manifest is invalid", error))?;
+    let header: PortableBackupHeader = serde_json::from_str(&manifest_json)
+        .map_err(|error| io_error("Portable backup manifest is invalid", error))?;
     if header.format != BACKUP_FORMAT || header.version != BACKUP_VERSION {
         return Err("This LumaRig backup version is not supported.".to_string());
     }
-    if header.media.len() > 10_000 {
-        return Err("Portable backup contains too many media entries.".to_string());
-    }
-    let mut ids = HashSet::new();
-    for descriptor in &header.media {
-        if !valid_media_id(&descriptor.id) || descriptor.name.trim().is_empty() || descriptor.name.len() > 512 {
-            return Err("Portable backup contains an invalid media descriptor.".to_string());
-        }
-        if !ids.insert(descriptor.id.clone()) {
-            return Err(format!("Portable backup contains duplicate media id: {}", descriptor.id));
-        }
-    }
 
-    let restore_token = Uuid::new_v4().to_string();
-    let staging_root = restore_root(&app, &restore_token)?;
-    fs::create_dir_all(&staging_root)
-        .map_err(|error| io_error("Backup restore staging folder could not be created", error))?;
-
-    let restore_result = (|| -> Result<(), String> {
-        for descriptor in &header.media {
-            let entry_name = format!(
-                "media/{}/{}",
-                sanitize_file_name(&descriptor.id),
-                sanitize_file_name(&descriptor.name)
-            );
-            let mut entry = archive
-                .by_name(&entry_name)
-                .map_err(|_| format!("Portable backup is missing media: {}", descriptor.name))?;
-            if entry.is_dir() {
-                return Err(format!("Portable backup media entry is invalid: {}", descriptor.name));
+    validate_backup_header(&header)?;
+    let mut manifest: serde_json::Value =
+        serde_json::from_str(&manifest_json).map_err(|e| e.to_string())?;
+    let expected = collect_state_media(&manifest["programState"]);
+    let present: HashSet<String> = header.media.iter().map(|m| m.id.clone()).collect();
+    if !expected.is_subset(&present) {
+        return Err(
+            "Portable backup is missing a media descriptor used by its programming.".into(),
+        );
+    }
+    let restore_id = Uuid::new_v4().to_string();
+    let staging_root = library_root(&app)?.join(".restore").join(&restore_id);
+    fs::create_dir_all(&staging_root).map_err(|e| io_error("Restore staging failed", e))?;
+    let ids: HashMap<String, String> = header
+        .media
+        .iter()
+        .map(|m| (m.id.clone(), Uuid::new_v4().to_string()))
+        .collect();
+    let folder_ids: HashMap<String, String> = header
+        .media_folders
+        .iter()
+        .map(|f| (f.id.clone(), Uuid::new_v4().to_string()))
+        .collect();
+    let result = (|| -> Result<String, String> {
+        extract_backup_media(&mut archive, &header, &staging_root, &ids)?;
+        remap_state_media(&mut manifest["programState"], &ids);
+        for media in manifest["media"]
+            .as_array_mut()
+            .ok_or("Invalid media manifest.")?
+        {
+            let old = media["id"].as_str().ok_or("Invalid media ID.")?.to_string();
+            media["id"] = ids[&old].clone().into();
+            if let Some(folder) = media["folderId"].as_str().map(str::to_string) {
+                media["folderId"] = folder_ids
+                    .get(&folder)
+                    .ok_or("Missing backup media folder.")?
+                    .clone()
+                    .into();
             }
-            let target = staging_root.join(format!(
-                "{}--{}",
-                sanitize_file_name(&descriptor.id),
-                sanitize_file_name(&descriptor.name)
-            ));
-            let mut output =
-                File::create(&target).map_err(|error| io_error("Restored media could not be staged", error))?;
-            std::io::copy(&mut entry, &mut output)
-                .map_err(|error| io_error("Restored media could not be extracted", error))?;
         }
-        let plan = PortableRestorePlan {
-            media: header.media.clone(),
-            media_folders: header.media_folders.clone(),
-        };
-        let plan_json = serde_json::to_vec(&plan)
-            .map_err(|error| io_error("Portable restore plan could not be serialized", error))?;
-        fs::write(staging_root.join("plan.json"), plan_json)
-            .map_err(|error| io_error("Portable restore plan could not be staged", error))?;
-        Ok(())
+        for folder in manifest["mediaFolders"]
+            .as_array_mut()
+            .ok_or("Invalid folder manifest.")?
+        {
+            let old = folder["id"]
+                .as_str()
+                .ok_or("Invalid folder ID.")?
+                .to_string();
+            folder["id"] = folder_ids[&old].clone().into();
+            if let Some(parent) = folder["parentId"].as_str().map(str::to_string) {
+                folder["parentId"] = folder_ids
+                    .get(&parent)
+                    .ok_or("Missing backup parent folder.")?
+                    .clone()
+                    .into();
+            }
+        }
+        let json = serde_json::to_string(&manifest).map_err(|e| e.to_string())?;
+        fs::write(staging_root.join("manifest.json"), &json).map_err(|e| e.to_string())?;
+        Ok(json)
     })();
-
-    if let Err(error) = restore_result {
-        let _ = fs::remove_dir_all(&staging_root);
-        return Err(error);
+    match result {
+        Ok(manifest_json) => Ok(Some(PortableBackupImport {
+            path: path.to_string_lossy().into(),
+            manifest_json,
+            imported_media: header.media.len(),
+            restore_id,
+        })),
+        Err(e) => {
+            let _ = fs::remove_dir_all(staging_root);
+            Err(e)
+        }
     }
-
-    Ok(Some(PortableBackupImport {
-        path: path.to_string_lossy().to_string(),
-        manifest_json,
-        imported_media: header.media.len(),
-        restore_token,
-    }))
 }
-
-#[tauri::command]
-pub fn media_cancel_portable_backup_restore(
-    app: AppHandle,
-    state: State<'_, MediaLibraryState>,
-    restore_token: String,
+fn extract_backup_media<R: Read + Seek>(
+    archive: &mut ZipArchive<R>,
+    header: &PortableBackupHeader,
+    staging: &Path,
+    ids: &HashMap<String, String>,
 ) -> Result<(), String> {
-    let _guard = state.lock.lock().map_err(|_| "Media library lock failed.".to_string())?;
-    let staging_root = restore_root(&app, &restore_token)?;
-    if staging_root.exists() {
-        fs::remove_dir_all(staging_root)
-            .map_err(|error| io_error("Portable restore staging folder could not be removed", error))?;
+    for descriptor in &header.media {
+        let entry_name = format!(
+            "media/{}/{}",
+            sanitize_file_name(&descriptor.id),
+            sanitize_file_name(&descriptor.name)
+        );
+        let mut entry = archive
+            .by_name(&entry_name)
+            .map_err(|_| format!("Portable backup is missing media: {}", descriptor.name))?;
+        if entry.is_dir() {
+            return Err("Invalid backup media entry.".into());
+        }
+        let mut output = File::create(staging.join(format!("{}.asset", ids[&descriptor.id])))
+            .map_err(|e| e.to_string())?;
+        std::io::copy(&mut entry, &mut output)
+            .map_err(|e| io_error("Backup media is damaged or could not be extracted", e))?;
+        output.sync_all().map_err(|e| e.to_string())?;
     }
     Ok(())
 }
-
-#[tauri::command]
-pub fn media_commit_portable_backup_restore(
-    app: AppHandle,
-    state: State<'_, MediaLibraryState>,
-    restore_token: String,
-) -> Result<usize, String> {
-    let _guard = state.lock.lock().map_err(|_| "Media library lock failed.".to_string())?;
-    let staging_root = restore_root(&app, &restore_token)?;
-    let plan_bytes = fs::read(staging_root.join("plan.json"))
-        .map_err(|error| io_error("Portable restore plan is missing", error))?;
-    let plan: PortableRestorePlan = serde_json::from_slice(&plan_bytes)
-        .map_err(|error| io_error("Portable restore plan is invalid", error))?;
-
-    let mut registry = read_registry(&app)?;
-    for folder in plan.media_folders {
-        if !registry.folders.iter().any(|existing| existing.id == folder.id) {
-            registry.folders.push(folder);
-        }
-    }
-    fs::create_dir_all(managed_files_dir(&app)?)
-        .map_err(|error| io_error("Managed media folder could not be created", error))?;
-
-    let mut imported = 0usize;
-    let mut committed_paths = Vec::new();
-
-    let commit_result = (|| -> Result<(), String> {
-        for descriptor in plan.media {
-            // A media id is a stable identity. If this computer already has a
-            // healthy asset with that id, preserve it rather than clobbering a
-            // user's local file during restore.
-            if let Some(existing) = registry.assets.iter().find(|asset| asset.id == descriptor.id) {
-                if Path::new(&existing.path).is_file() {
-                    continue;
+fn collect_state_media(value: &serde_json::Value) -> HashSet<String> {
+    let mut ids = HashSet::new();
+    match value {
+        serde_json::Value::Object(o) => {
+            for (k, v) in o {
+                if k == "mediaId" {
+                    if let Some(id) = v.as_str() {
+                        if !id.is_empty() {
+                            ids.insert(id.to_string());
+                        }
+                    }
+                } else {
+                    ids.extend(collect_state_media(v));
                 }
             }
-
-            let staged_path = staging_root.join(format!(
-                "{}--{}",
-                sanitize_file_name(&descriptor.id),
-                sanitize_file_name(&descriptor.name)
-            ));
-            if !staged_path.is_file() {
-                return Err(format!("Staged backup media is missing: {}", descriptor.name));
+        }
+        serde_json::Value::Array(a) => {
+            for v in a {
+                ids.extend(collect_state_media(v));
             }
-            let destination = managed_path(&app, &descriptor.id, &descriptor.name)?;
-            if destination.exists() {
-                return Err(format!("Managed media destination already exists unexpectedly: {}", descriptor.name));
+        }
+        _ => {}
+    }
+    ids
+}
+fn remap_state_media(value: &mut serde_json::Value, ids: &HashMap<String, String>) {
+    match value {
+        serde_json::Value::Object(o) => {
+            for (k, v) in o {
+                if k == "mediaId" {
+                    if let Some(new) = v.as_str().and_then(|id| ids.get(id)) {
+                        *v = new.clone().into();
+                    }
+                } else {
+                    remap_state_media(v, ids);
+                }
             }
-            fs::rename(&staged_path, &destination)
-                .map_err(|error| io_error("Restored media could not be committed", error))?;
-            committed_paths.push(destination.clone());
-            allow_asset(&app, &destination)?;
-            let metadata = fs::metadata(&destination)
-                .map_err(|error| io_error("Restored media metadata is unavailable", error))?;
-            let previous = registry.assets.iter().find(|asset| asset.id == descriptor.id).cloned();
-            let asset = StoredMediaAsset {
-                id: descriptor.id,
-                name: descriptor.name,
-                folder_id: descriptor.folder_id.filter(|id| registry.folders.iter().any(|folder| &folder.id == id)),
-                source_mode: "copy".to_string(),
-                path: destination.to_string_lossy().to_string(),
-                kind: descriptor.kind.unwrap_or_else(|| detect_kind(&destination)),
-                size: metadata.len(),
-                created_at: previous.as_ref().map(|asset| asset.created_at).unwrap_or_else(now_ms),
-                modified_at: file_modified_ms(&destination),
-            };
-            upsert_asset(&mut registry, asset);
-            imported += 1;
+        }
+        serde_json::Value::Array(a) => {
+            for v in a {
+                remap_state_media(v, ids);
+            }
+        }
+        _ => {}
+    }
+}
+fn validate_backup_header(header: &PortableBackupHeader) -> Result<(), String> {
+    if header.media.len() > 10000 || header.media_folders.len() > 10000 {
+        return Err("Backup contains too many media assets or folders.".into());
+    }
+    let mut ids = HashSet::new();
+    let mut paths = HashSet::new();
+    for m in &header.media {
+        valid_asset_id(&m.id)?;
+        if m.kind
+            .as_deref()
+            .is_some_and(|k| !["audio", "video", "image"].contains(&k))
+        {
+            return Err("Invalid backup media kind.".into());
+        }
+        if m.name.trim().is_empty()
+            || !ids.insert(&m.id)
+            || !paths.insert(format!(
+                "{}/{}",
+                sanitize_file_name(&m.id),
+                sanitize_file_name(&m.name)
+            ))
+        {
+            return Err("Duplicate or invalid backup media descriptor.".into());
+        }
+    }
+    let folders: HashMap<&str, &MediaFolder> = header
+        .media_folders
+        .iter()
+        .map(|f| (f.id.as_str(), f))
+        .collect();
+    if folders.len() != header.media_folders.len() {
+        return Err("Duplicate backup folders.".into());
+    }
+    for f in &header.media_folders {
+        valid_asset_id(&f.id)?;
+        if f.name.trim().is_empty() || f.name.chars().count() > 120 {
+            return Err("Invalid backup folder name.".into());
+        }
+        let mut visited = HashSet::new();
+        let mut current = Some(f.id.as_str());
+        while let Some(id) = current {
+            if !visited.insert(id) {
+                return Err("Backup folder hierarchy contains a cycle.".into());
+            }
+            current = folders
+                .get(id)
+                .ok_or("Backup folder parent is missing.")?
+                .parent_id
+                .as_deref();
+        }
+    }
+    for m in &header.media {
+        if m.folder_id
+            .as_deref()
+            .is_some_and(|id| !folders.contains_key(id))
+        {
+            return Err("Backup media folder is missing.".into());
+        }
+    }
+    Ok(())
+}
+fn restore_folder(app: &AppHandle, id: &str) -> Result<PathBuf, String> {
+    Uuid::parse_str(id).map_err(|_| "Invalid restore ID.")?;
+    Ok(library_root(app)?.join(".restore").join(id))
+}
+#[tauri::command]
+pub fn media_cancel_managed_write(
+    app: AppHandle,
+    state: State<'_, MediaLibraryState>,
+    job_id: String,
+) -> Result<(), String> {
+    let _guard = state.lock.lock().map_err(|_| "Media lock failed.")?;
+    let path = incoming_path(&app, &job_id)?;
+    if path.exists() {
+        fs::remove_file(path).map_err(|e| e.to_string())?;
+    }
+    Ok(())
+}
+#[tauri::command]
+pub fn media_discard_portable_backup(
+    app: AppHandle,
+    state: State<'_, MediaLibraryState>,
+    restore_id: String,
+) -> Result<(), String> {
+    let _guard = state.lock.lock().map_err(|_| "Media lock failed.")?;
+    let path = restore_folder(&app, &restore_id)?;
+    if path.exists() {
+        fs::remove_dir_all(path).map_err(|e| e.to_string())?;
+    }
+    Ok(())
+}
+#[tauri::command]
+pub fn media_commit_portable_backup(
+    app: AppHandle,
+    state: State<'_, MediaLibraryState>,
+    restore_id: String,
+) -> Result<(), String> {
+    let _guard = state.lock.lock().map_err(|_| "Media lock failed.")?;
+    let staging = restore_folder(&app, &restore_id)?;
+    let header: PortableBackupHeader = serde_json::from_slice(
+        &fs::read(staging.join("manifest.json")).map_err(|e| e.to_string())?,
+    )
+    .map_err(|e| e.to_string())?;
+    validate_backup_header(&header)?;
+    let mut registry = read_registry(&app)?;
+    if header
+        .media
+        .iter()
+        .any(|m| registry.assets.iter().any(|a| a.id == m.id))
+    {
+        return Err("Restore media IDs already exist. Reopen the backup.".into());
+    }
+    let destination = managed_files_dir(&app)?.join(format!("restore-{restore_id}"));
+    fs::create_dir_all(managed_files_dir(&app)?).map_err(|e| e.to_string())?;
+    fs::rename(&staging, &destination).map_err(|e| e.to_string())?;
+    let result = (|| -> Result<(), String> {
+        registry.folders.extend(header.media_folders);
+        for m in header.media {
+            let path = destination.join(format!("{}.asset", m.id));
+            allow_asset(&app, &path)?;
+            let meta = fs::metadata(&path).map_err(|e| e.to_string())?;
+            registry.assets.push(StoredMediaAsset {
+                id: m.id,
+                name: m.name,
+                folder_id: m.folder_id,
+                source_mode: "copy".into(),
+                path: path.to_string_lossy().into(),
+                kind: m.kind.unwrap_or("audio".into()),
+                size: meta.len(),
+                created_at: now_ms(),
+                modified_at: now_ms(),
+            });
         }
         write_registry(&app, &registry)
     })();
-
-    if let Err(error) = commit_result {
-        for path in committed_paths {
-            let _ = fs::remove_file(path);
-        }
-        return Err(error);
+    if result.is_err() {
+        let _ = fs::rename(&destination, &staging);
     }
-
-    let _ = fs::remove_dir_all(&staging_root);
-    Ok(imported)
+    result
 }
-
 
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn file_names_cannot_escape_managed_storage() {
-        assert_eq!(sanitize_file_name("../../Sunday / opener.mp4"), "Sunday _ opener.mp4");
-        assert_eq!(sanitize_file_name(""), "media.bin");
+    use std::io::Cursor;
+    fn header() -> PortableBackupHeader {
+        serde_json::from_value(serde_json::json!({"format":BACKUP_FORMAT,"version":1,"media":[{"id":"a","name":"song.wav","kind":"audio","folderId":null}],"mediaFolders":[]})).unwrap()
     }
-
-    #[test]
-    fn portable_media_ids_reject_traversal_and_bad_prefixes() {
-        assert!(valid_media_id("8b4e2fa6-1e50-46cf-aad2-1951d36154fb"));
-        assert!(valid_media_id("legacy:audio_01"));
-        assert!(!valid_media_id("../escape"));
-        assert!(!valid_media_id(".hidden"));
-        assert!(!valid_media_id(""));
+    fn archive(bytes: &[u8]) -> Vec<u8> {
+        let mut writer = ZipWriter::new(Cursor::new(Vec::new()));
+        writer
+            .start_file(
+                "media/a/song.wav",
+                SimpleFileOptions::default().compression_method(CompressionMethod::Stored),
+            )
+            .unwrap();
+        writer.write_all(bytes).unwrap();
+        writer.finish().unwrap().into_inner()
     }
-
     #[test]
-    fn restore_tokens_must_be_real_uuids() {
-        let token = Uuid::new_v4().to_string();
-        assert!(valid_restore_token(&token));
-        assert!(!valid_restore_token("../../restore"));
+    fn registry_commit_keeps_previous_complete_revision() {
+        let root = tempfile::tempdir().unwrap();
+        commit_registry(root.path(), &MediaRegistry::default()).unwrap();
+        let mut second = MediaRegistry::default();
+        second.folders.push(MediaFolder {
+            id: "f".into(),
+            name: "Songs".into(),
+            parent_id: None,
+            created_at: 0,
+        });
+        commit_registry(root.path(), &second).unwrap();
+        let dir = root.path().join("registry-revisions");
+        assert!(dir.join("00000000000000000001.json").is_file());
+        let latest: MediaRegistry =
+            serde_json::from_slice(&fs::read(dir.join("00000000000000000002.json")).unwrap())
+                .unwrap();
+        assert_eq!(latest.folders.len(), 1);
+    }
+    #[test]
+    fn reference_missing_and_relink_keep_asset_id() {
+        let root = tempfile::tempdir().unwrap();
+        let path = root.path().join("song.wav");
+        fs::write(&path, b"sound").unwrap();
+        let mut asset = StoredMediaAsset {
+            id: "a".into(),
+            name: "song.wav".into(),
+            folder_id: None,
+            source_mode: "reference".into(),
+            path: path.to_string_lossy().into(),
+            kind: "audio".into(),
+            size: 5,
+            created_at: 0,
+            modified_at: 0,
+        };
+        assert!(!asset_snapshot(&asset).missing);
+        fs::remove_file(path).unwrap();
+        assert!(asset_snapshot(&asset).missing);
+        let next = root.path().join("moved.wav");
+        fs::write(&next, b"sound").unwrap();
+        asset.path = next.to_string_lossy().into();
+        assert!(!asset_snapshot(&asset).missing);
+        assert_eq!(asset_snapshot(&asset).id, "a");
+    }
+    #[test]
+    fn backup_rejects_duplicate_ids_and_folder_cycles() {
+        let mut h = header();
+        h.media.push(h.media[0].clone());
+        assert!(validate_backup_header(&h).is_err());
+        let mut h = header();
+        h.media_folders = vec![MediaFolder {
+            id: "f".into(),
+            name: "folder".into(),
+            parent_id: Some("f".into()),
+            created_at: 0,
+        }];
+        assert!(validate_backup_header(&h).is_err());
+    }
+    #[test]
+    fn nested_folder_descriptors_require_real_parents() {
+        let mut h = header();
+        h.media_folders = vec![
+            MediaFolder {
+                id: "parent".into(),
+                name: "Songs".into(),
+                parent_id: None,
+                created_at: 0,
+            },
+            MediaFolder {
+                id: "child".into(),
+                name: "Worship".into(),
+                parent_id: Some("parent".into()),
+                created_at: 0,
+            },
+        ];
+        h.media[0].folder_id = Some("child".into());
+        assert!(validate_backup_header(&h).is_ok());
+        h.media_folders.remove(0);
+        assert!(validate_backup_header(&h).is_err());
+    }
+    #[test]
+    fn backup_remaps_links_without_mutating_cue_ids() {
+        let mut value =
+            serde_json::json!({"id":"a","songs":[{"mediaId":"a"}],"videoClips":[{"mediaId":"a"}]});
+        assert_eq!(
+            collect_state_media(&value),
+            HashSet::from(["a".to_string()])
+        );
+        remap_state_media(&mut value, &HashMap::from([("a".into(), "fresh".into())]));
+        assert_eq!(value["id"], "a");
+        assert_eq!(value["songs"][0]["mediaId"], "fresh");
+    }
+    #[test]
+    fn corrupt_or_missing_archive_never_overwrites_existing_media() {
+        let root = tempfile::tempdir().unwrap();
+        let existing = root.path().join("old.wav");
+        fs::write(&existing, b"original").unwrap();
+        let ids = HashMap::from([("a".into(), "fresh".into())]);
+        let bytes = archive(b"backup-audio");
+        let mut damaged = bytes.clone();
+        let offset = damaged
+            .windows(12)
+            .position(|w| w == b"backup-audio")
+            .unwrap();
+        damaged[offset] ^= 1;
+        let mut zip = ZipArchive::new(Cursor::new(damaged)).unwrap();
+        assert!(extract_backup_media(&mut zip, &header(), root.path(), &ids).is_err());
+        assert_eq!(fs::read(&existing).unwrap(), b"original");
+        let mut zip = ZipArchive::new(Cursor::new(bytes)).unwrap();
+        let mut h = header();
+        h.media[0].name = "absent.wav".into();
+        assert!(extract_backup_media(&mut zip, &h, root.path(), &ids).is_err());
+    }
+    #[test]
+    fn extraction_moves_media_between_machines_without_source_paths() {
+        let root = tempfile::tempdir().unwrap();
+        let mut zip = ZipArchive::new(Cursor::new(archive(b"backup-audio"))).unwrap();
+        extract_backup_media(
+            &mut zip,
+            &header(),
+            root.path(),
+            &HashMap::from([("a".into(), "fresh".into())]),
+        )
+        .unwrap();
+        assert_eq!(
+            fs::read(root.path().join("fresh.asset")).unwrap(),
+            b"backup-audio"
+        );
+    }
+    #[test]
+    fn file_names_and_ids_cannot_traverse_windows_or_macos_folders() {
+        assert!(valid_asset_id("../escape").is_err());
+        assert!(valid_asset_id(r"C:\escape").is_err());
+        assert!(valid_asset_id("").is_err());
+        assert!(!sanitize_file_name(r"C:\Music\song.wav").contains('\\'));
+        assert!(!sanitize_file_name("../../song.wav").contains('/'));
     }
 }

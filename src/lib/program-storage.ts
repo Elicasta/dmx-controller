@@ -99,3 +99,15 @@ export function replaceProgramState(value: ProgramState): Promise<ProgramState> 
   pending = operation.catch(() => undefined);
   return operation;
 }
+
+/** Keep outgoing programming recoverable and retain existing reusable Songs and Shows. */
+export function prepareRestoredState(current:ProgramState,imported:ProgramState):ProgramState{
+  const next=structuredClone(validateProgramState(imported));
+  const ids=new Map(next.programs.map(p=>[p.id,crypto.randomUUID()]));
+  function remap(value:unknown){if(!value||typeof value!=='object')return;for(const [key,item]of Object.entries(value)){if((key==='libraryId'||key==='versionOf')&&typeof item==='string'&&ids.has(item))(value as Record<string,unknown>)[key]=ids.get(item);else remap(item);}}
+  remap(next);next.programs=next.programs.map(p=>({...p,id:ids.get(p.id)!}));
+  next.programs=[...structuredClone(current.programs),...next.programs];
+  if(next.workspace&&Array.isArray(next.workspace.projects))next.workspace.projects=[...(Array.isArray(current.workspace?.projects)?structuredClone(current.workspace.projects):[]),...next.workspace.projects.map(p=>({...p,id:crypto.randomUUID()}))];
+  next.recovery=[...(current.working?[{id:crypto.randomUUID(),savedAt:new Date().toISOString(),show:structuredClone(current.working),workspace:structuredClone(current.workspace)}]:[]),...next.recovery,...structuredClone(current.recovery)].slice(0,10);
+  return validateProgramState(next);
+}

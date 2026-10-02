@@ -15,7 +15,7 @@ tauri-build = { version = "=2.6.3", features = [] }
 [dependencies]
 tauri = { version = "=2.11.5", features = ["protocol-asset"] }
 tauri-plugin-updater = "=2.11.0"
-tauri-plugin-dialog = "=2.8.1"
+tauri-plugin-dialog = "=2.7.1"
 uuid = { version = "1", features = ["v4"] }
 zip = { version = "=2.4.2", default-features = false, features = ["deflate"] }
 serde = { version = "1", features = ["derive"] }
@@ -24,3 +24,5 @@ tungstenite = "0.27"
 # Vendored libusb keeps the app independent from a Homebrew runtime dependency.
 rusb = { version = "0.9", features = ["vendored"] }
 midir = "0.10"
+
+tempfile = "3"

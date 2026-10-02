@@ -42,7 +42,7 @@ export type PortableBackupImport = {
   path: string;
   manifestJson: string;
   importedMedia: number;
-  restoreToken: string;
+  restoreId:string;
 };
 
 const EMPTY_LIBRARY: MediaLibrarySnapshot = { version: 1, folders: [], assets: [] };
@@ -130,8 +130,9 @@ export async function persistManagedMedia(
   kind: MediaKind = mediaKindForName(name, blob.type),
 ): Promise<MediaAsset | null> {
   if (!nativeMediaLibraryAvailable()) return null;
-  await invoke('media_begin_managed_write', { assetId });
+  const jobId=await invoke<string>('media_begin_managed_write', { assetId });
   const reader = blob.stream().getReader();
+  let written=0;
   try {
     while (true) {
       const part = await reader.read();
@@ -140,19 +141,17 @@ export async function persistManagedMedia(
       for (let offset = 0; offset < part.value.byteLength; offset += CHUNK_BYTES) {
         const chunk = part.value.subarray(offset, Math.min(part.value.byteLength, offset + CHUNK_BYTES));
         await invoke('media_append_managed_write', chunk, {
-          headers: { 'x-lumarig-media-id': assetId },
+          headers: { 'x-lumarig-media-job': jobId, 'x-lumarig-media-offset':String(written) },
         });
+        written+=chunk.byteLength;
       }
     }
-  } finally {
-    reader.releaseLock();
-  }
-  return invoke<MediaAsset>('media_finish_managed_write', {
-    assetId,
-    name,
-    folderId,
-    kind,
-  });
+    return await invoke<MediaAsset>('media_finish_managed_write', {assetId,jobId,expectedSize:blob.size,name,folderId,kind});
+  } catch(error) {
+    await invoke('media_cancel_managed_write',{jobId}).catch(()=>{});
+    throw error;
+  } finally { reader.releaseLock(); }
+
 }
 
 export function collectMediaIds(value: unknown): string[] {
@@ -210,29 +209,19 @@ export async function importPortableBackup() {
   try {
     manifest = JSON.parse(result.manifestJson);
   } catch {
-    await cancelPortableBackupRestore(result.restoreToken).catch(() => {});
+    await discardPortableBackup(result.restoreId).catch(()=>{});
     throw new Error('Portable backup manifest could not be parsed after import.');
   }
   const candidate = manifest as Partial<PortableBackupManifest>;
-  if (candidate.format !== 'lumarig-portable-backup' || candidate.version !== 1 || !('programState' in candidate)) {
-    await cancelPortableBackupRestore(result.restoreToken).catch(() => {});
+  if (!candidate || candidate.format !== 'lumarig-portable-backup' || candidate.version !== 1 || !('programState' in candidate)) {
+    await discardPortableBackup(result.restoreId).catch(()=>{});
     throw new Error('This file is not a supported LumaRig portable backup.');
   }
   return { ...result, manifest: candidate as PortableBackupManifest };
 }
 
-export async function commitPortableBackupRestore(restoreToken: string) {
-  requireNativeMediaLibrary();
-  return invoke<number>('media_commit_portable_backup_restore', { restoreToken });
-}
-
-export async function cancelPortableBackupRestore(restoreToken: string) {
-  if (!nativeMediaLibraryAvailable()) return;
-  await invoke('media_cancel_portable_backup_restore', { restoreToken });
-}
-
 export function countMediaIds(value: unknown): Record<string, number> {
-  const counts: Record<string, number> = {};
+  const counts: Record<string, number> = Object.create(null);
   const seen = new Set<object>();
   const visit = (item: unknown) => {
     if (!item || typeof item !== 'object') return;
@@ -273,3 +262,6 @@ export function mediaNameForId(value: unknown, mediaId: string): string | undefi
   visit(value);
   return result;
 }
+
+export const commitPortableBackup=(restoreId:string)=>invoke('media_commit_portable_backup',{restoreId});
+export const discardPortableBackup=(restoreId:string)=>invoke('media_discard_portable_backup',{restoreId});
