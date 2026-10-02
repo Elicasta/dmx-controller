@@ -3191,3 +3191,27 @@ body,#root { min-width:0; width:100%; overflow:hidden; }
 .visualizer-screen-route input[type="range"]{width:100%;min-width:0;padding:0;accent-color:#70e5ac}
 .visualizer-screen-route>button{min-height:30px}
 @media(max-width:720px){.screen-framing-pair{grid-template-columns:1fr}}
+
+/* Cue rundown contextual actions and long-label hardening */
+.song-cue-library .cue-list-console article,
+.song-cue-library article{min-width:0}
+.song-cue-library .cue-line>span{min-width:0}
+.song-cue-library .cue-line strong,
+.song-cue-library .cue-line small{overflow:hidden;text-overflow:ellipsis}
+.show-rundown-section{overflow:visible}
+.rundown-items{overflow:visible}
+.show-rundown-section .song-cue-group{overflow:visible}
+.show-rundown-section .song-cue-group>header{grid-template-columns:minmax(0,1fr) 30px}
+.cue-context-menu{position:relative;align-self:center;justify-self:end;z-index:8}
+.cue-context-menu>summary{display:grid;place-items:center;width:28px;height:28px;list-style:none;border:1px solid #314652;border-radius:4px;background:#0d171d;color:#9db0ba;font-size:10px;cursor:pointer;user-select:none}
+.cue-context-menu>summary::-webkit-details-marker{display:none}
+.cue-context-menu[open]>summary{border-color:#55e98d;color:#a7f1c4;background:#13251d}
+.cue-context-menu>div{position:absolute;right:0;top:32px;z-index:40;display:grid;min-width:145px;padding:4px;border:1px solid #3a4b55;border-radius:6px;background:#0b1116;box-shadow:0 12px 28px #000b}
+.cue-context-menu>div button{width:100%!important;height:auto!important;min-height:30px!important;padding:6px 8px!important;border:0!important;background:transparent!important;color:#c5d2d9!important;text-align:left;font-size:9px!important}
+.cue-context-menu>div button:hover,.cue-context-menu>div button:focus-visible{background:#16232a!important;color:#fff!important}
+.cue-context-menu>div button:disabled{opacity:.35}
+.cue-context-menu>div .danger-menu-item{color:#ff9aa5!important}
+.rundown-item-menu{margin-top:0!important}
+@media(max-width:700px){
+  .cue-context-menu>div{position:fixed;right:12px;left:12px;top:auto;bottom:46px;min-width:0}
+}
