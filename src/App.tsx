@@ -2467,6 +2467,15 @@ export default function App() {
       return {...next,timeline:appendTimelineCapture(next.timeline??EMPTY_TIMELINE,clip)};
     });
     if(clip){activeTimelineClipRef.current=clip.id;setActiveTimelineClipId(clip.id);stopEffect(false);}
+    if (cloudAccount) {
+      const song = songsForShow(showFileRef.current).find((item) => item.id === activeSongId);
+      void saveCloudRecordingLabel(remoteRelayConfig, {
+        takeId: recording.id,
+        songId: song ? programId(showFileRef.current, song) : null,
+        showId: showFileRef.current.name,
+        label: recording.name,
+      }).then(() => refreshCloudAccountLibrary()).catch((error) => setCloudError(error instanceof Error ? error.message : String(error)));
+    }
 
     setMessage(`${recording.name}${origin?' recorded directly into Timeline':''} saved with ${recording.frames.length.toLocaleString()} lighting changes.`);
   }
