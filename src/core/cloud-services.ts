@@ -1,5 +1,5 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
-import { getLumaSupabaseClient } from './supabase-client';
+import { desktopDeviceId, desktopDeviceInfo, getLumaSupabaseClient } from './supabase-client';
 import { normalizeRoomCode, type RemoteRelayConfig } from './remote-relay';
 
 export type CloudShowFolder = {
@@ -40,7 +40,10 @@ export type ControllerPairingSession = {
 export type PairedController = {
   id: string;
   deviceUserId: string;
+  clientDeviceId: string | null;
   deviceName: string;
+  platform: string;
+  appVersion: string;
   relayRoom: string;
   createdAt: string;
   lastSeenAt: string;
@@ -144,7 +147,7 @@ export async function saveCloudShow(config: RemoteRelayConfig, input: {
     p_folder_id: input.folderId,
     p_expected_revision: input.expectedRevision,
     p_last_editor: 'lumarig',
-    p_device_id: input.deviceId || 'mac'
+    p_device_id: input.deviceId || desktopDeviceId()
   }).single();
   dbError(result.error, 'Cloud show could not be saved.');
   const data = result.data as { show_id?: unknown; revision?: unknown; updated_at?: unknown; conflict?: unknown } | null;
@@ -270,7 +273,7 @@ export async function createControllerPairing(config: RemoteRelayConfig, remoteA
 export async function listPairedControllers(config: RemoteRelayConfig): Promise<PairedController[]> {
   const { client, userId } = await operatorClient(config);
   const result = await client.from('lumarig_controller_devices')
-    .select('id,device_user_id,device_name,relay_room,created_at,last_seen_at')
+    .select('id,device_user_id,client_device_id,device_name,device_platform,device_app_version,relay_room,created_at,last_seen_at')
     .eq('operator_id', userId)
     .is('revoked_at', null)
     .order('created_at', { ascending: false });
@@ -278,7 +281,10 @@ export async function listPairedControllers(config: RemoteRelayConfig): Promise<
   return (result.data ?? []).map((row) => ({
     id: String(row.id),
     deviceUserId: String(row.device_user_id),
+    clientDeviceId: row.client_device_id ? String(row.client_device_id) : null,
     deviceName: String(row.device_name),
+    platform: String(row.device_platform || 'unknown'),
+    appVersion: String(row.device_app_version || ''),
     relayRoom: String(row.relay_room),
     createdAt: String(row.created_at),
     lastSeenAt: String(row.last_seen_at)
@@ -309,6 +315,33 @@ export async function currentCloudAccount(config: RemoteRelayConfig): Promise<Cl
   const session = (await client.auth.getSession()).data.session;
   if (!session || session.user.is_anonymous) return null;
   return { userId: session.user.id, email: session.user.email || config.email || '' };
+}
+
+export async function registerCloudDesktop(config: RemoteRelayConfig, appVersion = '') {
+  const { client, userId } = await operatorClient(config);
+  const device = desktopDeviceInfo(appVersion);
+  const result = await client.from('lumarig_devices').upsert({
+    user_id: userId,
+    device_id: device.deviceId,
+    display_name: device.displayName,
+    device_kind: device.kind,
+    platform: device.platform,
+    app_name: device.appName,
+    app_version: device.appVersion,
+    last_seen_at: new Date().toISOString(),
+    revoked_at: null
+  }, { onConflict: 'user_id,device_id' });
+  dbError(result.error, 'This computer could not be registered with LumaRig Cloud.');
+  return device;
+}
+
+export async function touchCloudDesktop(config: RemoteRelayConfig) {
+  const { client, userId } = await operatorClient(config);
+  const result = await client.from('lumarig_devices')
+    .update({ last_seen_at: new Date().toISOString() })
+    .eq('user_id', userId)
+    .eq('device_id', desktopDeviceId());
+  dbError(result.error, 'This computer could not update its Cloud activity timestamp.');
 }
 
 export async function signInCloudAccount(config: RemoteRelayConfig, email: string, password: string): Promise<CloudAccount> {
@@ -349,7 +382,7 @@ export async function saveCloudSong(config: RemoteRelayConfig, input: {
   const result = await client.rpc('lumarig_save_song', {
     p_song_id: input.songId, p_title: input.title, p_artist: input.artist || '', p_bpm: input.bpm,
     p_musical_key: input.musicalKey || '', p_arrangement: input.arrangement || [], p_notes: input.notes || '',
-    p_program: input.program, p_expected_revision: input.expectedRevision ?? 0, p_device_id: input.deviceId || 'lumarig-desktop'
+    p_program: input.program, p_expected_revision: input.expectedRevision ?? 0, p_device_id: input.deviceId || desktopDeviceId()
   }).single();
   dbError(result.error, 'Cloud Song could not be saved.');
   const data = result.data as { song_id?: unknown; revision?: unknown; updated_at?: unknown; conflict?: unknown } | null;
@@ -371,7 +404,8 @@ export async function saveCloudRecordingLabel(config: RemoteRelayConfig, input: 
   const { client, userId } = await operatorClient(config);
   const result = await client.from('lumarig_recording_labels').upsert({
     user_id: userId, take_id: input.takeId, song_id: input.songId || null, show_id: input.showId || null,
-    label: input.label.trim() || 'Recorded Take', notes: input.notes || ''
+    label: input.label.trim() || 'Recorded Take', notes: input.notes || '',
+    updated_by_device: desktopDeviceId()
   }, { onConflict: 'user_id,take_id' });
   dbError(result.error, 'Recorded-take label could not be saved.');
 }
@@ -382,6 +416,8 @@ export async function watchCloudLibrary(config: RemoteRelayConfig, onChange: () 
     .on('postgres_changes', { event: '*', schema: 'public', table: 'lumarig_song_documents', filter: 'user_id=eq.' + userId }, onChange)
     .on('postgres_changes', { event: '*', schema: 'public', table: 'lumarig_show_documents', filter: 'user_id=eq.' + userId }, onChange)
     .on('postgres_changes', { event: '*', schema: 'public', table: 'lumarig_recording_labels', filter: 'user_id=eq.' + userId }, onChange)
+    .on('postgres_changes', { event: '*', schema: 'public', table: 'lumarig_devices', filter: 'user_id=eq.' + userId }, onChange)
+    .on('postgres_changes', { event: '*', schema: 'public', table: 'lumarig_edit_events', filter: 'user_id=eq.' + userId }, onChange)
     .subscribe();
   return () => { void client.removeChannel(channel); };
 }
