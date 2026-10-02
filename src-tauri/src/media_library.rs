@@ -598,7 +598,7 @@ pub fn media_remove_asset(
 }
 
 #[tauri::command]
-pub fn media_relink_asset(
+pub async fn media_relink_asset(
     app: AppHandle,
     state: State<'_, MediaLibraryState>,
     asset_id: String,
@@ -623,41 +623,47 @@ pub fn media_relink_asset(
     if !source.is_file() {
         return Err("Selected media file is unavailable.".to_string());
     }
+    let lock = state.lock.clone();
+    let task_app = app.clone();
 
-    let _guard = state.lock.lock().map_err(|_| "Media library lock failed.".to_string())?;
-    let mut registry = read_registry(&app)?;
-    let index = registry
-        .assets
-        .iter()
-        .position(|asset| asset.id == asset_id)
-        .ok_or("Media asset no longer exists.")?;
-    let original = registry.assets[index].clone();
-    let name = file_name(&source);
-    let destination = if original.source_mode == "copy" {
-        let target = managed_path(&app, &original.id, &name)?;
-        fs::create_dir_all(managed_files_dir(&app)?)
-            .map_err(|error| io_error("Managed media folder could not be created", error))?;
-        fs::copy(&source, &target).map_err(|error| io_error("Relinked media could not be copied into LumaRig", error))?;
-        if original.path != target.to_string_lossy() {
-            let old_path = PathBuf::from(&original.path);
-            if old_path.is_file() {
-                let _ = fs::remove_file(old_path);
+    run_file_task("Media relink worker failed", move || {
+        let _guard = lock.lock().map_err(|_| "Media library lock failed.".to_string())?;
+        let mut registry = read_registry(&task_app)?;
+        let index = registry
+            .assets
+            .iter()
+            .position(|asset| asset.id == asset_id)
+            .ok_or("Media asset no longer exists.")?;
+        let original = registry.assets[index].clone();
+        let name = file_name(&source);
+        let destination = if original.source_mode == "copy" {
+            let target = managed_path(&task_app, &original.id, &name)?;
+            fs::create_dir_all(managed_files_dir(&task_app)?)
+                .map_err(|error| io_error("Managed media folder could not be created", error))?;
+            fs::copy(&source, &target)
+                .map_err(|error| io_error("Relinked media could not be copied into LumaRig", error))?;
+            if original.path != target.to_string_lossy() {
+                let old_path = PathBuf::from(&original.path);
+                if old_path.is_file() {
+                    let _ = fs::remove_file(old_path);
+                }
             }
-        }
-        target
-    } else {
-        source.canonicalize().unwrap_or(source)
-    };
-    allow_asset(&app, &destination)?;
-    let metadata = fs::metadata(&destination).map_err(|error| io_error("Relinked media metadata is unavailable", error))?;
-    registry.assets[index].name = name;
-    registry.assets[index].path = destination.to_string_lossy().to_string();
-    registry.assets[index].kind = detect_kind(&destination);
-    registry.assets[index].size = metadata.len();
-    registry.assets[index].modified_at = file_modified_ms(&destination);
-    let result = asset_snapshot(&registry.assets[index]);
-    write_registry(&app, &registry)?;
-    Ok(Some(result))
+            target
+        } else {
+            source.canonicalize().unwrap_or(source)
+        };
+        allow_asset(&task_app, &destination)?;
+        let metadata = fs::metadata(&destination)
+            .map_err(|error| io_error("Relinked media metadata is unavailable", error))?;
+        registry.assets[index].name = name;
+        registry.assets[index].path = destination.to_string_lossy().to_string();
+        registry.assets[index].kind = detect_kind(&destination);
+        registry.assets[index].size = metadata.len();
+        registry.assets[index].modified_at = file_modified_ms(&destination);
+        let result = asset_snapshot(&registry.assets[index]);
+        write_registry(&task_app, &registry)?;
+        Ok(Some(result))
+    }).await
 }
 
 #[tauri::command]
