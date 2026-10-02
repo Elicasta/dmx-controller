@@ -103,7 +103,7 @@ function start() {
   lastTransportSignature = "";
   poll();
   pollTask = new Task(poll, this);
-  pollTask.interval = 50;
+  pollTask.interval = 25;
   pollTask.repeat();
   outlet(1, "status", "LiveAPI polling started");
 }
