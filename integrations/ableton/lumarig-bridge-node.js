@@ -5,24 +5,56 @@ const BRIDGE_URL = process.env.LUMARIG_BRIDGE_URL || "ws://127.0.0.1:47777/studi
 let socket = null;
 let reconnectTimer = null;
 let sequence = 0;
+let manualDisconnect = false;
+let latestSnapshotCommand = null;
+let latestTransportCommand = null;
 
 function status(kind, message) {
   maxApi.outlet("status", kind, message);
 }
 
 function scheduleReconnect() {
-  if (reconnectTimer) return;
+  if (manualDisconnect || reconnectTimer) return;
   reconnectTimer = setTimeout(() => {
     reconnectTimer = null;
     connect();
   }, 1000);
 }
 
+function sendCommand(command) {
+  if (!socket || socket.readyState !== WebSocket.OPEN) {
+    connect();
+    return false;
+  }
+
+  try {
+    socket.send(JSON.stringify({
+      id: `ableton-${Date.now()}-${++sequence}`,
+      command
+    }));
+    return true;
+  } catch (error) {
+    status("error", error.message || String(error));
+    scheduleReconnect();
+    return false;
+  }
+}
+
+function flushLatestState() {
+  if (latestSnapshotCommand) sendCommand(latestSnapshotCommand);
+  if (latestTransportCommand) sendCommand(latestTransportCommand);
+}
+
 function connect() {
+  manualDisconnect = false;
   if (socket && (socket.readyState === WebSocket.OPEN || socket.readyState === WebSocket.CONNECTING)) return;
 
   socket = new WebSocket(BRIDGE_URL);
-  socket.on("open", () => status("connected", BRIDGE_URL));
+  socket.on("open", () => {
+    status("connected", BRIDGE_URL);
+    sendCommand({ type: "hello", protocol: 1, clientName: "LumaRig Ableton Bridge" });
+    flushLatestState();
+  });
   socket.on("message", (data) => {
     try {
       const response = JSON.parse(data.toString());
@@ -32,8 +64,11 @@ function connect() {
     }
   });
   socket.on("close", () => {
-    status("waiting", "LumaRig bridge disconnected");
-    scheduleReconnect();
+    socket = null;
+    if (!manualDisconnect) {
+      status("waiting", "LumaRig bridge disconnected");
+      scheduleReconnect();
+    }
   });
   socket.on("error", (error) => {
     status("error", error.message || String(error));
@@ -44,22 +79,10 @@ function decodePayload(encoded) {
   return JSON.parse(decodeURIComponent(String(encoded)));
 }
 
-function sendCommand(command) {
-  if (!socket || socket.readyState !== WebSocket.OPEN) {
-    connect();
-    return false;
-  }
-
-  socket.send(JSON.stringify({
-    id: `ableton-${Date.now()}-${++sequence}`,
-    command
-  }));
-  return true;
-}
-
 maxApi.addHandler("lumarig_snapshot", (encoded) => {
   try {
-    sendCommand({ type: "ableton.snapshot", snapshot: decodePayload(encoded) });
+    latestSnapshotCommand = { type: "ableton.snapshot", snapshot: decodePayload(encoded) };
+    sendCommand(latestSnapshotCommand);
   } catch (error) {
     status("error", `Invalid locator snapshot: ${error.message || error}`);
   }
@@ -68,7 +91,8 @@ maxApi.addHandler("lumarig_snapshot", (encoded) => {
 maxApi.addHandler("lumarig_transport", (encoded) => {
   try {
     const transport = decodePayload(encoded);
-    sendCommand({ type: "ableton.transport", ...transport });
+    latestTransportCommand = { type: "ableton.transport", ...transport };
+    sendCommand(latestTransportCommand);
   } catch (error) {
     status("error", `Invalid transport update: ${error.message || error}`);
   }
@@ -76,10 +100,12 @@ maxApi.addHandler("lumarig_transport", (encoded) => {
 
 maxApi.addHandler("connect", connect);
 maxApi.addHandler("disconnect", () => {
+  manualDisconnect = true;
   if (reconnectTimer) clearTimeout(reconnectTimer);
   reconnectTimer = null;
   if (socket) socket.close();
   socket = null;
+  status("off", "LumaRig bridge disconnected by operator");
 });
 maxApi.addHandler("bang", connect);
 
