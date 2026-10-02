@@ -1079,7 +1079,7 @@ test('Recording chooses library media and pauses recording time without losing t
   await expect(page.locator('.recorded-takes-console article')).toHaveCount(1);
 });
 
-test('Timeline video display assignment survives reload and follows media seeks on the stage',async({page})=>{
+test('Timeline video display framing survives reload and follows media seeks on the stage',async({page})=>{
   await seed(page);await page.goto('/');
   await page.getByRole('button',{name:'BUILD',exact:true}).click();await page.getByRole('button',{name:'Stage',exact:true}).click();
   await page.locator('.stage-preset-grid').getByRole('button',{name:/Apostolic Day 2026/}).click();
@@ -1087,6 +1087,20 @@ test('Timeline video display assignment survives reload and follows media seeks 
   const screen=await page.evaluate(()=>JSON.parse(localStorage.getItem('dmx-controller.stage-elements.v1')??'{}').elements.find((e:any)=>e.type==='led-screen'));
   const bytes=Buffer.from(readFileSync(new URL('./fixtures/screen-video.mp4.base64',import.meta.url),'utf8'),'base64');
   await page.getByLabel('Import screen video').first().setInputFiles({name:'Screen transport test.mp4',mimeType:'video/mp4',buffer:bytes});
+
+  await page.getByLabel('Build screen video fit').selectOption('cover');
+  const setRange=async(label:string,value:number)=>page.getByLabel(label).evaluate((element,next)=>{
+    const input=element as HTMLInputElement;input.value=String(next);input.dispatchEvent(new Event('input',{bubbles:true}));
+  },value);
+  await setRange('Build screen video size',150);
+  await setRange('Build screen video horizontal position',20);
+  await setRange('Build screen video vertical position',-25);
+  await expect.poll(async()=>page.evaluate((id)=>{
+    const doc=JSON.parse(localStorage.getItem('dmx-controller.stage-elements.v1')??'{"elements":[]}');
+    const source=doc.elements.find((e:any)=>e.id===id)?.mediaSource;
+    return source ? {fit:source.fit,scale:source.scale,offsetX:source.offsetX,offsetY:source.offsetY} : null;
+  },screen.id)).toEqual({fit:'cover',scale:1.5,offsetX:.2,offsetY:-.25});
+
   await page.getByRole('button',{name:'SHOW',exact:true}).click();await page.getByRole('button',{name:'Timeline',exact:true}).click();
   await expect(page.getByLabel('Display from Timeline')).toHaveValue(screen.id);
   await page.reload();await page.getByRole('button',{name:'SHOW',exact:true}).click();await page.getByRole('button',{name:'Timeline',exact:true}).click();await expect(page.getByLabel('Display from Timeline')).toHaveValue(screen.id);
@@ -1095,6 +1109,8 @@ test('Timeline video display assignment survives reload and follows media seeks 
   const video=page.getByLabel('Timeline video screen feed').first();
   await expect.poll(()=>video.evaluate((v:HTMLVideoElement)=>v.currentTime)).toBeCloseTo(.5,1);
   expect(await video.evaluate((v:HTMLVideoElement)=>v.videoWidth)).toBeGreaterThan(0);
+  expect(await video.evaluate((v:HTMLVideoElement)=>v.style.objectFit)).toBe('cover');
+  expect(await video.evaluate((v:HTMLVideoElement)=>v.style.transform)).toContain('scale(1.5)');
 });
 
 test('independent video clips import, trim, copy and undo on the Timeline',async({page},info)=>{
@@ -1107,6 +1123,23 @@ test('independent video clips import, trim, copy and undo on the Timeline',async
   await expect(page.getByRole('button',{name:'Export trimmed MP4',exact:true})).toBeVisible();await expect(page.getByRole('button',{name:'Pop Out Video',exact:true})).toBeVisible();
   await clip.press('Control+c');await clip.press('Control+v');await expect(page.locator('.asset-clip')).toHaveCount(2);await page.keyboard.press('Control+z');await expect(page.locator('.asset-clip')).toHaveCount(1);
   await page.screenshot({path:info.outputPath('timeline-independent-video.png')});
+});
+
+test('Timeline track height resizes vertically and persists',async({page})=>{
+  await seed(page);await page.goto('/');await page.getByRole('button',{name:'SHOW',exact:true}).click();await page.getByRole('button',{name:'Timeline',exact:true}).click();
+  const slider=page.getByLabel('Timeline track height');
+  await expect(slider).toHaveValue('80');
+  await slider.evaluate((element)=>{
+    const input=element as HTMLInputElement;input.value='120';input.dispatchEvent(new Event('input',{bubbles:true}));
+  });
+  await expect(page.locator('.timeline-lane').first()).toHaveCSS('height','120px');
+  await page.getByRole('button',{name:'Compact',exact:true}).click();
+  await expect(slider).toHaveValue('48');
+  await expect(page.locator('.timeline-lane').first()).toHaveCSS('height','48px');
+  await expect(page.locator('.show-bar-timeline')).toHaveAttribute('data-track-compact','true');
+  await page.reload();await page.getByRole('button',{name:'SHOW',exact:true}).click();await page.getByRole('button',{name:'Timeline',exact:true}).click();
+  await expect(page.getByLabel('Timeline track height')).toHaveValue('48');
+  await expect(page.locator('.timeline-lane').first()).toHaveCSS('height','48px');
 });
 
 test('recorded takes become independent Song versions with editable lighting frames',async({page})=>{
