@@ -167,6 +167,8 @@ import {
   listPairedControllers,
   revokePairedController,
   saveCloudShow,
+  uploadCloudShowMedia,
+  downloadCloudShowMedia,
   type CloudShowDocument,
   type CloudShowFolder,
   type ControllerPairingSession,
@@ -2000,6 +2002,16 @@ export default function App() {
   async function syncShowSnapshotToCloud(snapshot: ShowProjectSnapshot) {
     const known = cloudShows.find((item) => item.showId === snapshot.id);
     const folderId = cloudFolderId || null;
+    const media = songsForShow(snapshot.show)
+      .filter((song): song is SongRecord & { mediaId: string } => Boolean(song.mediaId))
+      .filter((song, index, list) => list.findIndex((candidate) => candidate.mediaId === song.mediaId) === index);
+    for (let index = 0; index < media.length; index += 1) {
+      const song = media[index];
+      const blob = await readSongMedia(song.mediaId);
+      if (!blob) throw new Error(`Media for "${song.name}" is missing on this Mac. Reattach it before cloud sync.`);
+      setMessage(`Cloud syncing media ${index + 1}/${media.length} · ${song.mediaName || song.name}`);
+      await uploadCloudShowMedia(remoteRelayConfig, snapshot.id, song.mediaId, blob);
+    }
     const result = await saveCloudShow(remoteRelayConfig, {
       showId: snapshot.id,
       name: snapshot.name,
@@ -2041,6 +2053,18 @@ export default function App() {
     };
     const projects = [snapshot, ...showLibrary.filter((item) => item.id !== snapshot.id)].slice(0, 40);
     try {
+      const media = songsForShow(snapshot.show)
+        .filter((song): song is SongRecord & { mediaId: string } => Boolean(song.mediaId))
+        .filter((song, index, list) => list.findIndex((candidate) => candidate.mediaId === song.mediaId) === index);
+      for (let index = 0; index < media.length; index += 1) {
+        const song = media[index];
+        setMessage(`Downloading cloud media ${index + 1}/${media.length} · ${song.mediaName || song.name}`);
+        const blob = await downloadCloudShowMedia(remoteRelayConfig, snapshot.id, song.mediaId);
+        const file = blob instanceof File
+          ? blob
+          : new File([blob], song.mediaName || `${song.mediaId}.media`, { type: blob.type || 'application/octet-stream' });
+        await storeSongMedia(song.mediaId, file);
+      }
       await saveAppProgramState(showFileRef.current, { workspace: { ...currentWorkspaceCheckpoint(), projects } });
       setShowLibrary(projects);
       try { writeCompatibilityStorage(SHOW_LIBRARY_STORAGE_KEY, JSON.stringify(projects)); } catch { /* IndexedDB is authoritative. */ }
