@@ -17,7 +17,7 @@ import { insertSongProgram, programId, type SongProgram } from './lib/song-libra
 import SongBank from './components/SongBank';
 import MediaLibraryPanel from './components/MediaLibraryPanel';
 import { buildSong, songsForShow, renameSong, storeSongMedia, readSongMedia, type SongRecord } from './lib/song-bank';
-import { collectMediaIds, countMediaIds, exportPortableBackup, importPortableBackup, mediaNameForId, persistManagedMedia, readMediaAsset, type MediaAsset } from './lib/media-library';
+import { cancelPortableBackupRestore, collectMediaIds, commitPortableBackupRestore, countMediaIds, exportPortableBackup, importPortableBackup, mediaNameForId, persistManagedMedia, readMediaAsset, type MediaAsset } from './lib/media-library';
 import ResizableWorkspace from './components/ResizableWorkspace';
 import DraggablePanelDeck from './components/DraggablePanelDeck';
 import StageMonitor, { openStageWindow, useStagePublisher } from './components/StageMonitor';
@@ -4099,12 +4099,25 @@ export default function App() {
     setMessage('Opening portable backup…');
     const imported = await importPortableBackup();
     if (!imported) return;
-    const state = validateProgramState(imported.manifest.programState);
-    if (state.workspace && !isAppWorkspaceCheckpoint(state.workspace)) throw Error('Backup workspace is invalid. Existing work was not replaced.');
-    if (state.recovery.some((item) => item.workspace && !isAppWorkspaceCheckpoint(item.workspace))) throw Error('Backup recovery data is invalid. Existing work was not replaced.');
-    await replaceProgramState(state);
-    setMessage(`Backup restored · ${imported.importedMedia} media file${imported.importedMedia === 1 ? '' : 's'}. Reloading LumaRig…`);
-    window.location.reload();
+    try {
+      const state = validateProgramState(imported.manifest.programState);
+      if (state.workspace && !isAppWorkspaceCheckpoint(state.workspace)) throw Error('Backup workspace is invalid. Existing work was not replaced.');
+      if (state.recovery.some((item) => item.workspace && !isAppWorkspaceCheckpoint(item.workspace))) throw Error('Backup recovery data is invalid. Existing work was not replaced.');
+
+      // Validate first, commit staged media second, replace the transactional
+      // program checkpoint last. An invalid backup never touches live assets.
+      const committedMedia = await commitPortableBackupRestore(imported.restoreToken);
+      try {
+        await replaceProgramState(state);
+      } catch (error) {
+        throw Error(`Backup media was restored, but the program checkpoint could not be replaced: ${String(error)}`);
+      }
+      setMessage(`Backup restored · ${committedMedia} new media file${committedMedia === 1 ? '' : 's'} committed. Reloading LumaRig…`);
+      window.location.reload();
+    } catch (error) {
+      await cancelPortableBackupRestore(imported.restoreToken).catch(() => {});
+      throw error;
+    }
   }
   async function selectBankSong(song: SongRecord, mode?: 'creator' | 'timeline') {
     window.dispatchEvent(new Event('lumarig-stop-timeline')); stopTimeline();
