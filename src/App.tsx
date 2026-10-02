@@ -3783,7 +3783,20 @@ export default function App() {
   }
 
   function routeTimelineVideo(screenId:string) {
-    setStageElements(current=>current.map(element=>element.id===screenId?{...element,mediaSource:{kind:'timeline',sourceName:'Timeline video',fit:'contain'}}:element.mediaSource?.kind==='timeline'?{...element,mediaSource:{kind:'none'}}:element));
+    setStageElements(current=>current.map(element=>{
+      if(element.id===screenId){
+        const previous=element.mediaSource?.kind!=='none' ? element.mediaSource : undefined;
+        return {...element,mediaSource:{
+          kind:'timeline',
+          sourceName:'Timeline video',
+          fit:previous?.fit ?? 'contain',
+          scale:previous?.scale ?? 1,
+          offsetX:previous?.offsetX ?? 0,
+          offsetY:previous?.offsetY ?? 0
+        }};
+      }
+      return element.mediaSource?.kind==='timeline'?{...element,mediaSource:{kind:'none'}}:element;
+    }));
     setMessage(screenId?'Timeline video routed to the selected display.':'Timeline display routing cleared.');
   }
   async function importScreenVideo(screenId:string,file:File) {
@@ -3818,9 +3831,19 @@ export default function App() {
   function routeVideoInputToAllScreens(deviceId: string) {
     const input = stageVideoInputs.find((item) => item.deviceId === deviceId);
     if (!input) return;
-    setStageElements((current) => current.map((element) => element.type === 'led-screen'
-      ? { ...element, mediaSource: { kind: 'ndi', deviceId: input.deviceId, sourceName: input.label || 'ProPresenter', fit: element.mediaSource?.kind === 'ndi' ? element.mediaSource.fit ?? 'contain' : 'contain' } }
-      : element));
+    setStageElements((current) => current.map((element) => {
+      if(element.type!=='led-screen')return element;
+      const previous=element.mediaSource?.kind!=='none' ? element.mediaSource : undefined;
+      return { ...element, mediaSource: {
+        kind: 'ndi',
+        deviceId: input.deviceId,
+        sourceName: input.label || 'ProPresenter',
+        fit: previous?.fit ?? 'contain',
+        scale: previous?.scale ?? 1,
+        offsetX: previous?.offsetX ?? 0,
+        offsetY: previous?.offsetY ?? 0
+      } };
+    }));
     setMessage(`${input.label || 'Video input'} routed to every visualizer screen.`);
   }
 
@@ -3838,6 +3861,13 @@ export default function App() {
     setStageElements((current) => current.map((element) => element.id === id
       ? migrateStageElement(clampStageElement({ ...element, ...updates }), stageSettings.dimensions)
       : element));
+  }
+
+  function updateScreenFraming(id:string, changes:Partial<{fit:'contain'|'cover';scale:number;offsetX:number;offsetY:number}>) {
+    setStageElements(current=>current.map(element=>{
+      if(element.id!==id || element.type!=='led-screen' || !element.mediaSource || element.mediaSource.kind==='none')return element;
+      return {...element,mediaSource:{...element.mediaSource,...changes}};
+    }));
   }
 
   function updateStageElementPosition(id: string, axis: 'x' | 'y' | 'z', value: number) {
@@ -5540,9 +5570,31 @@ export default function App() {
               </div>
               <label><span>Color</span><input className="inspector-color" type="color" value={selectedStageElement.color} onChange={(event) => updateStageElement(selectedStageElement.id, { color: event.target.value })}/></label>
               {selectedStageElement.type === 'led-screen' && <div className="visualizer-screen-route">
-                <label><span>Screen Source</span><select value={selectedStageElement.mediaSource?.kind ?? 'none'} onChange={(event) => updateStageElement(selectedStageElement.id, { mediaSource: event.target.value === 'timeline' ? {kind:'timeline',sourceName:'Timeline video',fit:'contain'} : event.target.value === 'ndi' ? { kind: 'ndi', sourceName: 'ProPresenter', fit: 'contain' } : { kind: 'none' } })}><option value="none">Static</option><option value="ndi">NDI / Video Input</option><option value="timeline">Timeline video</option></select></label>
+                <label><span>Screen Source</span><select value={selectedStageElement.mediaSource?.kind ?? 'none'} onChange={(event) => {
+                  const previous=selectedStageElement.mediaSource?.kind!=='none' ? selectedStageElement.mediaSource : undefined;
+                  updateStageElement(selectedStageElement.id, { mediaSource: event.target.value === 'timeline'
+                    ? {kind:'timeline',sourceName:'Timeline video',fit:previous?.fit??'contain',scale:previous?.scale??1,offsetX:previous?.offsetX??0,offsetY:previous?.offsetY??0}
+                    : event.target.value === 'ndi'
+                      ? {kind:'ndi',sourceName:'ProPresenter',fit:previous?.fit??'contain',scale:previous?.scale??1,offsetX:previous?.offsetX??0,offsetY:previous?.offsetY??0}
+                      : {kind:'none'} });
+                }}><option value="none">Static</option><option value="ndi">NDI / Video Input</option><option value="timeline">Timeline video</option></select></label>
                 <label>Import video to Timeline<input aria-label="Import screen video" type="file" accept="video/mp4,.mp4" onChange={e=>{const file=e.target.files?.[0];e.target.value='';if(file)void importScreenVideo(selectedStageElement.id,file).catch(error=>setMessage(String(error)));}} /></label>
-              {selectedStageElement.mediaSource?.kind === 'ndi' && <label><span>Input</span><select value={selectedStageElement.mediaSource.deviceId ?? ''} onChange={(event) => { const input=stageVideoInputs.find((item)=>item.deviceId===event.target.value); updateStageElement(selectedStageElement.id,{mediaSource:{kind:'ndi',deviceId:event.target.value||undefined,sourceName:input?.label||'ProPresenter',fit:selectedStageElement.mediaSource?.kind==='ndi'?selectedStageElement.mediaSource.fit??'contain':'contain'}}); }}><option value="">Select input</option>{stageVideoInputs.map((input)=><option key={input.deviceId} value={input.deviceId}>{input.label}</option>)}</select></label>}
+                {selectedStageElement.mediaSource?.kind === 'ndi' && <label><span>Input</span><select value={selectedStageElement.mediaSource.deviceId ?? ''} onChange={(event) => {
+                  const input=stageVideoInputs.find((item)=>item.deviceId===event.target.value);
+                  const source=selectedStageElement.mediaSource?.kind==='ndi' ? selectedStageElement.mediaSource : {kind:'ndi' as const};
+                  updateStageElement(selectedStageElement.id,{mediaSource:{...source,deviceId:event.target.value||undefined,sourceName:input?.label||'ProPresenter'}});
+                }}><option value="">Select input</option>{stageVideoInputs.map((input)=><option key={input.deviceId} value={input.deviceId}>{input.label}</option>)}</select></label>}
+                {selectedStageElement.mediaSource && selectedStageElement.mediaSource.kind !== 'none' && <>
+                  <div className="screen-framing-pair">
+                    <label><span>Fit</span><select value={selectedStageElement.mediaSource.fit ?? 'contain'} onChange={event=>updateScreenFraming(selectedStageElement.id,{fit:event.target.value as 'contain'|'cover'})}><option value="contain">Contain</option><option value="cover">Cover</option></select></label>
+                    <label><span>Size · {Math.round((selectedStageElement.mediaSource.scale ?? 1)*100)}%</span><input aria-label="Screen video size" type="range" min="25" max="300" step="1" value={(selectedStageElement.mediaSource.scale ?? 1)*100} onChange={event=>updateScreenFraming(selectedStageElement.id,{scale:Number(event.target.value)/100})}/></label>
+                  </div>
+                  <div className="screen-framing-pair">
+                    <label><span>X · {Math.round((selectedStageElement.mediaSource.offsetX ?? 0)*100)}%</span><input aria-label="Screen video horizontal position" type="range" min="-100" max="100" step="1" value={(selectedStageElement.mediaSource.offsetX ?? 0)*100} onChange={event=>updateScreenFraming(selectedStageElement.id,{offsetX:Number(event.target.value)/100})}/></label>
+                    <label><span>Y · {Math.round((selectedStageElement.mediaSource.offsetY ?? 0)*100)}%</span><input aria-label="Screen video vertical position" type="range" min="-100" max="100" step="1" value={(selectedStageElement.mediaSource.offsetY ?? 0)*100} onChange={event=>updateScreenFraming(selectedStageElement.id,{offsetY:Number(event.target.value)/100})}/></label>
+                  </div>
+                  <button onClick={()=>updateScreenFraming(selectedStageElement.id,{fit:'contain',scale:1,offsetX:0,offsetY:0})}>Reset video framing</button>
+                </>}
               </div>}
               <div className="visualizer-object-actions"><button onClick={() => duplicateStageElement(selectedStageElement.id)}>Duplicate</button><button className="danger-button" onClick={() => removeStageElement(selectedStageElement.id)}>Delete</button></div>
             </section>}
