@@ -2986,3 +2986,189 @@ body,#root { min-width:0; width:100%; overflow:hidden; }
   .visualizer-workspace-layout.tools-open{grid-template-columns:minmax(0,1fr) 260px}
   .timeline-workspace .timeline-edit-layout{grid-template-columns:180px minmax(0,1fr)}
 }
+
+
+/* Cloud Show Library + secure controller pairing */
+.library-section-heading,
+.cloud-library-header,
+.controller-pairing-panel > header,
+.paired-device-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+}
+.library-section-heading,
+.cloud-library-header {
+  margin: 18px 0 10px;
+}
+.library-section-heading > div,
+.cloud-library-header > div,
+.controller-pairing-panel > header > div {
+  display: grid;
+  gap: 3px;
+}
+.library-section-heading small,
+.cloud-library-header small,
+.controller-pairing-panel small,
+.paired-device-heading span {
+  font-size: 10px;
+  letter-spacing: .12em;
+  color: #8994a3;
+}
+.library-section-heading strong,
+.cloud-library-header strong,
+.controller-pairing-panel > header strong {
+  font-size: 16px;
+}
+.cloud-library-header span,
+.controller-pairing-panel > header span {
+  color: #8e99a7;
+  font-size: 12px;
+}
+.cloud-library-header > b {
+  padding: 6px 9px;
+  border: 1px solid rgba(255,255,255,.09);
+  border-radius: 999px;
+  font-size: 10px;
+  letter-spacing: .08em;
+}
+.cloud-library-header > b.healthy {
+  color: #75e8a9;
+  border-color: rgba(117,232,169,.22);
+}
+.cloud-library-header > b.error {
+  color: #ff9292;
+  border-color: rgba(255,146,146,.22);
+}
+.cloud-show-library-section {
+  margin-top: 22px;
+  padding-top: 16px;
+  border-top: 1px solid rgba(255,255,255,.08);
+}
+.cloud-library-toolbar {
+  display: grid;
+  grid-template-columns: minmax(180px,.8fr) minmax(220px,1fr) auto auto;
+  gap: 10px;
+  align-items: end;
+  margin-bottom: 12px;
+}
+.cloud-library-toolbar label {
+  display: grid;
+  gap: 5px;
+  min-width: 0;
+}
+.cloud-library-toolbar label > span {
+  color: #85909e;
+  font-size: 10px;
+  letter-spacing: .08em;
+  text-transform: uppercase;
+}
+.cloud-library-toolbar input,
+.cloud-library-toolbar select {
+  min-width: 0;
+}
+.cloud-library-error {
+  margin: 8px 0 12px;
+  padding: 10px 12px;
+  border: 1px solid rgba(255,92,92,.2);
+  border-radius: 10px;
+  background: rgba(255,75,75,.06);
+  color: #ffaaaa;
+  font-size: 12px;
+}
+.cloud-show-grid {
+  max-height: 420px;
+  overflow: auto;
+  overscroll-behavior: contain;
+}
+.controller-pairing-panel {
+  margin-top: 18px;
+  padding-top: 16px;
+  border-top: 1px solid rgba(255,255,255,.09);
+}
+.pairing-session-card {
+  display: grid;
+  grid-template-columns: 216px minmax(0,1fr);
+  gap: 18px;
+  align-items: center;
+  margin-top: 14px;
+  padding: 16px;
+  border: 1px solid rgba(255,255,255,.09);
+  border-radius: 14px;
+  background: rgba(255,255,255,.025);
+}
+.pairing-qr {
+  display: grid;
+  place-items: center;
+  width: 216px;
+  height: 216px;
+  border-radius: 12px;
+  background: #fff;
+}
+.pairing-code-display {
+  display: grid;
+  gap: 8px;
+  align-content: center;
+}
+.pairing-code-display > strong {
+  font-size: clamp(34px,4vw,54px);
+  line-height: 1;
+  letter-spacing: .14em;
+  font-variant-numeric: tabular-nums;
+}
+.pairing-code-display > span,
+.pairing-expired span,
+.paired-device-list small {
+  color: #8c97a5;
+  font-size: 12px;
+}
+.pairing-code-display > button {
+  justify-self: start;
+}
+.pairing-expired {
+  display: grid;
+  gap: 4px;
+  margin-top: 14px;
+  padding: 14px;
+  border: 1px solid rgba(255,190,80,.18);
+  border-radius: 12px;
+  background: rgba(255,190,80,.05);
+}
+.paired-device-list {
+  display: grid;
+  gap: 8px;
+  margin-top: 14px;
+}
+.paired-device-heading {
+  min-height: 34px;
+}
+.paired-device-list article {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 12px;
+  border: 1px solid rgba(255,255,255,.07);
+  border-radius: 10px;
+  background: rgba(255,255,255,.02);
+}
+.paired-device-list article > span {
+  display: grid;
+  gap: 2px;
+}
+.paired-device-list > p {
+  margin: 0;
+  color: #7f8996;
+  font-size: 12px;
+}
+@media (max-width: 900px) {
+  .cloud-library-toolbar { grid-template-columns: 1fr 1fr; }
+}
+@media (max-width: 680px) {
+  .cloud-library-toolbar,
+  .pairing-session-card { grid-template-columns: 1fr; }
+  .pairing-qr { width: 100%; height: auto; padding: 10px; }
+  .controller-pairing-panel > header,
+  .cloud-library-header { align-items: flex-start; flex-direction: column; }
+}
