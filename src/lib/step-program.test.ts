@@ -34,6 +34,20 @@ describe('musical step programming',()=>{
     expect(stepValue(source,'dimmer',3)).toBe(0);
     expect(clearStepProgram(pasted).lanes!.every(l=>l.steps!.every(s=>s.value===0))).toBe(true);
   });
+  it('overlays an embedded FX trigger only on its assigned step',()=>{
+    const trigger={
+      id:'step-hit',name:'Step Hit',parameter:'dimmer' as const,waveform:'square' as const,
+      bpm:120,depth:0,offset:100,phaseSpread:0,cycleBeats:1,mode:'absolute' as const
+    };
+    const effect={...createStepProgram(120,'#ffffff'),stepTriggers:[{step:0,name:'Step Hit',effect:trigger}]};
+    const fixture={...DEFAULT_PATCH[0],selected:true};
+    const dimmer=parameterChannel(fixture,'dimmer')!;
+    const first=new Map(renderCustomEffect(effect,[fixture],0));
+    const second=new Map(renderCustomEffect(effect,[fixture],260));
+    expect(first.get(dimmer)).toBe(255);
+    expect(second.get(dimmer)).toBe(0);
+    expect(isEffectRecipe(effect)).toBe(true);
+  });
   it('keeps triplets and sixteenth steps in the persisted effect model',()=>{
     for(const subdivision of [3,16]){
       const effect=resizeStepProgram(createStepProgram(130,'#ff0000'),4,subdivision);
