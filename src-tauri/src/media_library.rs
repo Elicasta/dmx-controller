@@ -14,6 +14,8 @@ use zip::{write::SimpleFileOptions, CompressionMethod, ZipArchive, ZipWriter};
 
 const REGISTRY_VERSION: u32 = 1;
 const BACKUP_FORMAT: &str = "lumarig-portable-backup";
+const SONG_FORMAT: &str = "lumarig-song";
+const SHOW_FORMAT: &str = "lumarig-show";
 const BACKUP_VERSION: u32 = 1;
 const MAX_MANIFEST_BYTES: u64 = 64 * 1024 * 1024;
 
@@ -856,6 +858,234 @@ pub async fn media_export_portable_backup(
             .finish()
             .map_err(|error| io_error("Portable backup could not be finalized", error))?;
         Ok(Some(path.to_string_lossy().to_string()))
+    }).await
+}
+
+
+fn portable_package_spec(format: &str) -> Option<(&'static str, &'static str, &'static str)> {
+    match format {
+        SONG_FORMAT => Some(("LumaRig Song", "lumarigsong", "LumaRig Song")),
+        SHOW_FORMAT => Some(("LumaRig Show", "lumarigshow", "LumaRig Show")),
+        _ => None,
+    }
+}
+
+#[tauri::command]
+pub async fn media_export_portable_package(
+    app: AppHandle,
+    state: State<'_, MediaLibraryState>,
+    manifest_json: String,
+    media_ids: Vec<String>,
+    suggested_name: String,
+    package_format: String,
+) -> Result<Option<String>, String> {
+    let (label, extension, default_stem) = portable_package_spec(&package_format)
+        .ok_or("Portable package format is not supported.")?;
+    let header: PortableBackupHeader =
+        serde_json::from_str(&manifest_json).map_err(|error| io_error("Package manifest is invalid", error))?;
+    if header.format != package_format || header.version != BACKUP_VERSION {
+        return Err("Package manifest format is not supported.".to_string());
+    }
+
+    let default_name = if suggested_name.trim().is_empty() {
+        format!("{default_stem}.{extension}")
+    } else if suggested_name
+        .to_ascii_lowercase()
+        .ends_with(&format!(".{extension}"))
+    {
+        suggested_name
+    } else {
+        format!("{suggested_name}.{extension}")
+    };
+
+    let selected = app
+        .dialog()
+        .file()
+        .add_filter(label, &[extension])
+        .set_file_name(default_name)
+        .blocking_save_file();
+    let Some(selected) = selected else {
+        return Ok(None);
+    };
+    let mut path = selected
+        .into_path()
+        .map_err(|error| io_error("Package destination is invalid", error))?;
+    if path
+        .extension()
+        .and_then(|value| value.to_str())
+        .map(|value| !value.eq_ignore_ascii_case(extension))
+        .unwrap_or(true)
+    {
+        path.set_extension(extension);
+    }
+
+    let lock = state.lock.clone();
+    let task_app = app.clone();
+    run_file_task("Portable package worker failed", move || {
+        let _guard = lock.lock().map_err(|_| "Media library lock failed.".to_string())?;
+        let registry = read_registry(&task_app)?;
+        let mut assets = Vec::new();
+        let mut seen = HashSet::new();
+        for id in &media_ids {
+            if !seen.insert(id.clone()) {
+                continue;
+            }
+            let asset = registry
+                .assets
+                .iter()
+                .find(|asset| &asset.id == id)
+                .ok_or_else(|| format!("Media {id} is not in the local media library."))?;
+            if !Path::new(&asset.path).is_file() {
+                return Err(format!("Relink missing media before export: {}", asset.name));
+            }
+            assets.push(asset.clone());
+        }
+
+        let file = File::create(&path)
+            .map_err(|error| io_error("Portable package could not be created", error))?;
+        let mut archive = ZipWriter::new(file);
+        let options = SimpleFileOptions::default().compression_method(CompressionMethod::Stored);
+        archive
+            .start_file("manifest.json", options)
+            .map_err(|error| io_error("Package manifest entry could not be created", error))?;
+        archive
+            .write_all(manifest_json.as_bytes())
+            .map_err(|error| io_error("Package manifest could not be written", error))?;
+
+        for asset in assets {
+            let entry = format!(
+                "media/{}/{}",
+                sanitize_file_name(&asset.id),
+                sanitize_file_name(&asset.name)
+            );
+            archive
+                .start_file(entry, options)
+                .map_err(|error| io_error("Package media entry could not be created", error))?;
+            let mut source = File::open(&asset.path)
+                .map_err(|error| io_error("Package media could not be opened", error))?;
+            std::io::copy(&mut source, &mut archive)
+                .map_err(|error| io_error("Package media could not be written", error))?;
+        }
+        archive
+            .finish()
+            .map_err(|error| io_error("Portable package could not be finalized", error))?;
+        Ok(Some(path.to_string_lossy().to_string()))
+    }).await
+}
+
+#[tauri::command]
+pub async fn media_import_portable_package(
+    app: AppHandle,
+    state: State<'_, MediaLibraryState>,
+    package_format: String,
+) -> Result<Option<PortableBackupImport>, String> {
+    let (label, extension, _) = portable_package_spec(&package_format)
+        .ok_or("Portable package format is not supported.")?;
+    let selected = app
+        .dialog()
+        .file()
+        .add_filter(label, &[extension])
+        .blocking_pick_file();
+    let Some(selected) = selected else {
+        return Ok(None);
+    };
+    let path = selected
+        .into_path()
+        .map_err(|error| io_error("Package path is invalid", error))?;
+    let lock = state.lock.clone();
+    let task_app = app.clone();
+
+    run_file_task("Portable package import worker failed", move || {
+        let _guard = lock.lock().map_err(|_| "Media library lock failed.".to_string())?;
+        let source = File::open(&path)
+            .map_err(|error| io_error("Portable package could not be opened", error))?;
+        let mut archive = ZipArchive::new(source)
+            .map_err(|error| io_error("Portable package is not a valid archive", error))?;
+        let manifest_json = {
+            let mut manifest = archive
+                .by_name("manifest.json")
+                .map_err(|error| io_error("Portable package has no manifest", error))?;
+            if manifest.size() > MAX_MANIFEST_BYTES {
+                return Err("Portable package manifest is unexpectedly large.".to_string());
+            }
+            let mut text = String::new();
+            manifest
+                .read_to_string(&mut text)
+                .map_err(|error| io_error("Portable package manifest could not be read", error))?;
+            text
+        };
+        let header: PortableBackupHeader = serde_json::from_str(&manifest_json)
+            .map_err(|error| io_error("Portable package manifest is invalid", error))?;
+        if header.format != package_format || header.version != BACKUP_VERSION {
+            return Err("This LumaRig package type or version is not supported.".to_string());
+        }
+        if header.media.len() > 10_000 {
+            return Err("Portable package contains too many media entries.".to_string());
+        }
+
+        let mut ids = HashSet::new();
+        for descriptor in &header.media {
+            if !valid_media_id(&descriptor.id)
+                || descriptor.name.trim().is_empty()
+                || descriptor.name.len() > 512
+            {
+                return Err("Portable package contains an invalid media descriptor.".to_string());
+            }
+            if !ids.insert(descriptor.id.clone()) {
+                return Err(format!("Portable package contains duplicate media id: {}", descriptor.id));
+            }
+        }
+
+        let restore_token = Uuid::new_v4().to_string();
+        let staging_root = restore_root(&task_app, &restore_token)?;
+        fs::create_dir_all(&staging_root)
+            .map_err(|error| io_error("Package import staging folder could not be created", error))?;
+
+        let stage_result = (|| -> Result<(), String> {
+            for descriptor in &header.media {
+                let entry_name = format!(
+                    "media/{}/{}",
+                    sanitize_file_name(&descriptor.id),
+                    sanitize_file_name(&descriptor.name)
+                );
+                let mut entry = archive
+                    .by_name(&entry_name)
+                    .map_err(|_| format!("Portable package is missing media: {}", descriptor.name))?;
+                if entry.is_dir() {
+                    return Err(format!("Portable package media entry is invalid: {}", descriptor.name));
+                }
+                let target = staging_root.join(format!(
+                    "{}--{}",
+                    sanitize_file_name(&descriptor.id),
+                    sanitize_file_name(&descriptor.name)
+                ));
+                let mut output = File::create(&target)
+                    .map_err(|error| io_error("Package media could not be staged", error))?;
+                std::io::copy(&mut entry, &mut output)
+                    .map_err(|error| io_error("Package media could not be extracted", error))?;
+            }
+            let plan = PortableRestorePlan {
+                media: header.media.clone(),
+                media_folders: header.media_folders.clone(),
+            };
+            let plan_json = serde_json::to_vec(&plan)
+                .map_err(|error| io_error("Package import plan could not be serialized", error))?;
+            fs::write(staging_root.join("plan.json"), plan_json)
+                .map_err(|error| io_error("Package import plan could not be staged", error))?;
+            Ok(())
+        })();
+
+        if let Err(error) = stage_result {
+            let _ = fs::remove_dir_all(&staging_root);
+            return Err(error);
+        }
+
+        Ok(Some(PortableBackupImport {
+            path: path.to_string_lossy().to_string(),
+            manifest_json,
+            imported_media: header.media.len(),
+            restore_token,
+        }))
     }).await
 }
 
