@@ -81,7 +81,7 @@ export function StageMediaSurface({ source }: { source?: StageScreenSource }) {
       muted
       playsInline
       aria-label={source.sourceName ? `${source.sourceName} screen feed` : 'Live stage screen feed'}
-      style={{ objectFit: source.fit ?? 'contain' }}
+      style={{ objectFit: source.fit ?? 'contain',visibility:source.kind==='timeline' && status!=='live'?'hidden':undefined }}
     />
     {status !== 'live' && <span className="stage-media-status">{status === 'connecting' ? 'Connecting…' : status === 'error' ? 'Input unavailable' : source.kind==='timeline' ? 'Load Timeline video' : 'NDI'}</span>}
   </span>;

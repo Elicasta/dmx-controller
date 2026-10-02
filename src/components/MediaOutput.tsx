@@ -62,7 +62,7 @@ export default function MediaOutput(){
     }catch{setError('Fullscreen could not open. Use the window fullscreen control.');}
   }
   return <main className="media-output" onDoubleClick={()=>void fullscreen()} onClick={()=>{setError('');synchronize();}}>
-    <video ref={video} src={url||undefined} muted playsInline preload="auto" onLoadedMetadata={synchronize} onCanPlay={synchronize} onError={()=>setError('Video unavailable. Relink its Song media in LumaRig.')} aria-label="Synchronized video output" />
+    <video ref={video} src={url||undefined} muted playsInline preload="auto" onLoadedMetadata={synchronize} onCanPlay={synchronize} onError={()=>{if(incoming.current?.url)setError('Video unavailable. Relink its Song media in LumaRig.');}} aria-label="Synchronized video output" style={{visibility:url?'visible':'hidden'}} />
 
     {error&&<p role="status">{error}</p>}
     <button className="media-output-fullscreen" onClick={e=>{e.stopPropagation();void fullscreen();}}>Fullscreen</button>

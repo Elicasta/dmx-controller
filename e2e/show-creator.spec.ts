@@ -1104,7 +1104,7 @@ test('independent video clips import, trim, copy and undo on the Timeline',async
   await page.getByLabel('Asset clip trim in').fill('0.5');await page.getByLabel('Asset clip trim out').fill('2');await page.getByLabel('Asset clip start bar').fill('2');
   await expect.poll(async()=>((await readShow(page)).timeline?.videoClips??[])[0]?.trimInMs).toBe(500);
   await expect(page.getByRole('button',{name:'Export trimmed MP4',exact:true})).toBeVisible();await expect(page.getByRole('button',{name:'Pop Out Video',exact:true})).toBeVisible();
-  await clip.press('Control+c');await clip.press('Control+v');await expect(page.locator('.asset-clip')).toHaveCount(2);await clip.press('Control+z');await expect(page.locator('.asset-clip')).toHaveCount(1);
+  await clip.press('Control+c');await clip.press('Control+v');await expect(page.locator('.asset-clip')).toHaveCount(2);await page.keyboard.press('Control+z');await expect(page.locator('.asset-clip')).toHaveCount(1);
   await page.screenshot({path:info.outputPath('timeline-independent-video.png')});
 });
 

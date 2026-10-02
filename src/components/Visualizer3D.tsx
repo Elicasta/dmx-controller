@@ -463,7 +463,7 @@ function drawFaces(
       } else {
         polygon(ctx, face.points);
         const glow = quality !== 'fast' ? .32 : .18;
-        ctx.fillStyle = `rgba(210,230,240,${glow})`;
+        ctx.fillStyle = face.screenElement.mediaSource?.kind==='timeline' ? '#000' : `rgba(210,230,240,${glow})`;
         ctx.fill();
       }
     }
