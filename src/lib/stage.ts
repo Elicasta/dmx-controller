@@ -30,13 +30,14 @@ export type StageScreenFraming = {
   offsetY?: number;
 };
 
-export type StageScreenSource =
+export type StageScreenSource = (
   | { kind: 'none' }
-  | ({ kind: 'timeline'; sourceName?: string; deviceId?: string } & StageScreenFraming)
-  | ({ kind: 'ndi'; deviceId?: string; sourceName?: string } & StageScreenFraming)
-  | ({ kind: 'image'; mediaId: string; sourceName?: string } & StageScreenFraming)
+  | { kind: 'timeline'; sourceName?: string; deviceId?: string }
+  | { kind: 'ndi'; deviceId?: string; sourceName?: string }
+  | { kind: 'image'; mediaId: string; sourceName?: string }
   | { kind: 'color'; color: string }
-  | { kind: 'test-pattern'; pattern: 'bars' | 'grid' | 'checker' };
+  | { kind: 'test-pattern'; pattern: 'bars' | 'grid' | 'checker' }
+) & StageScreenFraming;
 
 export type StageElement = {
   id: string;
