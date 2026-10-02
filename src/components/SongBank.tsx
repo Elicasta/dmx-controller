@@ -14,6 +14,7 @@ type Props = {
   onSelect: (song: SongRecord, mode: "creator" | "timeline") => void;
   onRename: (id: string, name: string) => void;
   onMedia: (song: SongRecord, file: File) => Promise<void>;
+  onOpenMediaLibrary: (song: SongRecord) => void;
 };
 export default function SongBank(p: Props) {
   const [query, setQuery] = useState(""),
@@ -41,7 +42,7 @@ export default function SongBank(p: Props) {
           <h2>Your songs, ready for the show.</h2>
           <p>
             Add a song, link its audio or MP4, then build sections and arrange
-            its timeline.
+            its timeline. File imports are copied into managed desktop storage.
           </p>
         </div>
         <div><b>{songs.length} songs in this Show</b><p role="status">{p.saveStatus}</p></div>
@@ -134,6 +135,7 @@ export default function SongBank(p: Props) {
                       }}
                     />
                   </label>
+                  <button onClick={() => p.onOpenMediaLibrary(song)}>Media Library</button>
                   <button disabled={!p.ready} onClick={() => void p.onSave(song)}>Save Song</button>
                   <button onClick={() => p.onSelect(song, "creator")}>
                     Build song
@@ -162,8 +164,7 @@ export default function SongBank(p: Props) {
         <div className="song-bank-empty">
           <strong>Add your first song above.</strong>
           <p>
-            Media stays linked when you switch songs or reopen LumaRig on this
-            computer.
+            Media stays linked when you switch songs or reopen LumaRig. Use Media Library to reference files in place, relink missing files, or build a portable backup.
           </p>
         </div>
       )}
