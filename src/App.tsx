@@ -3966,7 +3966,7 @@ export default function App() {
   }
   const songBank = songsForShow(showFile);
   const creatorSong = songBank.find(song => song.id === activeSongId);
-  const mediaUseCounts = useMemo(() => countMediaIds({ working: showFile, songLibrary, showLibrary }), [showFile, songLibrary, showLibrary]);
+  const mediaUseCounts = useMemo(() => countMediaIds({ working: showFile, songLibrary, showLibrary, showRecovery }), [showFile, songLibrary, showLibrary, showRecovery]);
   useEffect(() => {
     try { writeCompatibilityStorage('lumarig-active-song:' + showFile.name, activeSongId); } catch { /* Working show still autosaves. */ }
   }, [activeSongId, showFile.name]);
@@ -4040,10 +4040,14 @@ export default function App() {
   }
   function applyMediaAssetName(asset: MediaAsset) {
     setShowFile((current) => {
-      const linkedSongNames = new Set(songsForShow(current).filter((song) => song.mediaId === asset.id).map((song) => song.name));
+      const previousNames = new Set(
+        songsForShow(current)
+          .filter((song) => song.mediaId === asset.id && song.mediaName)
+          .map((song) => song.mediaName!)
+      );
       const updateTimeline = (timeline: typeof current.timeline) => timeline ? {
         ...timeline,
-        audioName: linkedSongNames.size && timeline.audioName ? asset.name : timeline.audioName,
+        audioName: timeline.audioName && previousNames.has(timeline.audioName) ? asset.name : timeline.audioName,
         videoClips: timeline.videoClips?.map((clip) => clip.mediaId === asset.id ? { ...clip, name: asset.name } : clip),
       } : timeline;
       return {
@@ -4052,9 +4056,7 @@ export default function App() {
         timeline: updateTimeline(current.timeline),
         timelineShows: current.timelineShows?.map((item) => ({
           ...item,
-          timeline: linkedSongNames.has(item.name)
-            ? { ...updateTimeline(item.timeline)!, audioName: asset.name }
-            : updateTimeline(item.timeline)!,
+          timeline: updateTimeline(item.timeline)!,
         })),
       };
     });
