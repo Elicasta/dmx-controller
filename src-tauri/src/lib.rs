@@ -1,5 +1,6 @@
 mod dmx;
 mod midi;
+mod media_library;
 mod output;
 mod studio_bridge;
 mod updates;
@@ -127,14 +128,34 @@ fn reply_studio_bridge(
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_updater::Builder::new().build())
+        .plugin(tauri_plugin_dialog::init())
         .manage(DmxEngine::new())
+        .manage(media_library::MediaLibraryState::default())
         .manage(ArtNetEngine::default())
         .manage(LumaVizDirectEngine::default())
         .manage(StudioBridge::new())
         .manage(MidiEngine::new())
         .manage(updates::UpdateState::default())
+        .setup(|app| {
+            media_library::restore_asset_scopes(app.handle())?;
+            Ok(())
+        })
         .invoke_handler(tauri::generate_handler![
             open_stage_monitor,
+            media_library::media_library_snapshot,
+            media_library::media_create_folder,
+            media_library::media_rename_folder,
+            media_library::media_delete_folder,
+            media_library::media_pick_import,
+            media_library::media_move_asset,
+            media_library::media_remove_asset,
+            media_library::media_relink_asset,
+            media_library::media_asset,
+            media_library::media_begin_managed_write,
+            media_library::media_append_managed_write,
+            media_library::media_finish_managed_write,
+            media_library::media_export_portable_backup,
+            media_library::media_import_portable_backup,
             video_export::begin_video_export,
             video_export::append_video_export,
             video_export::finish_video_export,
