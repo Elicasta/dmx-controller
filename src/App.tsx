@@ -2075,6 +2075,31 @@ export default function App() {
         const saved = await upsertSongProgram(program);
         setSongLibrary(saved.programs);
       }
+      setShowFile((current) => {
+        let nextShow = current;
+        for (const document of songs) {
+          const matching = songsForShow(nextShow).find((song) => (song.libraryId || song.id) === document.songId);
+          if (!matching) continue;
+          if (matching.name !== document.title) {
+            try { nextShow = renameSong(nextShow, matching.id, document.title); } catch { /* keep current title if a Show name collision exists */ }
+          }
+          nextShow = {
+            ...nextShow,
+            songs: songsForShow(nextShow).map((song) => (song.libraryId || song.id) === document.songId ? {
+              ...song,
+              bpm: document.bpm,
+              musicalKey: document.musicalKey,
+              artist: document.artist,
+              arrangement: document.arrangement,
+              notes: document.notes,
+            } : song),
+            timelineShows: nextShow.timelineShows?.map((timeline) => timeline.name === document.title
+              ? { ...timeline, timeline: { ...timeline.timeline, bpm: document.bpm } }
+              : timeline),
+          };
+        }
+        return nextShow;
+      });
       if (labels.length) {
         const names = new Map(labels.map((item) => [item.takeId, item.label]));
         setShowFile((current) => ({
