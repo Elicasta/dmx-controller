@@ -12,7 +12,7 @@ import RecorderTransport from './components/RecorderTransport';
 import { useEditHistory } from './lib/edit-history';
 import TempoPulse from './components/TempoPulse';
 import { useMediaOutputPublisher } from "./components/MediaOutput";
-import { importSongProgram, readProgramState, replaceProgramState, saveProgramState, validateProgramState, type Recovery } from './lib/program-storage';
+import { importSongProgram, readProgramState, replaceProgramState, saveProgramState, upsertSongProgram, validateProgramState, type Recovery } from './lib/program-storage';
 import { extractSongProgram, insertSongProgram, isSongProgram, programId, type SongProgram } from './lib/song-library';
 import SongBank from './components/SongBank';
 import MediaLibraryPanel from './components/MediaLibraryPanel';
