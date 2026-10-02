@@ -24,7 +24,7 @@ import ResizableWorkspace from './components/ResizableWorkspace';
 import DraggablePanelDeck from './components/DraggablePanelDeck';
 import StageMonitor, { openStageWindow, useStagePublisher } from './components/StageMonitor';
 import Visualizer3D from './components/Visualizer3D';
-import { StageMediaSurface, requestStageVideoInputs, type StageVideoInputOption } from './components/StageMediaSurface';
+import { StageMediaSurface, StageVideoInputError, requestStageVideoInputs, type StageVideoInputOption } from './components/StageMediaSurface';
 import SongCueLibrary from './components/SongCueLibrary';
 import { moveRundownItemCues } from './lib/show';
 import { activeTimelineCueId, createSection, EMPTY_TIMELINE, FX_RECIPES, SHOW_COLORS, buildSectionCues, renderEffectStack, renderShowTimeline, isEffectRecipe, isShowSection, type EffectStackLayer, type ShowSection } from './lib/show-design';
@@ -1063,6 +1063,7 @@ export default function App() {
   });
   const [stageVideoInputs, setStageVideoInputs] = useState<StageVideoInputOption[]>([]);
   const [stageVideoInputError, setStageVideoInputError] = useState('');
+  const [stageVideoInputPermissionBlocked, setStageVideoInputPermissionBlocked] = useState(false);
   const [stageMonitorOpen,setStageMonitorOpen]=useState(false);
   const [midiMapOpen,setMidiMapOpen]=useState(false);
   const [timelineShowId,setTimelineShowId]=useState('');
@@ -3819,14 +3820,29 @@ export default function App() {
 
   async function scanStageVideoInputs() {
     setStageVideoInputError('');
+    setStageVideoInputPermissionBlocked(false);
     try {
       const inputs = await requestStageVideoInputs();
       setStageVideoInputs(inputs);
-      setMessage(inputs.length ? `${inputs.length} video input${inputs.length === 1 ? '' : 's'} available for visualizer screens.` : 'No video inputs were found.');
+      setMessage(inputs.length ? `${inputs.length} video input${inputs.length === 1 ? '' : 's'} available for visualizer screens.` : 'No video inputs were found. Start NDI Virtual Input/Webcam, then scan again.');
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
+      setStageVideoInputPermissionBlocked(error instanceof StageVideoInputError && error.code === 'permission-denied');
       setStageVideoInputError(message);
       setMessage(`Video input scan failed: ${message}`);
+    }
+  }
+
+  async function openVideoInputPrivacySettings() {
+    if (!('__TAURI_INTERNALS__' in window)) {
+      setMessage('Open your system camera/privacy settings and allow LumaRig to access video inputs.');
+      return;
+    }
+    try {
+      await invoke('open_video_input_privacy_settings');
+      setMessage('Camera privacy settings opened. Allow LumaRig, quit and reopen the app, then scan again.');
+    } catch (error) {
+      setMessage(`Could not open camera privacy settings: ${String(error)}`);
     }
   }
 
@@ -5332,6 +5348,7 @@ export default function App() {
                 <label><span>Fit</span><select value={selectedStageElement.mediaSource.fit ?? 'contain'} onChange={(event) => updateStageElement(selectedStageElement.id, { mediaSource: { ...selectedStageElement.mediaSource!, kind: 'ndi', fit: event.target.value as 'contain' | 'cover' } })}><option value="contain">Contain</option><option value="cover">Fill / crop</option></select></label>
                 <button onClick={() => void scanStageVideoInputs()}>Scan NDI / Video Inputs</button>
                 {stageVideoInputError && <small className="stage-source-error">{stageVideoInputError}</small>}
+                {stageVideoInputPermissionBlocked && <button className="video-permission-action" onClick={() => void openVideoInputPrivacySettings()}>Open Camera Privacy Settings</button>}
                 <small>Use ProPresenter NDI output through an NDI virtual video input. The selected feed is rendered on this screen in the stage view and pop-out monitor.</small>
               </>}
             </section>}
@@ -5655,7 +5672,7 @@ export default function App() {
               <div>{(['Stage','Screens','Scenic','Audio','Band','People'] as const).map((category) => <details key={category}><summary>{category}</summary><div>{STAGE_WAREHOUSE.filter((item) => item.category === category).map((item) => <button key={item.id} onClick={() => addWarehouseStageElement(item.id)}>＋ {item.name}</button>)}</div></details>)}</div>
             </section>
 
-            <section className="visualizer-input-panel"><span>SCREEN INPUTS</span><strong>{stageVideoInputs.length ? `${stageVideoInputs.length} available` : 'Not scanned'}</strong><small>{stageElements.filter((element) => element.type === 'led-screen' && element.mediaSource?.kind === 'ndi' && element.mediaSource.deviceId).length} screens assigned to live inputs</small>{stageVideoInputError && <small className="stage-source-error">{stageVideoInputError}</small>}{stageVideoInputs.length > 0 && <div>{stageVideoInputs.map((input) => <button key={input.deviceId} onClick={() => routeVideoInputToAllScreens(input.deviceId)}><strong>{input.label}</strong><small>Route to all screens</small></button>)}</div>}</section>
+            <section className="visualizer-input-panel"><span>SCREEN INPUTS</span><strong>{stageVideoInputs.length ? `${stageVideoInputs.length} available` : 'Not scanned'}</strong><small>{stageElements.filter((element) => element.type === 'led-screen' && element.mediaSource?.kind === 'ndi' && element.mediaSource.deviceId).length} screens assigned to live inputs</small>{stageVideoInputError && <small className="stage-source-error">{stageVideoInputError}</small>}{stageVideoInputPermissionBlocked && <button className="video-permission-action" onClick={() => void openVideoInputPrivacySettings()}>Open Camera Privacy Settings</button>}{stageVideoInputs.length > 0 && <div>{stageVideoInputs.map((input) => <button key={input.deviceId} onClick={() => routeVideoInputToAllScreens(input.deviceId)}><strong>{input.label}</strong><small>Route to all screens</small></button>)}</div>}</section>
             <section className="visualizer-preset-picker"><span>VENUE PRESETS</span>{STAGE_PRESETS.map((preset) => <button key={preset.id} className={activeStagePresetId === preset.id ? 'active' : ''} onClick={() => loadStagePreset(preset.id)}><strong>{preset.name}</strong><small>{preset.description}</small></button>)}</section>
           </aside>}
         </div>
