@@ -71,13 +71,14 @@ Lightweight position correction sent while transport changes.
 ## LumaRig behavior
 
 - Locator data is runtime-only in the first integration pass. It does not mutate or pollute saved Show files.
-- Locator beat positions are converted to LumaRig bars using the current meter.
+- Locator beat positions are converted to musical bars using Ableton's numerator **and denominator**. A 6/8 bar is 3 quarter-note beats; 7/8 is 3.5. Those bars are then mapped onto LumaRig's Timeline bar coordinate, so different saved Timeline meters do not drift.
 - Ableton position enters LumaRig through the shared TransportEngine as the `ableton` source, then drives the existing Timeline renderer. Timeline cues, takes, video and FX keep their existing behavior.
 - The TransportEngine arbitrates Ableton, Timeline, MIDI, Studio and other sources so two transports cannot own the playhead simultaneously.
 - MIDI Clock remains a fallback DAW transport. Do not arm it as a second authority while the Max bridge owns playback.
 - LumaRig's Lighting Advance / Delay remains the timing offset for rendered lighting.
 - If tempo lock is off, Ableton tempo becomes the LumaRig master tempo.
 - A bridge disconnect holds current lighting output and returns control to the operator. It does not stop audio or force blackout.
+- The Max bridge retains only the latest locator snapshot and latest transport state while disconnected. On reconnect it handshakes protocol v1, restores current metadata/position, and does not replay a stale command queue.
 
 ## Naming
 
