@@ -589,49 +589,148 @@ function drawBeams(
   ctx.restore();
 }
 function crowdPoints(stage: StageDimensions, quality: VisualizerQuality) {
-  const points: Vec3[] = [];
+  const points: Array<Vec3 & { seed: number }> = [];
   const half = Math.min(stage.roomWidth / 2 - .8, Math.max(stage.width / 2, 4));
   const start = stage.depth + 1.2;
   const end = Math.max(start + 1, stage.roomDepth - 1.2);
-  const xStep = quality !== 'fast' ? .72 : 1.05;
-  const zStep = quality !== 'fast' ? .82 : 1.18;
+  const xStep = quality === 'high' ? .72 : quality === 'quality' ? .82 : 1.12;
+  const zStep = quality === 'high' ? .82 : quality === 'quality' ? .94 : 1.25;
+  const limit = quality === 'high' ? 420 : quality === 'quality' ? 310 : 175;
   let row = 0;
   for (let z = start; z <= end; z += zStep) {
     const offset = row % 2 ? xStep * .45 : 0;
+    let column = 0;
     for (let x = -half + offset; x <= half; x += xStep) {
-      points.push({ x, y: 0, z });
-      if (points.length >= (quality !== 'fast' ? 420 : 190)) return points;
+      points.push({ x, y: 0, z, seed: ((row * 37 + column * 17) % 101) / 100 });
+      if (points.length >= limit) return points;
+      column += 1;
     }
     row += 1;
   }
   return points;
 }
 
-function drawCrowd(ctx: CanvasRenderingContext2D, camera: VisualizerCamera, stage: StageDimensions, width: number, height: number, quality: VisualizerQuality) {
-  const people = crowdPoints(stage, quality)
-    .map((point) => ({ point, projected: projectVisualizerPoint({ ...point, y: 1.55 }, camera, width, height) }))
-    .filter((item) => item.projected.depth > .05)
-    .sort((a, b) => b.projected.depth - a.projected.depth);
+function crowdTone(seed: number, alpha: number) {
+  const value = Math.round(118 + seed * 38);
+  return `rgba(${value},${value + 7},${value + 12},${alpha})`;
+}
 
-  ctx.save();
-  for (const item of people) {
-    const foot = projectVisualizerPoint(item.point, camera, width, height);
-    const head = item.projected;
-    const size = clamp(210 / head.depth, 2.2, quality !== 'fast' ? 8 : 6);
-    ctx.strokeStyle = 'rgba(137,151,160,.36)';
-    ctx.fillStyle = 'rgba(164,176,183,.42)';
-    ctx.lineWidth = Math.max(1, size * .24);
+function drawCrowdPerson(
+  ctx: CanvasRenderingContext2D,
+  camera: VisualizerCamera,
+  width: number,
+  height: number,
+  point: Vec3 & { seed: number },
+  quality: VisualizerQuality,
+  detailed: boolean
+) {
+  const stature = 1.52 + point.seed * .26;
+  const shoulderWidth = .17 + point.seed * .04;
+  const hipWidth = shoulderWidth * .68;
+  const torsoTop = stature * .76;
+  const torsoBottom = stature * .42;
+  const depth = .10 + point.seed * .025;
+
+  const headWorld = { x: point.x, y: stature * .9, z: point.z };
+  const head = projectVisualizerPoint(headWorld, camera, width, height);
+  const foot = projectVisualizerPoint(point, camera, width, height);
+  if (head.depth <= .04 || foot.depth <= .04) return;
+
+  const apparent = clamp(205 / head.depth, 1.7, quality === 'high' ? 8.5 : 6.8);
+  if (!detailed || quality === 'fast' || apparent < 3.1) {
+    ctx.strokeStyle = crowdTone(point.seed, .28);
+    ctx.fillStyle = crowdTone(point.seed, .38);
+    ctx.lineWidth = Math.max(.75, apparent * .2);
     ctx.beginPath();
-    ctx.moveTo(head.x, head.y + size * .7);
+    ctx.moveTo(head.x, head.y + apparent * .62);
     ctx.lineTo(foot.x, foot.y);
     ctx.stroke();
     ctx.beginPath();
-    ctx.arc(head.x, head.y, size * .42, 0, Math.PI * 2);
+    ctx.arc(head.x, head.y, apparent * .38, 0, Math.PI * 2);
     ctx.fill();
+    return;
+  }
+
+  const yaw = (point.seed - .5) * .26;
+  const cosine = Math.cos(yaw);
+  const sine = Math.sin(yaw);
+  const local = (x: number, y: number, z: number): Vec3 => ({
+    x: point.x + x * cosine + z * sine,
+    y,
+    z: point.z - x * sine + z * cosine,
+  });
+
+  const torsoWorld = [
+    local(-shoulderWidth, torsoTop, -depth),
+    local(shoulderWidth, torsoTop, -depth),
+    local(hipWidth, torsoBottom, -depth),
+    local(-hipWidth, torsoBottom, -depth),
+    local(-shoulderWidth, torsoTop, depth),
+    local(shoulderWidth, torsoTop, depth),
+    local(hipWidth, torsoBottom, depth),
+    local(-hipWidth, torsoBottom, depth),
+  ];
+  const torso = torsoWorld.map(vertex => projectVisualizerPoint(vertex, camera, width, height));
+  const faceSets = [[0,1,2,3],[4,5,6,7],[0,4,7,3],[1,5,6,2]] as const;
+
+  faceSets.forEach((indices, faceIndex) => {
+    const points = indices.map(index => torso[index]);
+    if (points.some(vertex => vertex.depth <= .04)) return;
+    polygon(ctx, points);
+    ctx.fillStyle = crowdTone(point.seed, faceIndex === 1 ? .34 : .24);
+    ctx.fill();
+  });
+
+  const leftFoot = projectVisualizerPoint(local(-hipWidth * .58, 0, 0), camera, width, height);
+  const rightFoot = projectVisualizerPoint(local(hipWidth * .58, 0, 0), camera, width, height);
+  const leftHip = projectVisualizerPoint(local(-hipWidth * .52, torsoBottom, 0), camera, width, height);
+  const rightHip = projectVisualizerPoint(local(hipWidth * .52, torsoBottom, 0), camera, width, height);
+  ctx.strokeStyle = crowdTone(point.seed, .34);
+  ctx.lineWidth = Math.max(.7, apparent * .16);
+  ctx.beginPath();
+  ctx.moveTo(leftHip.x, leftHip.y); ctx.lineTo(leftFoot.x, leftFoot.y);
+  ctx.moveTo(rightHip.x, rightHip.y); ctx.lineTo(rightFoot.x, rightFoot.y);
+  ctx.stroke();
+
+  const headRadiusWorld = .105 + point.seed * .015;
+  const headEdge = projectVisualizerPoint(local(headRadiusWorld, stature * .9, 0), camera, width, height);
+  const headRadius = clamp(Math.hypot(headEdge.x - head.x, headEdge.y - head.y), 1.4, 7);
+  ctx.beginPath();
+  ctx.arc(head.x, head.y, headRadius, 0, Math.PI * 2);
+  ctx.fillStyle = crowdTone(point.seed, .42);
+  ctx.fill();
+  if (quality === 'high') {
+    ctx.strokeStyle = crowdTone(point.seed, .2);
+    ctx.lineWidth = .7;
+    ctx.stroke();
+  }
+}
+
+function drawCrowd(
+  ctx: CanvasRenderingContext2D,
+  camera: VisualizerCamera,
+  stage: StageDimensions,
+  width: number,
+  height: number,
+  quality: VisualizerQuality
+) {
+  const people = crowdPoints(stage, quality)
+    .map(point => ({
+      point,
+      projected: projectVisualizerPoint({ x: point.x, y: 1.55, z: point.z }, camera, width, height)
+    }))
+    .filter(item => item.projected.depth > .05)
+    .sort((a, b) => b.projected.depth - a.projected.depth);
+
+  ctx.save();
+  ctx.lineCap = 'round';
+  ctx.lineJoin = 'round';
+  const detailDepth = quality === 'high' ? 18 : quality === 'quality' ? 12 : 0;
+  for (const item of people) {
+    drawCrowdPerson(ctx, camera, width, height, item.point, quality, item.projected.depth <= detailDepth);
   }
   ctx.restore();
 }
-
 function drawFixtureBodies(ctx: CanvasRenderingContext2D, snapshot: VisualizerSnapshot, camera: VisualizerCamera, width: number, height: number) {
   snapshot.patch.forEach((fixture, index) => {
     const geometry = fixtureGeometryState(snapshot.output, fixture, index, snapshot.patch.length, snapshot.dimensions);
