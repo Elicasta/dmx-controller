@@ -42,6 +42,7 @@ export type PortableBackupImport = {
   path: string;
   manifestJson: string;
   importedMedia: number;
+  restoreToken: string;
 };
 
 const EMPTY_LIBRARY: MediaLibrarySnapshot = { version: 1, folders: [], assets: [] };
@@ -209,13 +210,25 @@ export async function importPortableBackup() {
   try {
     manifest = JSON.parse(result.manifestJson);
   } catch {
+    await cancelPortableBackupRestore(result.restoreToken).catch(() => {});
     throw new Error('Portable backup manifest could not be parsed after import.');
   }
   const candidate = manifest as Partial<PortableBackupManifest>;
   if (candidate.format !== 'lumarig-portable-backup' || candidate.version !== 1 || !('programState' in candidate)) {
+    await cancelPortableBackupRestore(result.restoreToken).catch(() => {});
     throw new Error('This file is not a supported LumaRig portable backup.');
   }
   return { ...result, manifest: candidate as PortableBackupManifest };
+}
+
+export async function commitPortableBackupRestore(restoreToken: string) {
+  requireNativeMediaLibrary();
+  return invoke<number>('media_commit_portable_backup_restore', { restoreToken });
+}
+
+export async function cancelPortableBackupRestore(restoreToken: string) {
+  if (!nativeMediaLibraryAvailable()) return;
+  await invoke('media_cancel_portable_backup_restore', { restoreToken });
 }
 
 export function countMediaIds(value: unknown): Record<string, number> {
