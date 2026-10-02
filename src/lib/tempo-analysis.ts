@@ -51,11 +51,8 @@ function correlation(envelope: Float64Array, lag:number) {
   return left>0&&right>0?dot/Math.sqrt(left*right):0;
 }
 
-function candidateScore(envelope:Float64Array,sampleMs:number,bpm:number):Candidate{
-  const lag=60000/bpm/sampleMs;
-  const scores=[-1,0,1].map(delta=>correlation(envelope,lag+delta));
-  const score=Math.max(...scores);
-  return {bpm,lag,score};
+function candidateForLag(envelope:Float64Array,sampleMs:number,lag:number):Candidate{
+  return {bpm:60000/(lag*sampleMs),lag,score:correlation(envelope,lag)};
 }
 
 function chooseCanonical(candidates:Candidate[]){
@@ -110,7 +107,9 @@ export function analyzeTempo(wave:Waveform):TempoAnalysis {
   if(!wave.peaks.length||!Number.isFinite(wave.durationMs)||wave.durationMs<=0)throw Error('Waveform is empty.');
   const {envelope,sampleMs}=onsetEnvelope(wave);
   const candidates:Candidate[]=[];
-  for(let bpm=50;bpm<=220;bpm+=.5)candidates.push(candidateScore(envelope,sampleMs,bpm));
+  const minLag=Math.max(2,Math.floor(60000/220/sampleMs));
+  const maxLag=Math.min(envelope.length-5,Math.ceil(60000/50/sampleMs));
+  for(let lag=minLag;lag<=maxLag;lag++)candidates.push(candidateForLag(envelope,sampleMs,lag));
   const best=chooseCanonical(candidates);
   if(!best)throw Error('Tempo could not be analyzed.');
   const sorted=[...candidates].sort((a,b)=>b.score-a.score);
