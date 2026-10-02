@@ -160,6 +160,49 @@ export async function saveCloudShow(config: RemoteRelayConfig, input: {
   };
 }
 
+const CLOUD_MEDIA_BUCKET = 'lumarig-show-media';
+
+function safeObjectSegment(value: string) {
+  return value.replace(/[^a-z0-9._-]/gi, '_').slice(0, 180);
+}
+
+function cloudMediaPath(userId: string, showId: string, mediaId: string) {
+  return `${userId}/${safeObjectSegment(showId)}/${safeObjectSegment(mediaId)}`;
+}
+
+export async function uploadCloudShowMedia(
+  config: RemoteRelayConfig,
+  showId: string,
+  mediaId: string,
+  blob: Blob
+) {
+  const { client, userId } = await operatorClient(config);
+  const result = await client.storage.from(CLOUD_MEDIA_BUCKET).upload(
+    cloudMediaPath(userId, showId, mediaId),
+    blob,
+    {
+      upsert: true,
+      contentType: blob.type || 'application/octet-stream',
+      cacheControl: '3600'
+    }
+  );
+  dbError(result.error, 'Show media could not be uploaded.');
+}
+
+export async function downloadCloudShowMedia(
+  config: RemoteRelayConfig,
+  showId: string,
+  mediaId: string
+): Promise<Blob> {
+  const { client, userId } = await operatorClient(config);
+  const result = await client.storage.from(CLOUD_MEDIA_BUCKET).download(
+    cloudMediaPath(userId, showId, mediaId)
+  );
+  dbError(result.error, 'Show media could not be downloaded.');
+  if (!result.data) throw new Error('Cloud media returned no file.');
+  return result.data;
+}
+
 function randomPairingCode() {
   const value = new Uint32Array(1);
   crypto.getRandomValues(value);
