@@ -1,5 +1,6 @@
 use serde::{Deserialize, Serialize};
 use std::{
+    collections::HashSet,
     fs::{self, File, OpenOptions},
     io::{Read, Write},
     path::{Path, PathBuf},
@@ -85,7 +86,7 @@ impl Default for MediaRegistry {
     }
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct PortableMediaDescriptor {
     id: String,
@@ -111,6 +112,14 @@ pub struct PortableBackupImport {
     pub path: String,
     pub manifest_json: String,
     pub imported_media: usize,
+    pub restore_token: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct PortableRestorePlan {
+    media: Vec<PortableMediaDescriptor>,
+    media_folders: Vec<MediaFolder>,
 }
 
 fn now_ms() -> u64 {
@@ -784,6 +793,25 @@ pub fn media_export_portable_backup(
     Ok(Some(path.to_string_lossy().to_string()))
 }
 
+fn valid_restore_token(value: &str) -> bool {
+    Uuid::parse_str(value).is_ok()
+}
+
+fn valid_media_id(value: &str) -> bool {
+    !value.is_empty()
+        && value.len() <= 180
+        && value
+            .chars()
+            .all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '-' | '_' | '.' | ':'))
+}
+
+fn restore_root(app: &AppHandle, token: &str) -> Result<PathBuf, String> {
+    if !valid_restore_token(token) {
+        return Err("Portable restore token is invalid.".to_string());
+    }
+    Ok(library_root(app)?.join(".restore").join(token))
+}
+
 #[tauri::command]
 pub fn media_import_portable_backup(
     app: AppHandle,
@@ -822,12 +850,25 @@ pub fn media_import_portable_backup(
     if header.format != BACKUP_FORMAT || header.version != BACKUP_VERSION {
         return Err("This LumaRig backup version is not supported.".to_string());
     }
+    if header.media.len() > 10_000 {
+        return Err("Portable backup contains too many media entries.".to_string());
+    }
+    let mut ids = HashSet::new();
+    for descriptor in &header.media {
+        if !valid_media_id(&descriptor.id) || descriptor.name.trim().is_empty() || descriptor.name.len() > 512 {
+            return Err("Portable backup contains an invalid media descriptor.".to_string());
+        }
+        if !ids.insert(descriptor.id.clone()) {
+            return Err(format!("Portable backup contains duplicate media id: {}", descriptor.id));
+        }
+    }
 
-    let staging_root = library_root(&app)?.join(".restore").join(Uuid::new_v4().to_string());
+    let restore_token = Uuid::new_v4().to_string();
+    let staging_root = restore_root(&app, &restore_token)?;
     fs::create_dir_all(&staging_root)
         .map_err(|error| io_error("Backup restore staging folder could not be created", error))?;
-    let restore_result = (|| -> Result<Vec<(PortableMediaDescriptor, PathBuf)>, String> {
-        let mut staged = Vec::new();
+
+    let restore_result = (|| -> Result<(), String> {
         for descriptor in &header.media {
             let entry_name = format!(
                 "media/{}/{}",
@@ -849,21 +890,61 @@ pub fn media_import_portable_backup(
                 File::create(&target).map_err(|error| io_error("Restored media could not be staged", error))?;
             std::io::copy(&mut entry, &mut output)
                 .map_err(|error| io_error("Restored media could not be extracted", error))?;
-            staged.push((descriptor.clone(), target));
         }
-        Ok(staged)
+        let plan = PortableRestorePlan {
+            media: header.media.clone(),
+            media_folders: header.media_folders.clone(),
+        };
+        let plan_json = serde_json::to_vec(&plan)
+            .map_err(|error| io_error("Portable restore plan could not be serialized", error))?;
+        fs::write(staging_root.join("plan.json"), plan_json)
+            .map_err(|error| io_error("Portable restore plan could not be staged", error))?;
+        Ok(())
     })();
 
-    let staged = match restore_result {
-        Ok(value) => value,
-        Err(error) => {
-            let _ = fs::remove_dir_all(&staging_root);
-            return Err(error);
-        }
-    };
+    if let Err(error) = restore_result {
+        let _ = fs::remove_dir_all(&staging_root);
+        return Err(error);
+    }
+
+    Ok(Some(PortableBackupImport {
+        path: path.to_string_lossy().to_string(),
+        manifest_json,
+        imported_media: header.media.len(),
+        restore_token,
+    }))
+}
+
+#[tauri::command]
+pub fn media_cancel_portable_backup_restore(
+    app: AppHandle,
+    state: State<'_, MediaLibraryState>,
+    restore_token: String,
+) -> Result<(), String> {
+    let _guard = state.lock.lock().map_err(|_| "Media library lock failed.".to_string())?;
+    let staging_root = restore_root(&app, &restore_token)?;
+    if staging_root.exists() {
+        fs::remove_dir_all(staging_root)
+            .map_err(|error| io_error("Portable restore staging folder could not be removed", error))?;
+    }
+    Ok(())
+}
+
+#[tauri::command]
+pub fn media_commit_portable_backup_restore(
+    app: AppHandle,
+    state: State<'_, MediaLibraryState>,
+    restore_token: String,
+) -> Result<usize, String> {
+    let _guard = state.lock.lock().map_err(|_| "Media library lock failed.".to_string())?;
+    let staging_root = restore_root(&app, &restore_token)?;
+    let plan_bytes = fs::read(staging_root.join("plan.json"))
+        .map_err(|error| io_error("Portable restore plan is missing", error))?;
+    let plan: PortableRestorePlan = serde_json::from_slice(&plan_bytes)
+        .map_err(|error| io_error("Portable restore plan is invalid", error))?;
 
     let mut registry = read_registry(&app)?;
-    for folder in header.media_folders {
+    for folder in plan.media_folders {
         if !registry.folders.iter().any(|existing| existing.id == folder.id) {
             registry.folders.push(folder);
         }
@@ -871,37 +952,63 @@ pub fn media_import_portable_backup(
     fs::create_dir_all(managed_files_dir(&app)?)
         .map_err(|error| io_error("Managed media folder could not be created", error))?;
 
-    for (descriptor, staged_path) in staged {
-        let destination = managed_path(&app, &descriptor.id, &descriptor.name)?;
-        if destination.is_file() {
-            fs::remove_file(&destination)
-                .map_err(|error| io_error("Existing managed media could not be replaced", error))?;
-        }
-        fs::rename(&staged_path, &destination)
-            .map_err(|error| io_error("Restored media could not be committed", error))?;
-        allow_asset(&app, &destination)?;
-        let metadata = fs::metadata(&destination)
-            .map_err(|error| io_error("Restored media metadata is unavailable", error))?;
-        let previous = registry.assets.iter().find(|asset| asset.id == descriptor.id).cloned();
-        let asset = StoredMediaAsset {
-            id: descriptor.id,
-            name: descriptor.name,
-            folder_id: descriptor.folder_id.filter(|id| registry.folders.iter().any(|folder| &folder.id == id)),
-            source_mode: "copy".to_string(),
-            path: destination.to_string_lossy().to_string(),
-            kind: descriptor.kind.unwrap_or_else(|| detect_kind(&destination)),
-            size: metadata.len(),
-            created_at: previous.as_ref().map(|asset| asset.created_at).unwrap_or_else(now_ms),
-            modified_at: file_modified_ms(&destination),
-        };
-        upsert_asset(&mut registry, asset);
-    }
-    let _ = fs::remove_dir_all(&staging_root);
-    write_registry(&app, &registry)?;
+    let mut imported = 0usize;
+    let mut committed_paths = Vec::new();
 
-    Ok(Some(PortableBackupImport {
-        path: path.to_string_lossy().to_string(),
-        manifest_json,
-        imported_media: header.media.len(),
-    }))
+    let commit_result = (|| -> Result<(), String> {
+        for descriptor in plan.media {
+            // A media id is a stable identity. If this computer already has a
+            // healthy asset with that id, preserve it rather than clobbering a
+            // user's local file during restore.
+            if let Some(existing) = registry.assets.iter().find(|asset| asset.id == descriptor.id) {
+                if Path::new(&existing.path).is_file() {
+                    continue;
+                }
+            }
+
+            let staged_path = staging_root.join(format!(
+                "{}--{}",
+                sanitize_file_name(&descriptor.id),
+                sanitize_file_name(&descriptor.name)
+            ));
+            if !staged_path.is_file() {
+                return Err(format!("Staged backup media is missing: {}", descriptor.name));
+            }
+            let destination = managed_path(&app, &descriptor.id, &descriptor.name)?;
+            if destination.exists() {
+                return Err(format!("Managed media destination already exists unexpectedly: {}", descriptor.name));
+            }
+            fs::rename(&staged_path, &destination)
+                .map_err(|error| io_error("Restored media could not be committed", error))?;
+            committed_paths.push(destination.clone());
+            allow_asset(&app, &destination)?;
+            let metadata = fs::metadata(&destination)
+                .map_err(|error| io_error("Restored media metadata is unavailable", error))?;
+            let previous = registry.assets.iter().find(|asset| asset.id == descriptor.id).cloned();
+            let asset = StoredMediaAsset {
+                id: descriptor.id,
+                name: descriptor.name,
+                folder_id: descriptor.folder_id.filter(|id| registry.folders.iter().any(|folder| &folder.id == id)),
+                source_mode: "copy".to_string(),
+                path: destination.to_string_lossy().to_string(),
+                kind: descriptor.kind.unwrap_or_else(|| detect_kind(&destination)),
+                size: metadata.len(),
+                created_at: previous.as_ref().map(|asset| asset.created_at).unwrap_or_else(now_ms),
+                modified_at: file_modified_ms(&destination),
+            };
+            upsert_asset(&mut registry, asset);
+            imported += 1;
+        }
+        write_registry(&app, &registry)
+    })();
+
+    if let Err(error) = commit_result {
+        for path in committed_paths {
+            let _ = fs::remove_file(path);
+        }
+        return Err(error);
+    }
+
+    let _ = fs::remove_dir_all(&staging_root);
+    Ok(imported)
 }
