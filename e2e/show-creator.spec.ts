@@ -1156,10 +1156,14 @@ for(const width of [650,820,1280])test(`new Timeline controls remain spaced and 
 test('Timeline capture keeps trimmed Song media running through Live navigation',async({page})=>{
   await seed(page);await page.goto('/');await page.getByRole('button',{name:'SHOW',exact:true}).click();await page.getByRole('button',{name:'Timeline',exact:true}).click();
   await page.getByLabel('Load timeline audio').setInputFiles({name:'record-clock.wav',mimeType:'audio/wav',buffer:wav()});
+  await expect(page.getByLabel('Trim out seconds')).toHaveValue('3');
+  const targetTimeline=await page.getByLabel('Timeline show').inputValue();
   await page.getByLabel('Audio starts at bar',{exact:true}).fill('2');await page.getByLabel('Trim in seconds').fill('0.5');await page.getByLabel('Trim out seconds').fill('2.5');
   await page.locator('.bar-ruler').click({position:{x:36,y:20}});await page.getByRole('button',{name:'● Record',exact:true}).click();
   await expect.poll(()=>page.locator('audio').evaluate((a:HTMLAudioElement)=>a.paused)).toBe(false);await expect.poll(()=>page.locator('audio').evaluate((a:HTMLAudioElement)=>a.currentTime)).toBeGreaterThan(.5);
-  await page.getByRole('button',{name:'Stop + save',exact:true}).click();await expect.poll(async()=>((await readShow(page)).timeline?.takeClips??[]).length).toBe(1);expect((await readShow(page)).timeline.takeClips[0].startBar).toBe(1);
+  await page.getByRole('button',{name:'Stop + save',exact:true}).click();
+  const savedTimeline=async()=>{const show=await readShow(page);return targetTimeline?show.timelineShows.find((t:any)=>t.id===targetTimeline).timeline:show.timeline;};
+  await expect.poll(async()=>((await savedTimeline()).takeClips??[]).length).toBe(1);expect((await savedTimeline()).takeClips[0].startBar).toBe(1);
 });
 
 test('Select all, copy, paste and undo operate on Sections and fixture patch editing',async({page})=>{

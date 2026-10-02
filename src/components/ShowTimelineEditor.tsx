@@ -251,6 +251,7 @@ export default function ShowTimelineEditor(props: Props) {
     audioRef.current?.pause();
   }
   function stop() {
+    if(latest.current.keepMediaOnRelease?.())return;
     pause();
     cursorRef.current = 0;
     setCursor(0);
@@ -259,6 +260,7 @@ export default function ShowTimelineEditor(props: Props) {
     latest.current.onReset?.();
   }
   function seek(bar: number) {
+    if(latest.current.keepMediaOnRelease?.())return;
     const next = clamp(bar, 0, 100000);
     cursorRef.current = next;
     setCursor(next);
@@ -266,6 +268,7 @@ export default function ShowTimelineEditor(props: Props) {
     syncAudio(next * runtimeBarMs(latest.current), true);
   }
   function play() {
+    if(latest.current.keepMediaOnRelease?.())return;
     if (playingRef.current) {
       pause();
       return;
@@ -330,7 +333,7 @@ export default function ShowTimelineEditor(props: Props) {
     raf.current = requestAnimationFrame(tick);
   }
   useEffect(() => {
-    const stopTransport=()=>{++playAttempt.current;audioStarting.current=false;playingRef.current=false;setPlaying(false);latest.current.onPlayingChange?.(false);if(raf.current!==null)cancelAnimationFrame(raf.current);raf.current=null;latest.current.audioRef.current?.pause();latest.current.onStop();};
+    const stopTransport=()=>{if(latest.current.keepMediaOnRelease?.())return;++playAttempt.current;audioStarting.current=false;playingRef.current=false;setPlaying(false);latest.current.onPlayingChange?.(false);if(raf.current!==null)cancelAnimationFrame(raf.current);raf.current=null;latest.current.audioRef.current?.pause();latest.current.onStop();};
     window.addEventListener('lumarig-stop-timeline',stopTransport);
     return ()=>window.removeEventListener('lumarig-stop-timeline',stopTransport);
   },[]);
@@ -531,8 +534,8 @@ export default function ShowTimelineEditor(props: Props) {
         </div>
       </header>
       <div className="timeline-toolbar">
-        <button className="record-button" onClick={()=>{pause();props.onRecord?.(cursorRef.current,false);}}>● Record</button>
-        <button onClick={()=>{pause();props.onRecord?.(cursorRef.current,true);}}>● Overdub</button>
+        <button className="record-button" disabled={Boolean(props.keepMediaOnRelease?.())} onClick={()=>{pause();props.onRecord?.(cursorRef.current,false);}}>● Record</button>
+        <button disabled={Boolean(props.keepMediaOnRelease?.())} onClick={()=>{pause();props.onRecord?.(cursorRef.current,true);}}>● Overdub</button>
         <button
           className="console-primary"
           disabled={!timeline.clips.length && !timeline.videoClips?.length && !timeline.takeClips?.length && !audioUrl}

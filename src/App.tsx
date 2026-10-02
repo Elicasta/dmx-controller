@@ -1118,7 +1118,7 @@ export default function App() {
   useEffect(() => writeCompatibilityStorage(CUSTOM_FX_STORAGE_KEY, JSON.stringify(customEffects)), [customEffects]);
   const workspaceCheckpointRef = useRef<Record<string, unknown>>({});
   workspaceCheckpointRef.current = { patch, stageElements, stageSettings, looks:savedLooks, customEffects, projects:showLibrary, midiMappings, settings, sectionPresets, tempo:{bpm:effectBpm,locked:tempoLocked} };
-  const editHistory=useEditHistory({show:showFile,patch,stageElements,stageSettings,looks:savedLooks,customEffects,sectionPresets},value=>{
+  const editHistory=useEditHistory({show:{...showFile,groups:fixtureGroups},patch,stageElements,stageSettings,looks:savedLooks,customEffects,sectionPresets},value=>{
     window.dispatchEvent(new Event('lumarig-stop-timeline'));stopTimeline();stopFade();stopEffect(false);
     setShowFile(value.show);setPatch(value.patch);setStageElements(value.stageElements);setStageSettings(value.stageSettings);setSavedLooks(value.looks);setCustomEffects(value.customEffects);setSectionPresets(value.sectionPresets);setActiveStagePresetId(null);
   },libraryReady);
@@ -1780,6 +1780,7 @@ export default function App() {
     audioArmedRef.current=false; setAudioArmed(false);
   }
   function adoptCueContext(cue: ShowCue, clipId?: string, position?: number) {
+    if(timelineRecordingOrigin.current && showRecordingActiveRef.current){setActiveCueId(cue.id);setActiveSectionId(cue.sourceSectionId??'');selectCueTargets(cue);return;}
     takeEditingPlaybackAuthority();
     const context = cueContext(showFile, cue.id, timelineShowId, clipId);
     const song = songsForShow(showFile).find(item => item.name === cue.trackName);
@@ -3965,6 +3966,7 @@ export default function App() {
     setMessage(name+' imported as a collapsible timeline show. Relink its audio before playback.');
   }
   function renderTimelineFrame(elapsedMs:number) {
+    if(timelineRecordingOrigin.current && showRecordingActiveRef.current)return;
     ++cueLaunchGeneration.current;
     updateTimelineVideoFrame(elapsedMs);
     if(!timelineBaseRef.current){takeEditingPlaybackAuthority();if(cueFollowTimerRef.current!==null)window.clearTimeout(cueFollowTimerRef.current);stopFade();stopEffect(false);setAudioArmed(false);timelineBaseRef.current=[...universeRef.current];}
