@@ -3215,3 +3215,15 @@ body,#root { min-width:0; width:100%; overflow:hidden; }
 @media(max-width:700px){
   .cue-context-menu>div{position:fixed;right:12px;left:12px;top:auto;bottom:46px;min-width:0}
 }
+
+/* Song tempo analysis */
+.song-tempo-analysis{display:flex;align-items:center;justify-content:space-between;gap:8px;min-width:0;margin-top:6px;padding:6px 7px;border:1px solid #2c4238;border-radius:5px;background:#0d1914}
+.song-tempo-analysis>span{display:grid;min-width:0;gap:2px}
+.song-tempo-analysis b{color:#b7e7c9;font-size:8px}
+.song-tempo-analysis small{overflow:hidden;color:#748b7e;font-size:7px;text-overflow:ellipsis;white-space:nowrap}
+.song-tempo-analysis>div{display:flex;flex-wrap:wrap;justify-content:flex-end;gap:4px}
+.song-tempo-analysis button{min-height:26px;padding:4px 7px;border:1px solid #355847;background:#10221a;color:#9ce0b8;font-size:7px;white-space:nowrap}
+.timeline-tempo-analysis{display:grid;min-width:105px;padding:5px 7px;border:1px solid #2c4238;border-radius:4px;background:#0d1914}
+.timeline-tempo-analysis b{font-size:8px;color:#b7e7c9}
+.timeline-tempo-analysis small{font-size:7px;color:#72877b}
+@media(max-width:780px){.song-tempo-analysis{align-items:stretch;flex-direction:column}.song-tempo-analysis>div{justify-content:flex-start}}
