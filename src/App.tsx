@@ -2770,6 +2770,9 @@ export default function App() {
     showTrackAudioRef.current?.pause();
     if(showTrackUrlRef.current) URL.revokeObjectURL(showTrackUrlRef.current);
     showTrackUrlRef.current=''; setShowTrackUrl(''); setShowTrackName('');setShowTrackDurationMs(0);setShowTrackPositionMs(0);stopTimeline();
+    releaseSharedTransport('tracks',0);
+    connectionManagerRef.current!.disconnect('tracks','No local track loaded');
+    refreshConnectionRecords();
   }
 
   function captureShowRecordingFrame(timeMs: number) {
@@ -4795,6 +4798,11 @@ export default function App() {
     const url = URL.createObjectURL(file);
     showTrackUrlRef.current = url;
     setShowTrackUrl(url); setShowTrackName(name); setShowTrackDurationMs(0); setShowTrackPositionMs(0);
+    connectionManagerRef.current!.upsert({
+      id:'tracks',kind:'media',name:'Local Tracks',status:'connected',
+      capabilities:['transport','audio','recording'],lastSeenAt:Date.now(),lastError:'',detail:name
+    });
+    refreshConnectionRecords();
   }
   async function attachBankMedia(song: SongRecord, file: File) {
     if (!file.type.startsWith('audio/') && file.type !== 'video/mp4' && !/\.(wav|mp3|m4a|aiff?|flac|ogg|mp4)$/i.test(file.name)) throw Error('Choose an audio file or MP4.');
