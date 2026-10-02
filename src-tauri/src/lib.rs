@@ -158,6 +158,8 @@ pub fn run() {
             media_library::media_finish_managed_write,
             media_library::media_export_portable_backup,
             media_library::media_import_portable_backup,
+            media_library::media_export_portable_package,
+            media_library::media_import_portable_package,
             media_library::media_commit_portable_backup_restore,
             media_library::media_cancel_portable_backup_restore,
             video_export::begin_video_export,
