@@ -1,7 +1,7 @@
 [package]
 name = "dmx-controller-mac-v1"
 version = "0.2.7"
-description = "Mac-first DMX controller with Anyma uDMX test output"
+description = "Cross-platform LumaRig lighting controller and show engine"
 authors = ["EC Creative Studios"]
 edition = "2021"
 
