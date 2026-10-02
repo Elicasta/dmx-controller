@@ -1,4 +1,6 @@
-import type { ShowFile } from './show';
+import type { ShowFile, ShowCue, FixtureGroup } from './show';
+import { findMode, type PatchedFixture } from './fixtures';
+import { fixturesInGroup } from '../core/console-domain';
 import type { ShowTimeline } from './show-design';
 
 /** Resolve cue navigation once for every editor, including repeated cue instances. */
@@ -16,4 +18,18 @@ export function cueContext(show: ShowFile, cueId: string, currentTimelineId = ''
   const clips = owner?.timeline?.clips.filter(clip => clip.cueId === cueId) ?? [];
   const clip = clips.find(item => item.id === preferredClipId) ?? [...clips].sort((a,b) => a.startBar-b.startBar)[0];
   return { timelineId: owner?.id ?? '', timeline: owner?.timeline, clipId: clip?.id ?? '', bar: clip?.startBar ?? 0 };
+}
+
+/** Include actual patch targets so fixture inspectors cannot retain another cue's focus. */
+export function cueTargetIds(show: ShowFile, cue: ShowCue, fixtures: readonly PatchedFixture[], groups: readonly FixtureGroup[]) {
+  const valid=new Set(fixtures.map(item=>item.id));
+  const section=show.creatorSections?.find(item=>item.id===cue.sourceSectionId);
+  const group=groups.find(item=>item.id===section?.groupId);
+  let targets=[...new Set((cue.effectStack ?? []).filter(layer=>layer.enabled !== false).flatMap(layer=>layer.targetIds))].filter(id=>valid.has(id));
+  const channels=new Set(cue.changes?.map(([channel])=>channel) ?? []);
+  const staticTargets=fixtures.filter(fixture=>Array.from({length:findMode(fixture)?.channelCount ?? 1},(_,offset)=>fixture.address+offset).some(channel=>channels.has(channel))).map(item=>item.id);
+  targets=[...new Set([...targets,...(group ? fixturesInGroup(fixtures,group).map(item=>item.id) : []),...staticTargets])];
+  if (!targets.length && cue.universe?.length===512) targets=fixtures.map(item=>item.id);
+  const targetSet=new Set(targets);
+  return fixtures.filter(item=>targetSet.has(item.id)).map(item=>item.id);
 }
