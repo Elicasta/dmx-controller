@@ -1,6 +1,7 @@
 import { followTimelineVideo } from '../lib/timeline-video';
 import { useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent, type WheelEvent as ReactWheelEvent } from 'react';
 import { fixtureGeometryState } from '../core/fixture-geometry';
+import { intersectBeamWithStage, type BeamSurface } from '../core/beam-intersection';
 import { cameraBasis, cameraOrbitFromPose, orbitVisualizerCamera, projectVisualizerPoint, visualizerCameraPreset, visualizerFlybyCamera, type VisualizerCamera, type VisualizerCameraPreset } from '../core/visualizer-camera';
 import { pointAlongRay, type EulerDegrees, type StageDimensions, type Vec3 } from '../core/geometry';
 import { findMode, readFixtureParameter, type PatchedFixture } from '../lib/fixtures';
@@ -61,6 +62,52 @@ function add(a: Vec3, b: Vec3): Vec3 {
 
 function scale(value: Vec3, amount: number): Vec3 {
   return { x: value.x * amount, y: value.y * amount, z: value.z * amount };
+}
+
+function magnitude(value: Vec3) {
+  return Math.hypot(value.x, value.y, value.z);
+}
+
+function normalizeVec(value: Vec3): Vec3 {
+  const length = magnitude(value);
+  if (length < 1e-9) return { x: 0, y: -1, z: 0 };
+  return scale(value, 1 / length);
+}
+
+function cross(left: Vec3, right: Vec3): Vec3 {
+  return {
+    x: left.y * right.z - left.z * right.y,
+    y: left.z * right.x - left.x * right.z,
+    z: left.x * right.y - left.y * right.x,
+  };
+}
+
+function beamBasis(directionInput: Vec3) {
+  const direction = normalizeVec(directionInput);
+  const reference = Math.abs(direction.y) < .88
+    ? { x: 0, y: 1, z: 0 }
+    : { x: 1, y: 0, z: 0 };
+  const side = normalizeVec(cross(direction, reference));
+  const up = normalizeVec(cross(side, direction));
+  return { direction, side, up };
+}
+
+function radialDirection(side: Vec3, up: Vec3, angle: number): Vec3 {
+  return add(scale(side, Math.cos(angle)), scale(up, Math.sin(angle)));
+}
+
+function rgba(color: string, alpha: number) {
+  return color.replace('rgb(', 'rgba(').replace(')', `,${clamp(alpha, 0, 1)})`);
+}
+
+function surfaceAxes(surface: BeamSurface): [Vec3, Vec3] {
+  if (surface === 'floor' || surface === 'ceiling') {
+    return [{ x: 1, y: 0, z: 0 }, { x: 0, y: 0, z: 1 }];
+  }
+  if (surface === 'back-wall' || surface === 'front-wall') {
+    return [{ x: 1, y: 0, z: 0 }, { x: 0, y: 1, z: 0 }];
+  }
+  return [{ x: 0, y: 0, z: 1 }, { x: 0, y: 1, z: 0 }];
 }
 
 function rotateLocal(point: Vec3, rotation: EulerDegrees): Vec3 {
@@ -363,6 +410,86 @@ function drawStageDeck(ctx: CanvasRenderingContext2D, camera: VisualizerCamera, 
   ctx.stroke();
 }
 
+function drawLightSpill(
+  ctx: CanvasRenderingContext2D,
+  snapshot: VisualizerSnapshot,
+  camera: VisualizerCamera,
+  width: number,
+  height: number,
+  haze: number,
+  quality: VisualizerQuality
+) {
+  if (quality === 'fast') return;
+
+  ctx.save();
+  ctx.globalCompositeOperation = 'lighter';
+
+  snapshot.patch.forEach((fixture, index) => {
+    const intensity = fixtureIntensity(snapshot, fixture);
+    if (intensity <= .015) return;
+
+    const geometry = fixtureGeometryState(
+      snapshot.output,
+      fixture,
+      index,
+      snapshot.patch.length,
+      snapshot.dimensions
+    );
+    const hit = intersectBeamWithStage(geometry.beam, snapshot.dimensions);
+    if (!hit) return;
+
+    const radius = clamp(
+      Math.tan(radians(geometry.beam.angleDegrees / 2)) * hit.distance,
+      .08,
+      Math.max(snapshot.dimensions.roomWidth, snapshot.dimensions.roomHeight) * .42
+    );
+    const [axisA, axisB] = surfaceAxes(hit.surface);
+    const center = projectVisualizerPoint(hit.point, camera, width, height);
+    if (center.depth <= .02) return;
+
+    const color = fixtureColor(snapshot, fixture);
+    const segments = quality === 'high' ? 24 : 16;
+    const layers = quality === 'high'
+      ? [{ factor: 1, alpha: .045 }, { factor: .7, alpha: .07 }, { factor: .38, alpha: .12 }]
+      : [{ factor: 1, alpha: .04 }, { factor: .48, alpha: .09 }];
+
+    for (const layer of layers) {
+      const points: Projected[] = [];
+      for (let step = 0; step < segments; step += 1) {
+        const angle = step / segments * Math.PI * 2;
+        const world = add(
+          hit.point,
+          add(
+            scale(axisA, Math.cos(angle) * radius * layer.factor),
+            scale(axisB, Math.sin(angle) * radius * layer.factor)
+          )
+        );
+        points.push(projectVisualizerPoint(world, camera, width, height));
+      }
+      if (points.some((point) => point.depth <= .02)) continue;
+      polygon(ctx, points);
+      ctx.fillStyle = rgba(color, layer.alpha * intensity * (.65 + haze * .8));
+      ctx.fill();
+    }
+
+    if (quality === 'high') {
+      const hotRadius = Math.max(.03, radius * .13);
+      const [axisAHot] = surfaceAxes(hit.surface);
+      const edge = projectVisualizerPoint(add(hit.point, scale(axisAHot, hotRadius)), camera, width, height);
+      const screenRadius = clamp(Math.hypot(edge.x - center.x, edge.y - center.y), 1.5, 42);
+      const glow = ctx.createRadialGradient(center.x, center.y, 0, center.x, center.y, screenRadius);
+      glow.addColorStop(0, rgba(color, .32 * intensity));
+      glow.addColorStop(1, rgba(color, 0));
+      ctx.fillStyle = glow;
+      ctx.beginPath();
+      ctx.arc(center.x, center.y, screenRadius, 0, Math.PI * 2);
+      ctx.fill();
+    }
+  });
+
+  ctx.restore();
+}
+
 function drawBeams(
   ctx: CanvasRenderingContext2D,
   snapshot: VisualizerSnapshot,
@@ -372,51 +499,95 @@ function drawBeams(
   haze: number,
   quality: VisualizerQuality
 ) {
-  const basis = cameraBasis(camera);
-  const length = Math.max(snapshot.dimensions.roomDepth, snapshot.dimensions.depth * 2.1);
+  const fallbackLength = Math.max(snapshot.dimensions.roomDepth, snapshot.dimensions.depth * 2.1);
+  const sliceCount = quality === 'high' ? 5 : quality === 'quality' ? 3 : 1;
+
   ctx.save();
   ctx.globalCompositeOperation = 'lighter';
 
   snapshot.patch.forEach((fixture, index) => {
     const intensity = fixtureIntensity(snapshot, fixture);
     if (intensity <= .01) return;
-    const geometry = fixtureGeometryState(snapshot.output, fixture, index, snapshot.patch.length, snapshot.dimensions);
+
+    const geometry = fixtureGeometryState(
+      snapshot.output,
+      fixture,
+      index,
+      snapshot.patch.length,
+      snapshot.dimensions
+    );
+    const hit = intersectBeamWithStage(geometry.beam, snapshot.dimensions);
+    const length = hit?.distance ?? fallbackLength;
     const endpoint = pointAlongRay(geometry.beam, length);
     const radius = Math.max(.03, Math.tan(radians(geometry.beam.angleDegrees / 2)) * length);
-    const start = projectVisualizerPoint(geometry.beam.origin, camera, width, height);
-    const endLeft = projectVisualizerPoint(add(endpoint, scale(basis.right, -radius)), camera, width, height);
-    const endRight = projectVisualizerPoint(add(endpoint, scale(basis.right, radius)), camera, width, height);
-    if (start.depth <= 0 || endLeft.depth <= 0 || endRight.depth <= 0) return;
+    const basis = beamBasis(geometry.beam.direction);
+    const startCenter = projectVisualizerPoint(geometry.beam.origin, camera, width, height);
+    const endCenter = projectVisualizerPoint(endpoint, camera, width, height);
+    if (startCenter.depth <= .02 || endCenter.depth <= .02) return;
 
     const color = fixtureColor(snapshot, fixture);
-    const alpha = clamp((quality !== 'fast' ? .34 : .23) * intensity * (.35 + haze), .03, .7);
-    const gradient = ctx.createLinearGradient(start.x, start.y, (endLeft.x + endRight.x) / 2, (endLeft.y + endRight.y) / 2);
-    gradient.addColorStop(0, color.replace('rgb(', 'rgba(').replace(')', `,${alpha * .95})`));
-    gradient.addColorStop(.65, color.replace('rgb(', 'rgba(').replace(')', `,${alpha * .55})`));
-    gradient.addColorStop(1, color.replace('rgb(', 'rgba(').replace(')', ',0)'));
+    const baseAlpha = clamp(
+      (quality === 'high' ? .22 : quality === 'quality' ? .19 : .16)
+        * intensity
+        * (.42 + haze * 1.1),
+      .025,
+      .52
+    );
 
-    ctx.beginPath();
-    ctx.moveTo(start.x - 1.5, start.y);
-    ctx.lineTo(start.x + 1.5, start.y);
-    ctx.lineTo(endRight.x, endRight.y);
-    ctx.lineTo(endLeft.x, endLeft.y);
-    ctx.closePath();
-    ctx.fillStyle = gradient;
-    ctx.fill();
+    for (let slice = 0; slice < sliceCount; slice += 1) {
+      const angle = sliceCount === 1 ? 0 : slice / sliceCount * Math.PI;
+      const radial = radialDirection(basis.side, basis.up, angle);
+      const sourceRadius = Math.min(.045, radius * .04);
+      const startLeft = projectVisualizerPoint(
+        add(geometry.beam.origin, scale(radial, -sourceRadius)),
+        camera, width, height
+      );
+      const startRight = projectVisualizerPoint(
+        add(geometry.beam.origin, scale(radial, sourceRadius)),
+        camera, width, height
+      );
+      const endLeft = projectVisualizerPoint(add(endpoint, scale(radial, -radius)), camera, width, height);
+      const endRight = projectVisualizerPoint(add(endpoint, scale(radial, radius)), camera, width, height);
+      if ([startLeft,startRight,endLeft,endRight].some((point) => point.depth <= .02)) continue;
+
+      const gradient = ctx.createLinearGradient(
+        startCenter.x, startCenter.y, endCenter.x, endCenter.y
+      );
+      const sliceAlpha = baseAlpha / Math.max(1, sliceCount * .72);
+      gradient.addColorStop(0, rgba(color, sliceAlpha * 1.2));
+      gradient.addColorStop(.3, rgba(color, sliceAlpha));
+      gradient.addColorStop(.76, rgba(color, sliceAlpha * .54));
+      gradient.addColorStop(1, rgba(color, sliceAlpha * .08));
+
+      polygon(ctx, [startLeft, startRight, endRight, endLeft]);
+      ctx.fillStyle = gradient;
+      ctx.fill();
+    }
 
     if (quality !== 'fast') {
-      ctx.strokeStyle = color.replace('rgb(', 'rgba(').replace(')', `,${Math.min(.8, alpha * 1.45)})`);
-      ctx.lineWidth = Math.max(1, intensity * 1.6);
+      const haloRadius = Math.max(.04, radius * .62);
+      const haloLeft = projectVisualizerPoint(add(endpoint, scale(basis.side, -haloRadius)), camera, width, height);
+      const haloRight = projectVisualizerPoint(add(endpoint, scale(basis.side, haloRadius)), camera, width, height);
+      const haloSize = clamp(Math.hypot(haloRight.x - haloLeft.x, haloRight.y - haloLeft.y) / 2, 1, 70);
+      const halo = ctx.createRadialGradient(endCenter.x, endCenter.y, 0, endCenter.x, endCenter.y, haloSize);
+      halo.addColorStop(0, rgba(color, baseAlpha * .65));
+      halo.addColorStop(1, rgba(color, 0));
+      ctx.fillStyle = halo;
       ctx.beginPath();
-      ctx.moveTo(start.x, start.y);
-      ctx.lineTo((endLeft.x + endRight.x) / 2, (endLeft.y + endRight.y) / 2);
+      ctx.arc(endCenter.x, endCenter.y, haloSize, 0, Math.PI * 2);
+      ctx.fill();
+
+      ctx.strokeStyle = rgba(color, Math.min(.76, baseAlpha * 1.5));
+      ctx.lineWidth = Math.max(.8, intensity * (quality === 'high' ? 1.6 : 1.2));
+      ctx.beginPath();
+      ctx.moveTo(startCenter.x, startCenter.y);
+      ctx.lineTo(endCenter.x, endCenter.y);
       ctx.stroke();
     }
   });
 
   ctx.restore();
 }
-
 function crowdPoints(stage: StageDimensions, quality: VisualizerQuality) {
   const points: Vec3[] = [];
   const half = Math.min(stage.roomWidth / 2 - .8, Math.max(stage.width / 2, 4));
@@ -913,6 +1084,7 @@ export default function Visualizer3D({
         drawFloorGrid(context, camera, snapshot.dimensions, cssWidth, cssHeight, quality);
         drawStageDeck(context, camera, snapshot.dimensions, cssWidth, cssHeight);
         cameraRef.current = camera;
+        drawLightSpill(context, snapshot, camera, cssWidth, cssHeight, haze, quality);
         drawBeams(context, snapshot, camera, cssWidth, cssHeight, haze, quality);
 
         const faces = snapshot.elements.flatMap((element) => objectFaces(element, snapshot.dimensions, camera, cssWidth, cssHeight));
