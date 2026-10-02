@@ -23,7 +23,7 @@ This folder is the Max for Live side of the LumaRig Ableton integration.
 
 ## Timing
 
-The Max bridge is the Ableton transport authority while it is actively playing. It sends exact musical position at 20 Hz and LumaRig runs those updates through the shared transport engine before rendering Timeline output.
+The Max bridge is the Ableton transport authority while it is actively playing. It sends exact musical position at 40 Hz and LumaRig runs those updates through the shared transport engine before rendering Timeline output.
 
 MIDI Clock remains available as a fallback DAW transport, but it should not be armed as a second authority at the same time. The transport engine prevents Ableton, MIDI, Timeline and Studio from fighting over the playhead.
 
