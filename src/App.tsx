@@ -1743,7 +1743,9 @@ export default function App() {
       const source = mediaPosition(bar * 60000 / (song?.bpm ?? masterTempoBpm) * timeline.beatsPerBar,
         timeline.audioOffsetBars * 60000 / (song?.bpm ?? masterTempoBpm) * timeline.beatsPerBar,
         mediaWindow(timeline, showTrackDurationMs));
-      audio.currentTime = (source ?? mediaWindow(timeline, showTrackDurationMs).startMs) / 1000;
+      const bounds=mediaWindow(timeline,showTrackDurationMs);
+      const boundary=bar<timeline.audioOffsetBars ? bounds.startMs : bounds.endMs;
+      audio.currentTime = (source ?? (Number.isFinite(boundary) ? boundary : bounds.startMs)) / 1000;
     }
     timelineContextCueRef.current=cue.id;
     const layers = cue.effectStack?.filter(layer => layer.enabled !== false) ?? [];
@@ -4166,7 +4168,8 @@ export default function App() {
         setShowTrackDurationMs(duration);
         const bounds=mediaWindow(editingTimeline,duration);
         const source=mediaPosition(timelinePositionRef.current*60000/masterTempoBpm*editingTimeline.beatsPerBar,editingTimeline.audioOffsetBars*60000/masterTempoBpm*editingTimeline.beatsPerBar,bounds);
-        event.currentTarget.currentTime=(source ?? bounds.startMs)/1000;
+        const boundary=timelinePositionRef.current<editingTimeline.audioOffsetBars ? bounds.startMs : bounds.endMs;
+        event.currentTarget.currentTime=(source ?? (Number.isFinite(boundary) ? boundary : bounds.startMs))/1000;
       }} onTimeUpdate={(event) => setShowTrackPositionMs(event.currentTarget.currentTime * 1000)} onEnded={handleShowTrackEnded} />
       {dmxStatus.blackout && <div className="blackout-banner"><strong>BLACKOUT ACTIVE</strong><span>Programmed fixture values are preserved.</span><button onClick={toggleBlackout}>Release Blackout</button></div>}
       {showRecordingActive && <section className="console-recording-bar"><span className="recording-pulse" /><div><strong>RECORDING SHOW</strong><small>{showTrackName || 'Lighting only'} · {formatShowTime(showRecordingElapsedMs)}</small></div><button onClick={() => stopShowRecording(true)}>Stop + save</button><button onClick={() => stopShowRecording(false)}>Cancel</button></section>}
