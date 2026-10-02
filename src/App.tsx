@@ -3207,6 +3207,57 @@ export default function App() {
     await setBlackoutState(!dmxStatus.blackout, 'ui');
   }
 
+  function applyAbletonRuntimeSnapshot(input: AbletonLiveSnapshot, publishMetadata = false) {
+    const snapshot = sanitizeAbletonSnapshot(input);
+    const now = Date.now();
+    const wasDisconnected = !abletonLastSeenRef.current || now - abletonLastSeenRef.current > 2500;
+    abletonSnapshotRef.current = snapshot;
+    abletonLastSeenRef.current = now;
+
+    if (wasDisconnected) setAbletonConnected(true);
+    if (publishMetadata || wasDisconnected || now - abletonUiUpdateRef.current >= 100) {
+      abletonUiUpdateRef.current = now;
+      setAbletonSnapshot(snapshot);
+    }
+    if (wasDisconnected || now - abletonConnectionUpdateRef.current >= 1000) {
+      abletonConnectionUpdateRef.current = now;
+      connectionManagerRef.current!.upsert({
+        id:'ableton',
+        kind:'ableton',
+        name:'Ableton Live · Max Bridge',
+        status:'connected',
+        capabilities:['transport','tempo','song-position','locators'],
+        lastSeenAt:now,
+        lastError:'',
+        detail:`${snapshot.locators.length} locators · ${snapshot.bpm.toFixed(1)} BPM`
+      });
+      refreshConnectionRecords();
+    }
+
+    const rawPositionMs = snapshot.currentBeat * 60000 / snapshot.bpm;
+    const result = applySharedTransport({
+      source:'ableton',
+      playing:snapshot.playing,
+      positionMs:rawPositionMs,
+      bpm:snapshot.bpm,
+      claim:snapshot.playing,
+      release:!snapshot.playing
+    });
+    if (!result.accepted) return;
+
+    const bar = abletonTimelinePositionBar(snapshot);
+    const lightingTimelineElapsedMs = abletonTimelineElapsedMs(
+      snapshot,
+      editingTimeline.beatsPerBar,
+      masterTempoBpm,
+      externalTrack.lightingOffsetMs,
+    );
+    setShowTrackPositionMs(result.state.positionMs);
+    timelinePositionRef.current = bar;
+    setTimelinePositionBar(bar);
+    renderTimelineFrame(lightingTimelineElapsedMs);
+  }
+
   async function dispatchStudioBridgeCommand(id: string, command: StudioBridgeCommand) {
     const dispatcher = new StudioBridgeDispatcher({
       createShow: (identity: StudioSongIdentity) => {
@@ -3312,6 +3363,19 @@ export default function App() {
           release:!playing
         });
         if(!result.accepted) throw new Error(`Transport authority is currently held by ${result.state.source}.`);
+      },
+      syncAbletonSnapshot: (snapshot) => applyAbletonRuntimeSnapshot(snapshot, true),
+      syncAbletonTransport: (playing, currentBeat, bpm, beatsPerBar) => {
+        const current = abletonSnapshotRef.current;
+        applyAbletonRuntimeSnapshot({
+          setId: current?.setId ?? '',
+          setName: current?.setName ?? 'Ableton Live',
+          bpm,
+          beatsPerBar,
+          currentBeat,
+          playing,
+          locators: current?.locators ?? [],
+        });
       }
     });
     return dispatcher.dispatch(id, command);
