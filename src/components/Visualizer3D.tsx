@@ -206,6 +206,45 @@ function drawImageQuad(ctx: CanvasRenderingContext2D, source: CanvasImageSource,
   return true;
 }
 
+function quadPoint(points: readonly Projected[], u: number, v: number): Projected {
+  const [p0,p1,p2,p3]=points;
+  const w0=(1-u)*(1-v),w1=u*(1-v),w2=u*v,w3=(1-u)*v;
+  return {
+    x:p0.x*w0+p1.x*w1+p2.x*w2+p3.x*w3,
+    y:p0.y*w0+p1.y*w1+p2.y*w2+p3.y*w3,
+    depth:p0.depth*w0+p1.depth*w1+p2.depth*w2+p3.depth*w3
+  };
+}
+
+function framedScreenQuad(source: HTMLVideoElement | HTMLImageElement, element: StageElement, points: readonly Projected[]) {
+  const width=source instanceof HTMLVideoElement?source.videoWidth:source.naturalWidth;
+  const height=source instanceof HTMLVideoElement?source.videoHeight:source.naturalHeight;
+  const dimensions=element.dimensions ?? {x:16,y:9,z:.08};
+  const sourceAspect=width/Math.max(1,height);
+  const screenAspect=Math.max(.01,dimensions.x)/Math.max(.01,dimensions.y);
+  const fit=element.mediaSource?.kind!=='none' ? element.mediaSource?.fit ?? 'contain' : 'contain';
+  let fitX=1,fitY=1;
+  if(fit==='contain'){
+    if(sourceAspect>screenAspect)fitY=screenAspect/sourceAspect;
+    else fitX=sourceAspect/screenAspect;
+  }else{
+    if(sourceAspect>screenAspect)fitX=sourceAspect/screenAspect;
+    else fitY=screenAspect/sourceAspect;
+  }
+  const scaleValue=element.mediaSource?.kind!=='none' ? clamp(element.mediaSource?.scale ?? 1,.25,4) : 1;
+  const offsetX=element.mediaSource?.kind!=='none' ? clamp(element.mediaSource?.offsetX ?? 0,-1,1) : 0;
+  const offsetY=element.mediaSource?.kind!=='none' ? clamp(element.mediaSource?.offsetY ?? 0,-1,1) : 0;
+  const sx=fitX*scaleValue,sy=fitY*scaleValue;
+  const cx=.5+offsetX*.5,cy=.5+offsetY*.5;
+  const left=cx-sx/2,right=cx+sx/2,top=cy-sy/2,bottom=cy+sy/2;
+  return [
+    quadPoint(points,left,top),
+    quadPoint(points,right,top),
+    quadPoint(points,right,bottom),
+    quadPoint(points,left,bottom)
+  ];
+}
+
 function objectFaces(element: StageElement, stage: StageDimensions, camera: VisualizerCamera, width: number, height: number): Face[] {
   const corners = elementCorners(element, stage);
   const projected = corners.map((corner) => projectVisualizerPoint(corner, camera, width, height));
@@ -456,7 +495,12 @@ function drawFaces(
     if (face.screenElement) {
       const entry = media.get(face.screenElement.id);
       if (entry?.visible !== false && entry?.video.readyState && entry.video.videoWidth > 0) {
-        drawImageQuad(ctx, entry.video, face.points);
+        const framed=framedScreenQuad(entry.video,face.screenElement,face.points);
+        ctx.save();
+        polygon(ctx, face.points);
+        ctx.clip();
+        drawImageQuad(ctx, entry.video, framed);
+        ctx.restore();
         polygon(ctx, face.points);
         ctx.strokeStyle = 'rgba(228,239,244,.58)';
         ctx.stroke();
