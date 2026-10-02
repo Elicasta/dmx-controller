@@ -217,3 +217,46 @@ export async function importPortableBackup() {
   }
   return { ...result, manifest: candidate as PortableBackupManifest };
 }
+
+export function countMediaIds(value: unknown): Record<string, number> {
+  const counts: Record<string, number> = {};
+  const seen = new Set<object>();
+  const visit = (item: unknown) => {
+    if (!item || typeof item !== 'object') return;
+    if (seen.has(item)) return;
+    seen.add(item);
+    if (Array.isArray(item)) {
+      item.forEach(visit);
+      return;
+    }
+    const record = item as Record<string, unknown>;
+    if (typeof record.mediaId === 'string' && record.mediaId) {
+      counts[record.mediaId] = (counts[record.mediaId] ?? 0) + 1;
+    }
+    Object.values(record).forEach(visit);
+  };
+  visit(value);
+  return counts;
+}
+
+export function mediaNameForId(value: unknown, mediaId: string): string | undefined {
+  const seen = new Set<object>();
+  let result: string | undefined;
+  const visit = (item: unknown) => {
+    if (result || !item || typeof item !== 'object') return;
+    if (seen.has(item)) return;
+    seen.add(item);
+    if (Array.isArray(item)) {
+      item.forEach(visit);
+      return;
+    }
+    const record = item as Record<string, unknown>;
+    if (record.mediaId === mediaId) {
+      if (typeof record.mediaName === 'string' && record.mediaName) result = record.mediaName;
+      else if (typeof record.name === 'string' && record.name) result = record.name;
+    }
+    Object.values(record).forEach(visit);
+  };
+  visit(value);
+  return result;
+}
