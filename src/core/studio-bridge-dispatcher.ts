@@ -1,3 +1,4 @@
+import type { AbletonLiveSnapshot } from './ableton-live-sync';
 import type { StudioBridgeCommand, StudioBridgeResult, StudioSongIdentity } from './studio-bridge-protocol';
 import { STUDIO_BRIDGE_PROTOCOL } from './studio-bridge-protocol';
 import { resolveStudioBinding, saveStudioBinding } from './studio-bindings';
@@ -15,6 +16,8 @@ export type StudioBridgeActions = {
   stopRecordingPlayback: () => Promise<void> | void;
   setBlackout: (enabled: boolean) => Promise<void> | void;
   syncTransport: (playing: boolean, positionMs: number, bpm: number) => Promise<void> | void;
+  syncAbletonSnapshot: (snapshot: AbletonLiveSnapshot) => Promise<void> | void;
+  syncAbletonTransport: (playing: boolean, currentBeat: number, bpm: number, beatsPerBar: number) => Promise<void> | void;
 };
 
 export class StudioBridgeDispatcher {
@@ -50,6 +53,8 @@ export class StudioBridgeDispatcher {
         case 'record.stopPlayback': await this.actions.stopRecordingPlayback(); break;
         case 'blackout': await this.actions.setBlackout(command.enabled); break;
         case 'transport': await this.actions.syncTransport(command.playing, command.positionMs, command.bpm); break;
+        case 'ableton.snapshot': await this.actions.syncAbletonSnapshot(command.snapshot); break;
+        case 'ableton.transport': await this.actions.syncAbletonTransport(command.playing, command.currentBeat, command.bpm, command.beatsPerBar); break;
       }
       return { id, ok: true };
     } catch (error) {
