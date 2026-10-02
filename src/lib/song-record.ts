@@ -1,4 +1,6 @@
 export type SongRecord = {
+  versionOf?: string;
+  sourceRecordingId?: string;
   id: string;
   libraryId?: string;
   name: string;
@@ -11,6 +13,8 @@ export function isSongRecord(value: unknown): value is SongRecord {
   if (!value || typeof value !== "object") return false;
   const s = value as SongRecord;
   return (
+    (s.versionOf===undefined || typeof s.versionOf==='string') &&
+    (s.sourceRecordingId===undefined || typeof s.sourceRecordingId==='string') &&
     typeof s.id === "string" &&
     !!s.id &&
     typeof s.name === "string" &&

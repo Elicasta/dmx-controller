@@ -158,3 +158,10 @@
 .recorder-seek { flex:1 1 250px; min-width:180px; }
 .recorder-seek input { width:100%; }
 @media(max-width:800px) { .recordings-console-v3 { display:flex; flex-direction:column; overflow:auto; } .recordings-console-v3>.console-panel { flex-shrink:0; } }
+
+.asset-lane { min-height:86px; }
+.asset-clip { min-width:12px; }
+.take-frame-editor { flex-basis:100%; display:flex; flex-wrap:wrap; align-items:end; gap:10px; padding:12px; border:1px solid var(--border-default); }
+.take-frame-editor>strong,.take-frame-editor>small { flex-basis:100%; }
+.recorded-takes-console article { grid-template-columns:minmax(0,1fr) repeat(4,auto)!important; }
+@media(max-width:1100px){ .recorded-takes-console article { display:flex!important; flex-wrap:wrap; }.recorded-takes-console article>span { flex:1 1 100%; } }

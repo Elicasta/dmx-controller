@@ -64,7 +64,7 @@ export function insertSongProgram(show: ShowFile, program: SongProgram): { show:
     sourceSectionId: c.sourceSectionId ? sectionIds.get(c.sourceSectionId) : undefined,
     effectStack: c.effectStack?.map(l => ({ ...l, id: crypto.randomUUID() })),
   }));
-  const timeline = { ...source.timeline!, clips: (source.timeline?.clips ?? []).map(c => ({ ...c, id: crypto.randomUUID(), cueId: cueIds.get(c.cueId)! })) };
+  const timeline = { ...source.timeline!, videoClips:source.timeline?.videoClips?.map(c=>({...c,id:crypto.randomUUID()})), takeClips:source.timeline?.takeClips?.map(c=>({...c,id:crypto.randomUUID()})), clips: (source.timeline?.clips ?? []).map(c => ({ ...c, id: crypto.randomUUID(), cueId: cueIds.get(c.cueId)! })) };
   const next: ShowFile = { ...show, songs: [...songsForShow(show), song],
     groups: [...(show.groups ?? []), ...(source.groups ?? []).map(g => ({ ...g, id: group(g.id) }))],
     positionPalettes: [...(show.positionPalettes ?? []), ...(source.positionPalettes ?? []).filter(p => !(show.positionPalettes ?? []).some(old => old.id === p.id))],

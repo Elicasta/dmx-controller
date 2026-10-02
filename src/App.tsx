@@ -1,5 +1,10 @@
 import { cueContext, cueTargetIds } from './lib/show-selection';
 import { mediaWindow, mediaPosition } from './lib/timeline-media';
+import {exportTrimmedVideo} from './lib/video-export';
+import {type TimelineMediaClip} from './lib/show-design';
+import {activeVideoClip,videoDuration} from './lib/timeline-assets';
+import {recordingSongVersion} from './lib/recording-version';
+import {type MediaOutputFrame} from './components/MediaOutput';
 import { fxLibrary } from './lib/fx-library';
 import RecorderTransport from './components/RecorderTransport';
 import { useEditHistory } from './lib/edit-history';
@@ -864,7 +869,11 @@ export default function App() {
   const [showTrackDurationMs, setShowTrackDurationMs] = useState(0);
   const [showTrackPositionMs, setShowTrackPositionMs] = useState(0);
   const showTrackAudioRef = useRef<HTMLAudioElement | null>(null);
-  useMediaOutputPublisher(showTrackAudioRef, showTrackUrl, showTrackName);
+  const videoOutputOverrideRef=useRef<MediaOutputFrame|null>(null);
+  const timelinePlayingRef=useRef(false);
+  const [timelinePlaying,setTimelinePlaying]=useState(false);
+  const videoAssetsRef=useRef<Map<string,string>>(new Map());
+  useMediaOutputPublisher(showTrackAudioRef, showTrackUrl, showTrackName,videoOutputOverrideRef);
   const cueLaunchGenerationRef = useRef(0);
   const timelineBaseRef = useRef<number[] | null>(null);
   const [recordingTakeName, setRecordingTakeName] = useState('');
@@ -1987,6 +1996,16 @@ export default function App() {
     const song = songsForShow(showFile).find(s => s.id === activeSongId || s.name === showFile.timelineShows?.find(t => t.id === timelineShowId)?.name);
     try {
       if (song) await attachBankMedia(song, file);
+      else {
+        const mediaId=crypto.randomUUID(),id=crypto.randomUUID();
+        await storeSongMedia(mediaId,file);
+        if(token!==mediaLoadToken.current)return;
+        const name=file.name.replace(/\.[^.]+$/,'') || 'Imported media';
+        const imported={id,libraryId:id,name,bpm:masterTempoBpm,mediaId,mediaName:file.name};
+        const clipIds=new Set(editingTimeline.clips.map(c=>c.cueId));
+        setShowFile(current=>({...current,songs:[...songsForShow(current),imported],cues:current.cues.map(c=>clipIds.has(c.id)?{...c,trackName:name,trackKind:'media' as const}:c),timelineShows:[...(current.timelineShows??[]),{id,name,timeline:{...editingTimeline,audioName:file.name}}]}));
+        setActiveSongId(id);setTimelineShowId(id);
+      }
       if (token !== mediaLoadToken.current) return;
       activateMedia(file, file.name);
       updateEditingTimeline({...editingTimeline,audioName:file.name});
@@ -3693,9 +3712,10 @@ export default function App() {
   async function chooseRecordingLibrarySong(program:SongProgram) {
     try {
       const result=insertSongProgram(showFileRef.current,program);
+      clearShowAudio();
       setShowFile(result.show);setActiveSongId(result.song.id);setTimelineShowId(result.song.id);
       timelinePositionRef.current=0;setTimelinePositionBar(0);setMasterTempo(result.song.bpm);changeTempoLock(true);
-      clearShowAudio();const token=++mediaLoadToken.current;
+      const token=++mediaLoadToken.current;
       if(result.song.mediaId){const media=await readSongMedia(result.song.mediaId);if(token!==mediaLoadToken.current)return;if(media)activateMedia(media,result.song.mediaName ?? result.song.name);else setMessage('Song added. Its media is missing; import or relink media.');}
       setMessage(result.song.name+' ready to record.');
     }catch(error){setMessage(String(error));}
@@ -3733,7 +3753,7 @@ export default function App() {
     showTrackAudioRef.current?.pause();
     setActiveSongId(song.id); setMasterTempo(song.bpm, false);
     setTempoLocked(song.tempoLocked !== false); tempoLockedRef.current = song.tempoLocked !== false;
-    const saved = showFile.timelineShows?.find(t => t.name === song.name);
+    const saved = showFileRef.current.timelineShows?.find(t => t.name === song.name);
     if (!saved) {
       const ids = new Set(showFile.cues.filter(c => c.trackName === song.name).map(c => c.id));
       setShowFile(current => ({ ...current, songs: songsForShow(current), timelineShows: [...(current.timelineShows ?? []), { id: song.id, name: song.name, timeline: { ...(current.timeline ?? EMPTY_TIMELINE), bpm: song.bpm, audioName: song.mediaName, clips: (current.timeline?.clips ?? []).filter(c => ids.has(c.cueId)) } }] }));
@@ -3780,6 +3800,25 @@ export default function App() {
     } catch(error) {setMessage(String(error));}
   }
   const editingTimeline = (timelineShowId ? showFile.timelineShows?.find(item=>item.id===timelineShowId)?.timeline : showFile.timeline) ?? EMPTY_TIMELINE;
+  useEffect(()=>{
+    let cancelled=false;
+    const owned:string[]=[];
+    videoAssetsRef.current=new Map();
+    const clips=editingTimeline.videoClips??[];
+    videoOutputOverrideRef.current=clips.length?{url:'',name:'',position:0,playing:false,sentAt:Date.now()}:null;
+    void Promise.all(clips.map(async clip=>{
+      const media=await readSongMedia(clip.mediaId);if(cancelled)return;
+      if(!media){setMessage('Missing video clip: '+clip.name+'. Import its media again.');return;}
+      const url=URL.createObjectURL(media);owned.push(url);videoAssetsRef.current.set(clip.mediaId,url);
+    })).catch(error=>setMessage(String(error)));
+    return()=>{cancelled=true;owned.forEach(url=>URL.revokeObjectURL(url));videoAssetsRef.current=new Map();};
+  },[timelineShowId,(editingTimeline.videoClips??[]).map(c=>c.mediaId).join('|')]);
+  function updateTimelineVideoFrame(elapsedMs:number) {
+    if(!editingTimeline.videoClips?.length){videoOutputOverrideRef.current=null;return;}
+    const active=activeVideoClip({...editingTimeline,bpm:masterTempoBpm},elapsedMs);
+    videoOutputOverrideRef.current={url:active?videoAssetsRef.current.get(active.clip.mediaId)??'':'',name:active?.clip.name??'',position:active?.position??0,playing:timelinePlayingRef.current,sentAt:Date.now()};
+  }
+  function changeTimelinePlaying(playing:boolean){timelinePlayingRef.current=playing;setTimelinePlaying(playing);updateTimelineVideoFrame(timelinePositionRef.current*60000/masterTempoBpm*editingTimeline.beatsPerBar);}
   function addTimelineFx(recipeId:string,startBar:number,lane:number) {
     const recipe=fxLibrary(customEffects).find(r=>r.id===recipeId);if(!recipe)return;
     if(showFile.cues.length>=200||editingTimeline.clips.length>=1000){setMessage('Cue or timeline clip limit reached.');return;}
@@ -3794,6 +3833,42 @@ export default function App() {
         return {...next,timeline:{...(current.timeline??EMPTY_TIMELINE),clips:[...(current.timeline?.clips??[]),clip]}};
       });
       setMessage(recipe.name+' added to FX lane '+(lane+1)+'.');
+    }catch(error){setMessage(String(error));}
+  }
+  const exportingVideoRef=useRef(false);
+  async function exportTimelineVideo(clip?:TimelineMediaClip) {
+    if(exportingVideoRef.current)return;
+    exportingVideoRef.current=true;
+    try {
+      const source=clip?await readSongMedia(clip.mediaId):showTrackUrlRef.current?await fetch(showTrackUrlRef.current).then(r=>r.blob()):null;
+      if(!source)throw Error('The source video is missing. Import it again before exporting.');
+      const bounds=mediaWindow(editingTimeline,showTrackDurationMs);
+      const start=clip?.trimInMs??bounds.startMs,end=clip?Math.min(clip.trimOutMs,clip.trimInMs+clip.lengthBars*60000/masterTempoBpm*editingTimeline.beatsPerBar):bounds.endMs;
+      const path=await exportTrimmedVideo(source,clip?.name??showTrackName,start,end,setMessage);
+      setMessage('Trimmed MP4 saved: '+path);
+    }catch(error){setMessage(String(error));}finally{exportingVideoRef.current=false;}
+  }
+  async function importTimelineVideoClip(file:File,startBar:number) {
+    try {
+      if(!/\.mp4$/i.test(file.name))throw Error('Choose an MP4 video clip.');
+      const timelineId=timelineShowId,durationMs=await videoDuration(file),mediaId=crypto.randomUUID();
+      await storeSongMedia(mediaId,file);
+      const clip={id:crypto.randomUUID(),mediaId,name:file.name,startBar,lengthBars:durationMs/(60000/masterTempoBpm*editingTimeline.beatsPerBar),durationMs,trimInMs:0,trimOutMs:durationMs,enabled:true};
+      setShowFile(current=>{
+        const append=(timeline:typeof EMPTY_TIMELINE)=>({...timeline,videoClips:[...(timeline.videoClips??[]),clip].slice(0,100)});
+        return timelineId?{...current,timelineShows:current.timelineShows?.map(t=>t.id===timelineId?{...t,timeline:append(t.timeline)}:t)}:{...current,timeline:append(current.timeline??EMPTY_TIMELINE)};
+      });
+      setMessage(file.name+' imported as an independent video clip.');
+    }catch(error){setMessage(String(error));}
+  }
+  async function importTakeAsSongVersion(take:ShowRecording) {
+    try{
+      const song=songBank.find(s=>s.id===activeSongId) ?? songBank.find(s=>s.mediaName===take.trackName);
+      if(!song)throw Error('Choose the original Song from Library before importing the take.');
+      const result=recordingSongVersion(showFileRef.current,song,take);
+      showFileRef.current=result.show;setShowFile(result.show);
+      await selectBankSong(result.song,'timeline');
+      setMessage('Editable Song version created. The original Song and recorded take are preserved.');
     }catch(error){setMessage(String(error));}
   }
   function updateEditingTimeline(timeline: typeof EMPTY_TIMELINE) {
@@ -3831,6 +3906,7 @@ export default function App() {
   }
   function renderTimelineFrame(elapsedMs:number) {
     ++cueLaunchGeneration.current;
+    updateTimelineVideoFrame(elapsedMs);
     if(!timelineBaseRef.current){takeEditingPlaybackAuthority();if(cueFollowTimerRef.current!==null)window.clearTimeout(cueFollowTimerRef.current);stopFade();stopEffect(false);setAudioArmed(false);timelineBaseRef.current=[...universeRef.current];}
     const timeline={...editingTimeline,bpm:masterTempoBpm};
     const bar=elapsedMs / (60000 / masterTempoBpm * timeline.beatsPerBar);
@@ -3838,9 +3914,10 @@ export default function App() {
     if (!showTrackAudioRef.current || showTrackAudioRef.current.paused || performance.now()-timelineUiTimeRef.current>80) {
       timelineUiTimeRef.current=performance.now(); setTimelinePositionBar(bar);
     }
+    const selectedAsset=[...timeline.videoClips??[],...timeline.takeClips??[]].find(clip=>clip.id===activeTimelineClipRef.current);
     const selectedClip=timeline.clips.find(clip=>clip.id===activeTimelineClipRef.current && bar>=clip.startBar && bar<clip.startBar+clip.lengthBars);
     const timelineCueId=selectedClip?.cueId ?? activeTimelineCueId(timeline,showFile.cues,elapsedMs);
-    if (!selectedClip) {
+    if (!selectedClip && !selectedAsset) {
       const clip=timeline.clips.find(item=>item.enabled && item.cueId===timelineCueId && bar>=item.startBar && bar<item.startBar+item.lengthBars);
       activeTimelineClipRef.current=clip?.id ?? ''; setActiveTimelineClipId(activeTimelineClipRef.current);
     }
@@ -4250,7 +4327,7 @@ export default function App() {
         <div className="console-brand"><span className="brand-mark">◆</span><div className="brand-product"><b>LUMARIG</b><small>SHOW</small></div><div className="brand-show"><input aria-label="Current show name" value={showFile.name} onChange={(event) => setShowFile((current) => ({ ...current, name: event.target.value }))} /><small>LIVE SHOWFILE · R{sharedShowRevisionRef.current} · v{appVersion}</small></div></div>
         <nav className="console-workspace-tabs" aria-label="Workspace">{(['build', 'create', 'show', 'visualizer', 'live'] as Workspace[]).map((item) => <button key={item} className={workspace === item ? 'active' : ''} onClick={() => setWorkspace(item)}>{item.toUpperCase()}</button>)}</nav>
         <div className="console-header-status">
-          <button className="tempo-pill" onClick={tapTempo}><TempoPulse bpm={masterTempoBpm} audioRef={showTrackAudioRef} running={Boolean(activeEffect || activeCustomEffectId || showRecordingActive || playingRecordingId || externalTransportRunning)} /><strong>{masterTempoBpm} BPM</strong><small>{tempoSource === 'midi' ? 'MIDI CLOCK' : 'TAP'}</small></button>
+          <button className="tempo-pill" onClick={tapTempo}><TempoPulse bpm={masterTempoBpm} audioRef={showTrackAudioRef} running={Boolean(activeEffect || activeCustomEffectId || showRecordingActive || playingRecordingId || externalTransportRunning || timelinePlaying)} /><strong>{masterTempoBpm} BPM</strong><small>{tempoSource === 'midi' ? 'MIDI CLOCK' : 'TAP'}</small></button>
           <button aria-label="Connections" title="Connections and DMX status" className={`connection-pill ${dmxStatus.connected ? 'online' : ''}`} onClick={() => { setWorkspace('build'); setSetupView('settings'); }}><i /><span><strong>DMX</strong><small>{dmxStatus.connected ? 'CONNECTED' : 'VIRTUAL'}</small></span></button>
           <button className={`console-blackout ${dmxStatus.blackout ? 'active' : ''}`} onClick={toggleBlackout}>{dmxStatus.blackout ? 'RELEASE BLACKOUT' : 'BLACKOUT'}</button>
         </div>
@@ -4697,7 +4774,7 @@ export default function App() {
         {showMode === 'cues' && <ResizableWorkspace className={`show-cue-layout ${cueTimelineSong!==null ? 'cue-with-timeline' : ''}`} storageKey="lumarig.cue-columns.v1" leftLabel="Rundown" rightLabel="Cue Inspector" leftDefault={250} rightDefault={245} rightEnabled={cueTimelineSong===null} centerMinimum={400}>
           <SongCueLibrary cues={showFile.cues} sections={showFile.rundownSections??[]} activeId={activeCueId} timelineNames={(showFile.timelineShows??[]).map(item=>item.name)} onRun={runCue} onDelete={deleteCue} onCapture={captureCue} onMove={(id,direction)=>setShowFile(current=>({...current,cues:moveCue(current.cues,id,direction)}))} onMoveSong={(sectionId,name,direction)=>setShowFile(current=>({...current,cues:moveRundownItemCues(current.cues,sectionId,name,direction)}))} onSectionsChange={(rundownSections)=>setShowFile(current=>({...current,rundownSections}))} onTimeline={openSongTimeline} onImport={importTimelineShow}/>
 
-          {cueTimelineSong!==null ? <main className="cue-integrated-timeline"><header><strong>{cueTimelineSong}</strong><button onClick={()=>{releaseTimeline();setCueTimelineSong(null);}}>Close timeline</button></header><Suspense fallback={<p>Loading timeline…</p>}><ShowTimelineEditor fxRecipes={fxLibrary(customEffects)} screens={stageElements.filter(e=>e.type==='led-screen')} displayId={stageElements.find(e=>e.mediaSource?.kind==='timeline')?.id ?? ''} onDisplayChange={routeTimelineVideo} selectedClipId={activeTimelineClipId} positionBar={timelinePositionBar} onSelectClip={selectTimelineClip} onRelease={releaseTimeline} onReset={() => { commitUniverse(makeUniverse()); timelinePositionRef.current=0; setTimelinePositionBar(0); activeTimelineClipRef.current=''; setActiveTimelineClipId(''); setActiveCueId(null); setActiveSectionId(''); }} key={timelineShowId+cueTimelineSong} timeline={editingTimeline} cues={showFile.cues.filter(c => !timelineShowId || c.trackName === showFile.timelineShows?.find(t => t.id === timelineShowId)?.name)} initialBar={timelineStartBar} songFilter={cueTimelineSong} audioRef={showTrackAudioRef} audioUrl={editingTimeline.audioName===showTrackName?showTrackUrl:''} audioName={editingTimeline.audioName??''} audioDurationMs={editingTimeline.audioName===showTrackName?showTrackDurationMs:0} masterBpm={masterTempoBpm} onMasterBpmChange={setMasterTempo} tempoLocked={tempoLocked} onTempoLockChange={changeTempoLock} onLoadAudio={loadShowAudioFile} onChange={updateEditingTimeline} onAddFx={addTimelineFx} fxTargetName={selectedGroup?.name??'All patched fixtures'} onFrame={renderTimelineFrame} onStop={stopTimeline} onCreator={()=>setShowMode('creator')}/></Suspense></main> : <>          <main className="cue-preview-console"><header><span>{directStatus.clients > 0 ? 'LUMAVIZ LIVE PREVIEW' : 'STAGE / CUE PREVIEW'}</span><b>{activeCue?.name ?? 'Live output'}</b></header><div className={`show-viz-preview ${liveLumaVizPreview ? 'linked external-feed' : directStatus.clients > 0 ? 'linked' : ''}`}>{liveLumaVizPreview ? <img src={liveLumaVizPreview.dataUrl} alt={`LumaViz ${liveLumaVizPreview.view ?? 'live'} preview`} /> : renderStagePreview()}</div><div className="cue-preview-meta"><span>CURRENT<strong>{activeCue ? `${activeCue.number}. ${activeCue.name}` : 'Ready'}</strong></span><span>NEXT<strong>{nextCue ? `${nextCue.number}. ${nextCue.name}` : 'End of show'}</strong></span></div></main></>}
+          {cueTimelineSong!==null ? <main className="cue-integrated-timeline"><header><strong>{cueTimelineSong}</strong><button onClick={()=>{releaseTimeline();setCueTimelineSong(null);}}>Close timeline</button></header><Suspense fallback={<p>Loading timeline…</p>}><ShowTimelineEditor onExportVideo={exportTimelineVideo} onImportVideoClip={importTimelineVideoClip} onPlayingChange={changeTimelinePlaying} fxRecipes={fxLibrary(customEffects)} screens={stageElements.filter(e=>e.type==='led-screen')} displayId={stageElements.find(e=>e.mediaSource?.kind==='timeline')?.id ?? ''} onDisplayChange={routeTimelineVideo} selectedClipId={activeTimelineClipId} positionBar={timelinePositionBar} onSelectClip={selectTimelineClip} onRelease={releaseTimeline} onReset={() => { commitUniverse(makeUniverse()); timelinePositionRef.current=0; setTimelinePositionBar(0); activeTimelineClipRef.current=''; setActiveTimelineClipId(''); setActiveCueId(null); setActiveSectionId(''); }} key={timelineShowId+cueTimelineSong} timeline={editingTimeline} cues={showFile.cues.filter(c => !timelineShowId || c.trackName === showFile.timelineShows?.find(t => t.id === timelineShowId)?.name)} initialBar={timelineStartBar} songFilter={cueTimelineSong} audioRef={showTrackAudioRef} audioUrl={editingTimeline.audioName===showTrackName?showTrackUrl:''} audioName={editingTimeline.audioName??''} audioDurationMs={editingTimeline.audioName===showTrackName?showTrackDurationMs:0} masterBpm={masterTempoBpm} onMasterBpmChange={setMasterTempo} tempoLocked={tempoLocked} onTempoLockChange={changeTempoLock} onLoadAudio={loadShowAudioFile} onChange={updateEditingTimeline} onAddFx={addTimelineFx} fxTargetName={selectedGroup?.name??'All patched fixtures'} onFrame={renderTimelineFrame} onStop={stopTimeline} onCreator={()=>setShowMode('creator')}/></Suspense></main> : <>          <main className="cue-preview-console"><header><span>{directStatus.clients > 0 ? 'LUMAVIZ LIVE PREVIEW' : 'STAGE / CUE PREVIEW'}</span><b>{activeCue?.name ?? 'Live output'}</b></header><div className={`show-viz-preview ${liveLumaVizPreview ? 'linked external-feed' : directStatus.clients > 0 ? 'linked' : ''}`}>{liveLumaVizPreview ? <img src={liveLumaVizPreview.dataUrl} alt={`LumaViz ${liveLumaVizPreview.view ?? 'live'} preview`} /> : renderStagePreview()}</div><div className="cue-preview-meta"><span>CURRENT<strong>{activeCue ? `${activeCue.number}. ${activeCue.name}` : 'Ready'}</strong></span><span>NEXT<strong>{nextCue ? `${nextCue.number}. ${nextCue.name}` : 'End of show'}</strong></span></div></main></>}
 
           <aside className="cue-inspector-console"><header><span>CUE INSPECTOR</span><strong>{activeCue?.name ?? 'New cue'}</strong></header>{activeCue ? <><label><span>Cue Name</span><input value={activeCue.name} onChange={(event)=>updateCueProperties(activeCue.id,{name:event.target.value})}/></label><label><span>Cue Color</span><input type="color" value={activeCue.color ?? '#55e98d'} onChange={(event)=>updateCueProperties(activeCue.id,{color:event.target.value})}/></label><label><span>Description</span><textarea value={activeCue.description ?? ''} onChange={(event)=>updateCueProperties(activeCue.id,{description:event.target.value})}/></label><div className="inspector-pair"><label><span>Fade In ms</span><input type="number" min="0" value={activeCue.fadeMs} onChange={(event)=>updateCueProperties(activeCue.id,{fadeMs:Number(event.target.value)})}/></label><label><span>Fade Out ms</span><input type="number" min="0" value={activeCue.fadeOutMs ?? activeCue.fadeMs} onChange={(event)=>updateCueProperties(activeCue.id,{fadeOutMs:Number(event.target.value)})}/></label></div><div className="inspector-pair"><label><span>Delay ms</span><input type="number" min="0" value={activeCue.delayMs ?? 0} onChange={(event)=>updateCueProperties(activeCue.id,{delayMs:Number(event.target.value)})}/></label><label><span>Follow ms</span><input type="number" min="0" value={activeCue.followMs ?? 0} onChange={(event)=>updateCueProperties(activeCue.id,{followMs:Number(event.target.value)})}/></label></div><section className="cue-timing-overrides"><header><span>ATTRIBUTE TIMING</span><small>Override only what needs different timing</small></header>{(['intensity','color','position','beam'] as CueTimingFamily[]).map((family)=>{const rule=cueTimingRule(activeCue,family);return <div className="cue-timing-row" key={family}><strong>{family.toUpperCase()}</strong><label><span>Fade ms</span><input type="number" min="0" max="60000" value={rule.fadeMs} onChange={(event)=>updateCueTiming(activeCue.id,family,{fadeMs:Number(event.target.value)})}/></label><label><span>Delay ms</span><input type="number" min="0" max="60000" value={rule.delayMs} onChange={(event)=>updateCueTiming(activeCue.id,family,{delayMs:Number(event.target.value)})}/></label><label><span>Curve</span><select value={rule.curve} onChange={(event)=>updateCueTiming(activeCue.id,family,{curve:event.target.value as CueTimingRule['curve']})}><option value="ease">Ease</option><option value="linear">Linear</option><option value="snap">Snap</option></select></label></div>})}</section><label><span>Linked Effect</span><select value={activeCue.linkedEffectId ?? ''} onChange={(event)=>updateCueProperties(activeCue.id,{linkedEffectId:event.target.value})}><option value="">None</option>{EFFECT_PRESETS.map((effect)=><option key={effect.id} value={effect.id}>{effect.name}</option>)}</select></label><label><span>Show Section</span><select aria-label="Cue show section" value={activeCue.rundownSectionId ?? ''} onChange={(event)=>updateCueProperties(activeCue.id,{rundownSectionId:event.target.value})}><option value="">Unfiled</option>{(showFile.rundownSections??[]).map(section=><option key={section.id} value={section.id}>{section.name}</option>)}</select></label><label><span>Item Type</span><select aria-label="Cue item type" value={activeCue.trackKind ?? 'song'} onChange={(event)=>updateCueProperties(activeCue.id,{trackKind:event.target.value as 'song'|'media'})}><option value="song">Song</option><option value="media">Media</option></select></label><label><span>Song / media item</span><input value={activeCue.trackName ?? ''} onChange={(event)=>updateCueProperties(activeCue.id,{trackName:event.target.value})}/></label><button className="console-primary" onClick={()=>updateCue(activeCue.id)}>Update Look From Output</button></> : <><label><span>New Cue Name</span><input value={cueName} placeholder={`Cue ${showFile.cues.length+1}`} onChange={(event)=>setCueName(event.target.value)}/></label><label><span>Fade In</span><select value={cueFadeMs} onChange={(event)=>setCueFadeMs(Number(event.target.value))}>{FADE_TIMES.map((time)=><option key={time} value={time}>{time===0?'Snap':`${time/1000}s`}</option>)}</select></label><button className="console-primary" onClick={captureCue}>Capture Current Look</button></>}<label><span>Show Notes</span><textarea value={showFile.notes ?? ''} placeholder="Set list, transitions, safety notes…" onChange={(event)=>setShowFile((current)=>({...current,notes:event.target.value}))}/></label></aside>
 
@@ -4710,7 +4787,7 @@ export default function App() {
           const next = typeof action === 'function' ? action(editing) : action;
           return {...current,creatorSections:creatorSong ? [...all.filter(section => section.song !== creatorSong.name), ...next.map(section => ({...section,song:creatorSong.name}))] : next};
         })} groups={showFile.groups ?? []} fixtures={patch} masterBpm={masterTempoBpm} onMasterBpmChange={setMasterTempo} tempoLocked={tempoLocked} onTempoLockChange={changeTempoLock} onBuild={buildCreatorSections} onPreview={previewCreatorSection} onStop={() => { stopFade(); stopEffect(); }} onTimeline={() => { if (creatorSong) void selectBankSong(creatorSong, 'timeline'); else setShowMode('timeline'); }} onEditFx={(effect) => { setFxEditor(effect); setWorkspace('create'); setProgramMode('fx'); }}/></Suspense>}
-        {showMode === 'timeline' && <div className="timeline-workspace"><label className="timeline-show-select">Timeline show <select aria-label="Timeline show" value={timelineShowId} onChange={e=>{window.dispatchEvent(new Event('lumarig-stop-timeline'));stopTimeline();const item=showFile.timelineShows?.find(t=>t.id===e.target.value);const song=songBank.find(s=>s.name===item?.name);if(song)void selectBankSong(song,'timeline');else{++mediaLoadToken.current;setActiveSongId('');setTimelineShowId(e.target.value);showTrackAudioRef.current?.pause();}}}><option value="">Current show</option>{(showFile.timelineShows??[]).map(item=><option key={item.id} value={item.id}>{item.name}</option>)}</select></label><Suspense fallback={<p>Loading Timeline…</p>}><ShowTimelineEditor fxRecipes={fxLibrary(customEffects)} screens={stageElements.filter(e=>e.type==='led-screen')} displayId={stageElements.find(e=>e.mediaSource?.kind==='timeline')?.id ?? ''} onDisplayChange={routeTimelineVideo} selectedClipId={activeTimelineClipId} positionBar={timelinePositionBar} onSelectClip={selectTimelineClip} onRelease={releaseTimeline} onReset={() => { commitUniverse(makeUniverse()); timelinePositionRef.current=0; setTimelinePositionBar(0); activeTimelineClipRef.current=''; setActiveTimelineClipId(''); setActiveCueId(null); setActiveSectionId(''); }} key={timelineShowId} timeline={editingTimeline} cues={showFile.cues.filter(c => !timelineShowId || c.trackName === showFile.timelineShows?.find(t => t.id === timelineShowId)?.name)} audioRef={showTrackAudioRef} audioUrl={editingTimeline.audioName===showTrackName?showTrackUrl:''} audioName={editingTimeline.audioName??''} audioDurationMs={editingTimeline.audioName===showTrackName?showTrackDurationMs:0} masterBpm={masterTempoBpm} onMasterBpmChange={setMasterTempo} tempoLocked={tempoLocked} onTempoLockChange={changeTempoLock} onLoadAudio={loadShowAudioFile} onChange={updateEditingTimeline} onAddFx={addTimelineFx} fxTargetName={selectedGroup?.name??'All patched fixtures'} onFrame={renderTimelineFrame} onStop={stopTimeline} onCreator={() => setShowMode('creator')}/></Suspense></div>}
+        {showMode === 'timeline' && <div className="timeline-workspace"><label className="timeline-show-select">Timeline show <select aria-label="Timeline show" value={timelineShowId} onChange={e=>{window.dispatchEvent(new Event('lumarig-stop-timeline'));stopTimeline();const item=showFile.timelineShows?.find(t=>t.id===e.target.value);const song=songBank.find(s=>s.name===item?.name);if(song)void selectBankSong(song,'timeline');else{++mediaLoadToken.current;setActiveSongId('');setTimelineShowId(e.target.value);showTrackAudioRef.current?.pause();}}}><option value="">Current show</option>{(showFile.timelineShows??[]).map(item=><option key={item.id} value={item.id}>{item.name}</option>)}</select></label><Suspense fallback={<p>Loading Timeline…</p>}><ShowTimelineEditor onExportVideo={exportTimelineVideo} onImportVideoClip={importTimelineVideoClip} onPlayingChange={changeTimelinePlaying} fxRecipes={fxLibrary(customEffects)} screens={stageElements.filter(e=>e.type==='led-screen')} displayId={stageElements.find(e=>e.mediaSource?.kind==='timeline')?.id ?? ''} onDisplayChange={routeTimelineVideo} selectedClipId={activeTimelineClipId} positionBar={timelinePositionBar} onSelectClip={selectTimelineClip} onRelease={releaseTimeline} onReset={() => { commitUniverse(makeUniverse()); timelinePositionRef.current=0; setTimelinePositionBar(0); activeTimelineClipRef.current=''; setActiveTimelineClipId(''); setActiveCueId(null); setActiveSectionId(''); }} key={timelineShowId} timeline={editingTimeline} cues={showFile.cues.filter(c => !timelineShowId || c.trackName === showFile.timelineShows?.find(t => t.id === timelineShowId)?.name)} audioRef={showTrackAudioRef} audioUrl={editingTimeline.audioName===showTrackName?showTrackUrl:''} audioName={editingTimeline.audioName??''} audioDurationMs={editingTimeline.audioName===showTrackName?showTrackDurationMs:0} masterBpm={masterTempoBpm} onMasterBpmChange={setMasterTempo} tempoLocked={tempoLocked} onTempoLockChange={changeTempoLock} onLoadAudio={loadShowAudioFile} onChange={updateEditingTimeline} onAddFx={addTimelineFx} fxTargetName={selectedGroup?.name??'All patched fixtures'} onFrame={renderTimelineFrame} onStop={stopTimeline} onCreator={() => setShowMode('creator')}/></Suspense></div>}
 
         {showMode === 'tracks' && <div className="tracks-console tracks-console-v3">
           <section className="console-panel track-source"><header><div><span>LOCAL AUDIO TRACK</span><h2>{showTrackName || 'No track loaded'}</h2></div><label className="file-button"><input type="file" accept="audio/*" onChange={loadShowTrack}/>{showTrackName?'Change Track':'Load Track'}</label></header><div className="track-timeline"><span>{formatShowTime(showTrackPositionMs)}</span><input type="range" min="0" max={Math.max(1,showTrackDurationMs)} value={Math.min(showTrackPositionMs,Math.max(1,showTrackDurationMs))} onChange={(event)=>{const next=Number(event.target.value);if(showTrackAudioRef.current)showTrackAudioRef.current.currentTime=next/1000;setShowTrackPositionMs(next);}}/><span>{formatShowTime(showTrackDurationMs)}</span></div><div className="track-actions"><button onClick={toggleShowTrackPreview}>Play / Pause</button><button onClick={()=>setShowMode('timeline')}>Open Timeline</button></div></section>
@@ -4735,7 +4812,7 @@ export default function App() {
           <RecorderTransport audioRef={showTrackAudioRef} position={showRecordingActive?showRecordingElapsedMs:showTrackPositionMs} duration={showFile.recordings?.find(t=>t.id===selectedRecordingId)?.durationMs ?? showTrackDurationMs} bpm={masterTempoBpm} beatsPerBar={editingTimeline.beatsPerBar} recording={showRecordingActive} paused={recordingPaused} onBpm={setMasterTempo} onPlay={playRecorderTransport} onPause={pauseRecorderTransport} onSeek={seekRecorderTransport} onStop={()=>{if(showRecordingActive)stopShowRecording(true);else{pauseRecorderTransport();seekRecorderTransport(0);}}} />
           <button onClick={()=>{setWorkspace('live');}}>Open Live controls</button></section>
           <section className="console-panel recording-command"><header><div><span>SHOW RECORDER</span><h2>Capture live lighting performance</h2></div><b>{showFile.recordings?.length ?? 0} TAKES</b></header><div className="recording-arm-row"><input value={recordingTakeName} placeholder={`Take ${(showFile.recordings?.length ?? 0)+1}`} onChange={(event)=>setRecordingTakeName(event.target.value)}/><button className="record-button" onClick={startShowRecording}>● RECORD SHOW</button></div><small>Records resolved lighting changes so the take can be replayed locally or driven by LumaStudio / MIDI transport.</small></section>
-          <section className="console-panel recorded-takes-console"><header><div><span>LIGHTING TAKES</span><h2>Saved Performances</h2></div></header>{showFile.recordings?.length?showFile.recordings.map((recording)=><article key={recording.id}><span><strong>{recording.name}</strong><small>{formatShowTime(recording.durationMs)} · {recording.frames.length} changes</small></span><button className={playingRecordingId===recording.id?'console-primary':''} onClick={()=>playingRecordingId===recording.id?stopRecordedShowPlayback():playShowRecording(recording)}>{playingRecordingId===recording.id?'Stop':'Play'}</button><button onClick={()=>assignExternalRecording(recording.id)}>Assign to Sync</button><button className="danger-button" onClick={()=>deleteShowRecording(recording)}>Delete</button></article>):<div className="empty-cues"><strong>No recordings yet</strong><span>Arm the recorder and perform the show from LIVE.</span></div>}</section>
+          <section className="console-panel recorded-takes-console"><header><div><span>LIGHTING TAKES</span><h2>Saved Performances</h2></div></header>{showFile.recordings?.length?showFile.recordings.map((recording)=><article key={recording.id}><span><strong>{recording.name}</strong><small>{formatShowTime(recording.durationMs)} · {recording.frames.length} changes</small></span><button className={playingRecordingId===recording.id?'console-primary':''} onClick={()=>playingRecordingId===recording.id?stopRecordedShowPlayback():playShowRecording(recording)}>{playingRecordingId===recording.id?'Stop':'Play'}</button><button onClick={()=>void importTakeAsSongVersion(recording)}>Use as Song Version</button><button onClick={()=>assignExternalRecording(recording.id)}>Assign to Sync</button><button className="danger-button" onClick={()=>deleteShowRecording(recording)}>Delete</button></article>):<div className="empty-cues"><strong>No recordings yet</strong><span>Arm the recorder and perform the show from LIVE.</span></div>}</section>
         </div>}
       </section>}
 

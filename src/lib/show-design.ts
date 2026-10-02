@@ -64,7 +64,18 @@ export type TimelineClip = {
   lane: number;
   enabled: boolean;
 };
+export type TimelineMediaClip = {
+  id:string; mediaId:string; name:string; startBar:number; lengthBars:number;
+  durationMs:number; trimInMs:number; trimOutMs:number; enabled:boolean;
+};
+export type TimelineTakeClip = {
+  id:string; name:string; recordingId:string; startBar:number; lengthBars:number;
+  durationMs:number; trimInMs:number; trimOutMs:number; enabled:boolean;
+  frames:Array<{timeMs:number;updates:DmxUpdate[]}>;
+};
 export type ShowTimeline = {
+  videoClips?: TimelineMediaClip[];
+  takeClips?: TimelineTakeClip[];
   bpm: number;
   beatsPerBar: number;
   audioOffsetBars: number;
@@ -577,6 +588,11 @@ export function renderShowTimeline(
       (a, b) =>
         a.lane - b.lane || a.startBar - b.startBar || a.id.localeCompare(b.id),
     );
+  for(const clip of timeline.takeClips ?? []) {
+    const local=elapsedMs-clip.startBar*duration+clip.trimInMs;
+    if(!clip.enabled || position<clip.startBar || position>=clip.startBar+clip.lengthBars || local>=clip.trimOutMs)continue;
+    for(const frame of clip.frames){if(frame.timeMs>local)break;for(const [channel,value] of frame.updates)updates.set(channel,value);}
+  }
   for (const clip of active) {
     const cue = cues.find((c) => c.id === clip.cueId);
     if (!cue) continue;
@@ -773,10 +789,24 @@ export function isShowSection(value: unknown): value is ShowSection {
     )
   );
 }
+function validAssetClip(value:unknown): value is TimelineMediaClip {
+  if(!value || typeof value!=='object')return false;
+  const c=value as TimelineMediaClip;
+  return typeof c.id==='string' && typeof c.name==='string' && finite(c.startBar,0,100000) && finite(c.lengthBars,.0001,100000)
+    && finite(c.durationMs,1,86400000) && finite(c.trimInMs,0,c.durationMs) && finite(c.trimOutMs,c.trimInMs+1,c.durationMs) && typeof c.enabled==='boolean';
+}
+function validTakeClip(value:unknown): value is TimelineTakeClip {
+  if(!validAssetClip(value))return false;
+  const c=value as unknown as TimelineTakeClip;
+  return typeof c.recordingId==='string' && Array.isArray(c.frames) && c.frames.length<=30000 && c.frames.every((frame,index)=>
+    frame && finite(frame.timeMs,0,c.durationMs) && (!index || frame.timeMs>=c.frames[index-1].timeMs) && Array.isArray(frame.updates) && frame.updates.length<=512 && frame.updates.every(u=>Array.isArray(u) && u.length===2 && Number.isInteger(u[0]) && finite(u[0],1,512) && finite(u[1],0,255)));
+}
 export function isShowTimeline(value: unknown): value is ShowTimeline {
   if (!value || typeof value !== "object") return false;
   const t = value as ShowTimeline;
   return (
+    (t.videoClips===undefined || (Array.isArray(t.videoClips) && t.videoClips.length<=100 && t.videoClips.every(c=>validAssetClip(c) && typeof c.mediaId==='string'))) &&
+    (t.takeClips===undefined || (Array.isArray(t.takeClips) && t.takeClips.length<=24 && t.takeClips.every(validTakeClip))) &&
     finite(t.bpm, 20, 300) &&
     finite(t.beatsPerBar, 1, 12) &&
     Number.isInteger(t.beatsPerBar) &&
