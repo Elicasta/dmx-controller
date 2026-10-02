@@ -3966,6 +3966,7 @@ export default function App() {
   }
   const songBank = songsForShow(showFile);
   const creatorSong = songBank.find(song => song.id === activeSongId);
+  const mediaUseCounts = useMemo(() => countMediaIds({ working: showFile, songLibrary, showLibrary }), [showFile, songLibrary, showLibrary]);
   useEffect(() => {
     try { writeCompatibilityStorage('lumarig-active-song:' + showFile.name, activeSongId); } catch { /* Working show still autosaves. */ }
   }, [activeSongId, showFile.name]);
@@ -4036,6 +4037,74 @@ export default function App() {
     await storeSongMedia(mediaId, file);
     setShowFile(current => ({ ...current, songs: songsForShow(current).map(s => s.id === song.id ? { ...s, mediaId, mediaName: file.name } : s), timelineShows: current.timelineShows?.map(t => t.name === song.name ? { ...t, timeline: { ...t.timeline, audioName: file.name } } : t) }));
     setMessage(`${file.name} saved and linked to ${song.name}.`);
+  }
+  function applyMediaAssetName(asset: MediaAsset) {
+    setShowFile((current) => {
+      const linkedSongNames = new Set(songsForShow(current).filter((song) => song.mediaId === asset.id).map((song) => song.name));
+      const updateTimeline = (timeline: typeof current.timeline) => timeline ? {
+        ...timeline,
+        audioName: linkedSongNames.size && timeline.audioName ? asset.name : timeline.audioName,
+        videoClips: timeline.videoClips?.map((clip) => clip.mediaId === asset.id ? { ...clip, name: asset.name } : clip),
+      } : timeline;
+      return {
+        ...current,
+        songs: songsForShow(current).map((song) => song.mediaId === asset.id ? { ...song, mediaName: asset.name } : song),
+        timeline: updateTimeline(current.timeline),
+        timelineShows: current.timelineShows?.map((item) => ({
+          ...item,
+          timeline: linkedSongNames.has(item.name)
+            ? { ...updateTimeline(item.timeline)!, audioName: asset.name }
+            : updateTimeline(item.timeline)!,
+        })),
+      };
+    });
+  }
+
+  async function attachLibraryAssetToActiveSong(asset: MediaAsset) {
+    const song = songsForShow(showFileRef.current).find((candidate) => candidate.id === activeSongId);
+    if (!song) throw Error('Select a Song in Song Bank before assigning media.');
+    if (asset.kind === 'image') throw Error('Still images belong to screen sources, not Song audio.');
+    setShowFile((current) => ({
+      ...current,
+      songs: songsForShow(current).map((candidate) => candidate.id === song.id ? { ...candidate, mediaId: asset.id, mediaName: asset.name } : candidate),
+      timelineShows: current.timelineShows?.map((item) => item.name === song.name ? { ...item, timeline: { ...item.timeline, audioName: asset.name } } : item),
+    }));
+    const media = await readSongMedia(asset.id);
+    if (!media) throw Error(`Relink missing media: ${asset.name}`);
+    activateMedia(media, asset.name);
+    setMessage(`${asset.name} linked to ${song.name} from Media Library.`);
+  }
+
+  async function exportLocalPortableBackup() {
+    if (!libraryReady) throw Error('Song Library is still opening.');
+    setMessage('Preparing portable backup…');
+    const saved = await saveAppProgramState(showFileRef.current, {
+      capture: 'all',
+      workspace: currentWorkspaceCheckpoint(),
+    });
+    const mediaIds = collectMediaIds(saved);
+    for (const mediaId of mediaIds) {
+      const nativeAsset = await readMediaAsset(mediaId);
+      if (nativeAsset?.missing) throw Error(`Relink missing media before backup: ${nativeAsset.name}`);
+      if (nativeAsset) continue;
+      const legacy = await readSongMedia(mediaId);
+      if (!legacy) throw Error(`Media used by this library is missing: ${mediaNameForId(saved, mediaId) ?? mediaId}`);
+      await persistManagedMedia(mediaId, legacy, mediaNameForId(saved, mediaId) ?? `${mediaId}.media`);
+    }
+    const path = await exportPortableBackup(saved, mediaIds, `${showFileRef.current.name || 'LumaRig'} Backup`);
+    if (path) setMessage(`Portable backup saved · ${mediaIds.length} media file${mediaIds.length === 1 ? '' : 's'} included.`);
+  }
+
+  async function restoreLocalPortableBackup() {
+    setMessage('Opening portable backup…');
+    const imported = await importPortableBackup();
+    if (!imported) return;
+    const state = validateProgramState(imported.manifest.programState);
+    if (state.workspace && !isAppWorkspaceCheckpoint(state.workspace)) throw Error('Backup workspace is invalid. Existing work was not replaced.');
+    if (state.recovery.some((item) => item.workspace && !isAppWorkspaceCheckpoint(item.workspace))) throw Error('Backup recovery data is invalid. Existing work was not replaced.');
+    await replaceProgramState(state);
+    setMessage(`Backup restored · ${imported.importedMedia} media file${imported.importedMedia === 1 ? '' : 's'}. Reloading LumaRig…`);
+    window.location.reload();
   }
   async function selectBankSong(song: SongRecord, mode?: 'creator' | 'timeline') {
     window.dispatchEvent(new Event('lumarig-stop-timeline')); stopTimeline();
@@ -5090,10 +5159,10 @@ export default function App() {
 
       {workspace === 'show' && <section className="show-console console-workspace-wide show-console-v3">
         <nav className="workspace-subtabs show-subtabs">{([
-          ['songs','Song Bank'],['creator','Show Creator'],['cues','Cues'],['timeline','Timeline'],['tracks','Tracks'],['library','Show Library'],['sync','MIDI & Sync'],['recordings','Recordings']
-        ] as Array<[ShowMode,string]>).map(([id,label]) => <button key={id} aria-label={label} title={label} data-compact-label={{songs:'Songs',creator:'Creator',cues:'Cues',timeline:'Timeline',tracks:'Tracks',library:'Library',sync:'Sync',recordings:'Record'}[id]} className={showMode === id ? 'active' : ''} onClick={() => setShowMode(id)}>{label}</button>)}</nav>
+          ['songs','Song Bank'],['creator','Show Creator'],['cues','Cues'],['timeline','Timeline'],['tracks','Tracks'],['media','Media Library'],['library','Show Library'],['sync','MIDI & Sync'],['recordings','Recordings']
+        ] as Array<[ShowMode,string]>).map(([id,label]) => <button key={id} aria-label={label} title={label} data-compact-label={{songs:'Songs',creator:'Creator',cues:'Cues',timeline:'Timeline',tracks:'Tracks',media:'Media',library:'Library',sync:'Sync',recordings:'Record'}[id]} className={showMode === id ? 'active' : ''} onClick={() => setShowMode(id)}>{label}</button>)}</nav>
 
-        {showMode === 'songs' && <SongBank library={songLibrary} ready={libraryReady} saveStatus={saveStatus} onSave={saveBankSong} onUse={useLibrarySong} show={showFile} activeId={activeSongId} onAdd={addBankSong} onSelect={selectBankSong} onRename={renameBankSong} onMedia={attachBankMedia}/>}
+        {showMode === 'songs' && <SongBank library={songLibrary} ready={libraryReady} saveStatus={saveStatus} onSave={saveBankSong} onUse={useLibrarySong} show={showFile} activeId={activeSongId} onAdd={addBankSong} onSelect={selectBankSong} onRename={renameBankSong} onMedia={attachBankMedia} onOpenMediaLibrary={(song) => { setActiveSongId(song.id); setShowMode('media'); }}/>}\n        {showMode === 'media' && <MediaLibraryPanel activeSong={creatorSong ?? null} mediaUseCounts={mediaUseCounts} onAttachToActiveSong={attachLibraryAssetToActiveSong} onAssetChanged={applyMediaAssetName} onExportBackup={exportLocalPortableBackup} onRestoreBackup={restoreLocalPortableBackup}/>}
         {showMode === 'cues' && <ResizableWorkspace className={`show-cue-layout ${cueTimelineSong!==null ? 'cue-with-timeline' : ''}`} storageKey="lumarig.cue-columns.v1" leftLabel="Rundown" rightLabel="Cue Inspector" leftDefault={250} rightDefault={245} rightEnabled={cueTimelineSong===null} centerMinimum={400}>
           <SongCueLibrary cues={showFile.cues} sections={showFile.rundownSections??[]} activeId={activeCueId} timelineNames={(showFile.timelineShows??[]).map(item=>item.name)} onRun={runCue} onDelete={deleteCue} onCapture={captureCue} onMove={(id,direction)=>setShowFile(current=>({...current,cues:moveCue(current.cues,id,direction)}))} onMoveSong={(sectionId,name,direction)=>setShowFile(current=>({...current,cues:moveRundownItemCues(current.cues,sectionId,name,direction)}))} onSectionsChange={(rundownSections)=>setShowFile(current=>({...current,rundownSections}))} onTimeline={openSongTimeline} onImport={importTimelineShow}/>
 
