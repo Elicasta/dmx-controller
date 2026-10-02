@@ -4166,8 +4166,16 @@ export default function App() {
     if (!libraryReady) return;
     setSaveStatus('Saving…');
     try {
-      const saved = await saveAppProgramState(showFileRef.current, { forceId: programId(showFileRef.current, song), workspace: currentWorkspaceCheckpoint() });
-      setSongLibrary(saved.programs); setSaveStatus('Saved'); setMessage(`${song.name} saved to Song Library.`);
+      const id = programId(showFileRef.current, song);
+      const saved = await saveAppProgramState(showFileRef.current, { forceId: id, workspace: currentWorkspaceCheckpoint() });
+      setSongLibrary(saved.programs); setSaveStatus('Saved');
+      const program = saved.programs.find((item) => item.id === id);
+      if (program && cloudAccount) {
+        await syncSongProgramToCloud(program);
+        setMessage(`${song.name} saved locally and synced to LumaRig Cloud.`);
+      } else {
+        setMessage(`${song.name} saved to Song Library.`);
+      }
     } catch (error) { setSaveStatus('Save failed'); setMessage(String(error)); }
   }
   function useLibrarySong(program: SongProgram) {
@@ -4336,7 +4344,16 @@ export default function App() {
       setShowFile(next);
       const saved = await saveAppProgramState(next, { ...(creatorSong ? { forceId: programId(next, creatorSong) } : { capture: 'all' as const }), workspace: currentWorkspaceCheckpoint() });
       setSongLibrary(saved.programs); setSaveStatus('Saved');
-      setMessage(`${targets.length} Song Program(s) rebuilt and saved with their sections, layers, timeline and media.`);
+      if (cloudAccount) {
+        for (const target of targets) {
+          const id = programId(next, target);
+          const program = saved.programs.find((item) => item.id === id);
+          if (program) await syncSongProgramToCloud(program);
+        }
+        setMessage(`${targets.length} Song Program(s) rebuilt, saved, and synced to LumaRig Cloud.`);
+      } else {
+        setMessage(`${targets.length} Song Program(s) rebuilt and saved with their sections, layers, timeline and media.`);
+      }
     } catch (error) { setSaveStatus('Save failed'); setMessage(String(error)); }
   }
   function buildCreatorSections() {
