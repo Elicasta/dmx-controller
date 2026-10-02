@@ -429,3 +429,56 @@ it('resumes an active underlying clip, then blacks out when both overlays end',(
   const empty=renderShowTimeline(t,[lower,upper],[],8000,base);
   expect(empty).toHaveLength(512);expect(empty.every(([,value])=>value===0)).toBe(true);
 });
+
+
+describe('large show stress limits', () => {
+  it('validates and deterministically renders the 1000-cue Timeline ceiling', () => {
+    const cue = buildSectionCues([section()], fixtures, [group])[0];
+    const clips = Array.from({ length: 1000 }, (_, index) => ({
+      id: `stress-${index}`,
+      cueId: cue.id,
+      startBar: index * .5,
+      lengthBars: .5,
+      lane: index % 8,
+      enabled: true,
+    }));
+    const timeline = { ...EMPTY_TIMELINE, bpm: 128, beatsPerBar: 4, clips };
+    expect(isShowTimeline(timeline)).toBe(true);
+
+    const elapsed = barMs(timeline) * 321.25;
+    const first = renderShowTimeline(timeline, [cue], fixtures, elapsed, makeUniverse());
+    const second = renderShowTimeline(timeline, [cue], fixtures, elapsed, makeUniverse());
+    expect(second).toEqual(first);
+    expect(first).toHaveLength(512);
+  });
+
+  it('accepts maximum media/take counts and rejects one item beyond each safety ceiling', () => {
+    const videos = Array.from({ length: 100 }, (_, index) => ({
+      id: `video-${index}`,
+      mediaId: `media-${index}`,
+      name: `Video ${index}`,
+      startBar: index,
+      lengthBars: 1,
+      durationMs: 1000,
+      trimInMs: 0,
+      trimOutMs: 1000,
+      enabled: true,
+    }));
+    const takes = Array.from({ length: 24 }, (_, index) => ({
+      id: `take-${index}`,
+      recordingId: `recording-${index}`,
+      name: `Take ${index}`,
+      startBar: index,
+      lengthBars: 1,
+      durationMs: 1000,
+      trimInMs: 0,
+      trimOutMs: 1000,
+      enabled: true,
+      frames: [{ timeMs: 0, updates: [[1, index]] as [number, number][] }],
+    }));
+    const timeline = { ...EMPTY_TIMELINE, videoClips: videos, takeClips: takes };
+    expect(isShowTimeline(timeline)).toBe(true);
+    expect(isShowTimeline({ ...timeline, videoClips: [...videos, { ...videos[0], id: 'video-over' }] })).toBe(false);
+    expect(isShowTimeline({ ...timeline, takeClips: [...takes, { ...takes[0], id: 'take-over' }] })).toBe(false);
+  });
+});
