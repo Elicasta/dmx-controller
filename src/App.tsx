@@ -299,7 +299,7 @@ const STAGE_BACKUP_STORAGE_KEY = 'dmx-controller.stage-elements.backup.v1';
 const STAGE_SETTINGS_STORAGE_KEY = 'dmx-controller.stage-settings.v2';
 const STAGE_PRESET_STORAGE_KEY = 'dmx-controller.stage-preset.v1';
 const REMOTE_RELAY_STORAGE_KEY = 'dmx-controller.remote-relay.v1';
-const REMOTE_APP_URL = import.meta.env.VITE_REMOTE_APP_URL || 'https://mycontroller.vercel.app';
+const REMOTE_APP_URL = import.meta.env.VITE_REMOTE_APP_URL || 'https://mycontroller-three.vercel.app';
 const FADE_TIMES = [0, 500, 1000, 2000, 5000] as const;
 
 const DEFAULT_SETTINGS: AppSettings = {
