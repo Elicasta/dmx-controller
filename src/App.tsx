@@ -761,6 +761,8 @@ export default function App() {
   const [abletonConnected, setAbletonConnected] = useState(false);
   const abletonSnapshotRef = useRef<AbletonLiveSnapshot | null>(null);
   const abletonLastSeenRef = useRef(0);
+  const abletonUiUpdateRef = useRef(0);
+  const abletonConnectionUpdateRef = useRef(0);
   useEffect(() => {
     const timer = window.setInterval(() => {
       if (!abletonLastSeenRef.current || Date.now() - abletonLastSeenRef.current <= 2500) return;
@@ -3105,23 +3107,32 @@ export default function App() {
     await setBlackoutState(!dmxStatus.blackout, 'ui');
   }
 
-  function applyAbletonRuntimeSnapshot(input: AbletonLiveSnapshot) {
+  function applyAbletonRuntimeSnapshot(input: AbletonLiveSnapshot, publishMetadata = false) {
     const snapshot = sanitizeAbletonSnapshot(input);
+    const now = Date.now();
+    const wasDisconnected = !abletonLastSeenRef.current || now - abletonLastSeenRef.current > 2500;
     abletonSnapshotRef.current = snapshot;
-    abletonLastSeenRef.current = Date.now();
-    setAbletonSnapshot(snapshot);
-    setAbletonConnected(true);
-    connectionManagerRef.current!.upsert({
-      id:'ableton',
-      kind:'ableton',
-      name:'Ableton Live',
-      status:'connected',
-      capabilities:['transport','tempo','song-position'],
-      lastSeenAt:Date.now(),
-      lastError:'',
-      detail:`${snapshot.locators.length} locators · ${snapshot.bpm.toFixed(1)} BPM`
-    });
-    refreshConnectionRecords();
+    abletonLastSeenRef.current = now;
+
+    if (wasDisconnected) setAbletonConnected(true);
+    if (publishMetadata || wasDisconnected || now - abletonUiUpdateRef.current >= 100) {
+      abletonUiUpdateRef.current = now;
+      setAbletonSnapshot(snapshot);
+    }
+    if (wasDisconnected || now - abletonConnectionUpdateRef.current >= 1000) {
+      abletonConnectionUpdateRef.current = now;
+      connectionManagerRef.current!.upsert({
+        id:'ableton',
+        kind:'ableton',
+        name:'Ableton Live',
+        status:'connected',
+        capabilities:['transport','tempo','song-position','locators'],
+        lastSeenAt:now,
+        lastError:'',
+        detail:`${snapshot.locators.length} locators · ${snapshot.bpm.toFixed(1)} BPM`
+      });
+      refreshConnectionRecords();
+    }
 
     const rawPositionMs = snapshot.currentBeat * 60000 / snapshot.bpm;
     const result = applySharedTransport({
@@ -3248,7 +3259,7 @@ export default function App() {
         });
         if(!result.accepted) throw new Error(`Transport authority is currently held by ${result.state.source}.`);
       },
-      syncAbletonSnapshot: (snapshot) => applyAbletonRuntimeSnapshot(snapshot),
+      syncAbletonSnapshot: (snapshot) => applyAbletonRuntimeSnapshot(snapshot, true),
       syncAbletonTransport: (playing, currentBeat, bpm, beatsPerBar) => {
         const current = abletonSnapshotRef.current;
         applyAbletonRuntimeSnapshot({
