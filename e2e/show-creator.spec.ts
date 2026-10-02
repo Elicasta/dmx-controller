@@ -1143,3 +1143,12 @@ test('FX lanes mute persistently, target insertion and select-all arrangement co
   await page.locator('.show-bar-timeline').press('Control+a');await page.keyboard.press('Control+c');await page.keyboard.press('Control+v');await expect(page.locator('.timeline-clip')).toHaveCount(2);await page.keyboard.press('Control+z');await expect(page.locator('.timeline-clip')).toHaveCount(1);
   await page.reload();await page.getByRole('button',{name:'SHOW',exact:true}).click();await page.getByRole('button',{name:'Timeline',exact:true}).click();await expect(page.getByRole('button',{name:'Mute FX lane 2',exact:true})).toHaveAttribute('aria-pressed','true');
 });
+
+for(const width of [650,820,1280])test(`new Timeline controls remain spaced and bounded at ${width}px`,async({page},info)=>{
+  await seed(page);await page.setViewportSize({width,height:800});await page.goto('/');await page.getByRole('button',{name:'SHOW',exact:true}).click();await page.getByRole('button',{name:'Timeline',exact:true}).click();
+  const geometry=await page.locator('.timeline-toolbar').evaluate(el=>{const outer=el.getBoundingClientRect();return {x:outer.x,right:outer.right,items:[...el.querySelectorAll(':scope>button,:scope>label,:scope>output')].map(e=>{const r=e.getBoundingClientRect();return {text:e.textContent,x:r.x,y:r.y,right:r.right,bottom:r.bottom,width:r.width,height:r.height};}).filter(r=>r.width&&r.height)};});
+  for(const r of geometry.items){expect(r.x).toBeGreaterThanOrEqual(geometry.x);expect(r.right).toBeLessThanOrEqual(geometry.right+1);}
+  for(let i=0;i<geometry.items.length;i++)for(let j=i+1;j<geometry.items.length;j++){const a=geometry.items[i],b=geometry.items[j];expect(Math.min(a.right,b.right)-Math.max(a.x,b.x)>1 && Math.min(a.bottom,b.bottom)-Math.max(a.y,b.y)>1,`${a.text} overlaps ${b.text}`).toBe(false);}
+  expect(await page.evaluate(()=>document.documentElement.scrollWidth)).toBeLessThanOrEqual(width);
+  await page.getByRole('button',{name:'● Record',exact:true}).click();const bar=page.locator('.console-recording-bar');await expect(bar).toBeVisible();expect(await bar.evaluate(el=>el.scrollWidth<=el.clientWidth+1)).toBe(true);await page.screenshot({path:info.outputPath(`capture-${width}.png`)});await page.getByRole('button',{name:'Cancel',exact:true}).click();
+});
