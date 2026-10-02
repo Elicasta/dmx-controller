@@ -164,6 +164,8 @@ import { makeSelectionGrid, moveFixtureInSelectionGrid, normalizeSelectionGrid, 
 import { RemoteRelay, type RelayCommandEnvelope, type RemoteRelayConfig, type RemoteRelayStatus } from './core/remote-relay';
 import { desktopDeviceId } from './core/supabase-client';
 import { StudioBridgeDispatcher } from './core/studio-bridge-dispatcher';
+import { TransportEngine, type TransportSource, type TransportUpdate } from './core/transport-engine';
+import { ConnectionManager, type ConnectionRecord } from './core/connection-manager';
 import { QRCodeSVG } from 'qrcode.react';
 import {
   createCloudShowFolder,
@@ -728,12 +730,47 @@ export default function App() {
   const [artNetTelemetry, setArtNetTelemetry] = useState({ framesSent: 0, lastError: "" });
   const [directStatus, setDirectStatus] = useState<LumaVizDirectStatus>({ listening: false, port: 9460, clients: 0, framesSent: 0 });
   const [lumaVizPreview, setLumaVizPreview] = useState<{ dataUrl: string; timestamp: number; view?: string } | null>(null);
+  const transportEngineRef = useRef<TransportEngine | null>(null);
+  if (!transportEngineRef.current) transportEngineRef.current = new TransportEngine({ bpm: 120 });
+
+  const connectionManagerRef = useRef<ConnectionManager | null>(null);
+  if (!connectionManagerRef.current) {
+    const manager = new ConnectionManager();
+    manager.upsert({ id:'studio', kind:'studio', name:'LumaStudio', status:'off', capabilities:['transport','show-control','recording'] });
+    manager.upsert({ id:'midi', kind:'midi', name:'MIDI / DAW', status:'off', capabilities:['clock','transport','controls'] });
+    manager.upsert({ id:'ableton', kind:'ableton', name:'Ableton Live', status:'off', capabilities:['transport','tempo','song-position'] });
+    manager.upsert({ id:'lumalive', kind:'lumalive', name:'LumaLive', status:'off', capabilities:['transport','song-recall','performance'] });
+    manager.upsert({ id:'propresenter', kind:'propresenter', name:'ProPresenter', status:'off', capabilities:['cue-trigger','transport','media'] });
+    connectionManagerRef.current = manager;
+  }
+  const [sharedTransport, setSharedTransport] = useState(() => transportEngineRef.current!.snapshot());
+  const [connectionRecords, setConnectionRecords] = useState<ConnectionRecord[]>(() => connectionManagerRef.current!.snapshot());
+  const refreshConnectionRecords = () => setConnectionRecords(connectionManagerRef.current!.snapshot());
+
   const [studioBridgeStatus, setStudioBridgeStatus] = useState<StudioBridgeStatus>({ listening: false, port: 47777, connectedClients: 0 });
   useEffect(() => {
     const refresh = () => {
       void invoke<StudioBridgeStatus>('studio_bridge_status')
-        .then(setStudioBridgeStatus)
-        .catch((error) => setStudioBridgeStatus((current) => ({ ...current, lastError: String(error) })));
+        .then((status) => {
+          setStudioBridgeStatus(status);
+          connectionManagerRef.current!.upsert({
+            id:'studio',
+            kind:'studio',
+            name:'LumaStudio',
+            status: status.lastError ? 'error' : status.connectedClients > 0 ? 'connected' : status.listening ? 'connecting' : 'off',
+            capabilities:['transport','show-control','recording'],
+            lastSeenAt: status.connectedClients > 0 ? Date.now() : null,
+            lastError: status.lastError ?? '',
+            detail: status.connectedClients > 0 ? `${status.connectedClients} client${status.connectedClients === 1 ? '' : 's'} · ws://127.0.0.1:${status.port}` : `Listening on ${status.port}`
+          });
+          refreshConnectionRecords();
+        })
+        .catch((error) => {
+          const message=String(error);
+          setStudioBridgeStatus((current) => ({ ...current, lastError: message }));
+          connectionManagerRef.current!.fail('studio',message);
+          refreshConnectionRecords();
+        });
     };
     refresh();
     const timer = window.setInterval(refresh, STATUS_POLL_MS);
@@ -1041,6 +1078,38 @@ export default function App() {
   const externalSongPositionMsRef = useRef(0);
   const externalClockUiTicksRef = useRef(0);
   const externalLightingOffsetRef = useRef(0);
+
+  function applySharedTransport(update: TransportUpdate, now = performance.now()) {
+    const result = transportEngineRef.current!.apply(update, now);
+    if (!result.accepted) return result;
+    const state = result.state;
+    setSharedTransport(state);
+    externalSongPositionMsRef.current = state.positionMs;
+    externalTransportRunningRef.current = state.playing;
+    setExternalSongPositionMs(state.positionMs);
+    setExternalTransportRunning(state.playing);
+    if (update.bpm != null && !tempoLockedRef.current) {
+      if (update.source === 'midi') {
+        setMidiBpm(state.bpm);
+        midiBpmRef.current = state.bpm;
+        setTempoSource('midi');
+        tempoSourceRef.current = 'midi';
+      } else {
+        setEffectBpm(state.bpm);
+        effectBpmRef.current = state.bpm;
+      }
+    }
+    return result;
+  }
+
+  function releaseSharedTransport(source: TransportSource, positionMs = externalSongPositionMsRef.current) {
+    return applySharedTransport({
+      source,
+      playing:false,
+      positionMs,
+      release:true
+    });
+  }
 
   const [newProfileId, setNewProfileId] = useState(FIXTURE_LIBRARY[0].id);
   const [newModeId, setNewModeId] = useState(FIXTURE_LIBRARY[0].modes[0].id);
