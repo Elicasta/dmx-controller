@@ -1,3 +1,4 @@
+import {pasteFixtures} from './lib/fixture-clipboard';
 import {ManualOverdub,timelineCaptureClip,appendTimelineCapture} from './lib/timeline-capture';
 import { cueContext, cueTargetIds } from './lib/show-selection';
 import { mediaWindow, mediaPosition } from './lib/timeline-media';
@@ -1121,9 +1122,10 @@ export default function App() {
     window.dispatchEvent(new Event('lumarig-stop-timeline'));stopTimeline();stopFade();stopEffect(false);
     setShowFile(value.show);setPatch(value.patch);setStageElements(value.stageElements);setStageSettings(value.stageSettings);setSavedLooks(value.looks);setCustomEffects(value.customEffects);setSectionPresets(value.sectionPresets);setActiveStagePresetId(null);
   },libraryReady);
-  const editClipboard=useRef<Array<ShowCue|StageElement|CustomEffect>>([]);
+  const editClipboard=useRef<Array<ShowCue|StageElement|CustomEffect|PatchedFixture|FixtureLook>>([]);
+  const lastEditingLook=useRef<FixtureLook|null>(null);
   const allEditingSelected=useRef(false);
-  useEffect(()=>{allEditingSelected.current=false;},[workspace,showMode,programMode,activeCueId,selectedStageElementId]);
+  useEffect(()=>{allEditingSelected.current=false;},[workspace,showMode,programMode,setupView,activeCueId,selectedStageElementId]);
   function currentWorkspaceCheckpoint(): Record<string, unknown> { return workspaceCheckpointRef.current; }
   function applyWorkspaceCheckpoint(value: Record<string, unknown>) {
     if (!isAppWorkspaceCheckpoint(value)) throw Error('Saved workspace is invalid. Existing data is preserved.');
@@ -1541,6 +1543,7 @@ export default function App() {
   }
 
   function runLook(look: FixtureLook, duration = fadeMs) {
+    lastEditingLook.current=look;
     const target = applyUniverseUpdates(universeRef.current, lookUpdates(look.values, selectedFixtures(patch)));
     fadeToUniverse(look.name, target, duration);
   }
@@ -3100,13 +3103,22 @@ export default function App() {
         const timelineEditing=workspace==='show' && (showMode==='timeline' || (showMode==='cues' && cueTimelineSong!==null));
         if(!timelineEditing && (key==='z' || key==='y')){event.preventDefault();editHistory(key==='y'||event.shiftKey?'redo':'undo');return;}
         if(workspace==='show' && showMode==='creator' && ['a','c','v'].includes(key))return;
-        if(!timelineEditing && key==='a'){event.preventDefault();allEditingSelected.current=true;if(workspace==='create' && programMode!=='fx')selectAllFixtures();else setMessage('All '+(workspace==='build'||workspace==='visualizer'?stageElements.length:workspace==='create'?customEffects.length:showFile.cues.length)+' editing items selected.');return;}
+        const fixtureEditing=(workspace==='build' && setupView==='fixtures') || (workspace==='create' && programMode==='stage');
+        if(!timelineEditing && key==='a'){event.preventDefault();allEditingSelected.current=true;if(fixtureEditing)selectAllFixtures();else setMessage('All '+(workspace==='build'||workspace==='visualizer'?stageElements.length:workspace==='create'?customEffects.length:showFile.cues.length)+' editing items selected.');return;}
         if(!timelineEditing && key==='c'){
+          if(fixtureEditing){event.preventDefault();editClipboard.current=structuredClone(patch.filter(f=>f.selected));return;}
+          if(workspace==='create' && programMode==='looks'){event.preventDefault();editClipboard.current=structuredClone(allEditingSelected.current?[...allLooks]:lastEditingLook.current?[lastEditingLook.current]:[]);return;}
           const item=workspace==='create' && programMode==='fx' ? fxEditor : workspace==='build' || workspace==='visualizer' ? selectedStageElement : activeCue;
           if(item || allEditingSelected.current){event.preventDefault();editClipboard.current=structuredClone(allEditingSelected.current?(workspace==='create' && programMode==='fx'?customEffects:workspace==='build'||workspace==='visualizer'?stageElements:showFile.cues):item?[item]:[]);}return;
         }
-        if(!timelineEditing && key==='v' && editClipboard.current.length){event.preventDefault();for(const item of editClipboard.current){
-          if('parameter' in item){const copy={...structuredClone(item),id:crypto.randomUUID(),name:item.name+' copy'};setFxEditor(copy);setCustomEffects(all=>[...all,copy].slice(-32));continue;}
+        if(!timelineEditing && key==='v' && editClipboard.current.length){event.preventDefault();
+          const copied=editClipboard.current;
+          if(copied.every(item=>'profileId' in item)){try{setPatch(pasteFixtures(patch,copied));}catch(error){setMessage(String(error));}return;}
+          if(showFile.cues.length+copied.filter(item=>'number' in item).length>200 || customEffects.length+copied.filter(item=>'parameter' in item).length>32){setMessage('Paste exceeds the editor item limit. Existing items are preserved.');return;}
+          for(const item of editClipboard.current){
+          if('parameter' in item){const copy={...structuredClone(item),id:crypto.randomUUID(),name:item.name+' copy'};setFxEditor(copy);setCustomEffects(all=>[...all,copy]);continue;}
+          if('profileId' in item)continue;
+          if('values' in item && !('number' in item)){setSavedLooks(all=>[...all,{...structuredClone(item),id:crypto.randomUUID(),name:item.name+' copy'}]);continue;}
           if('label' in item){const copy={...structuredClone(item),id:crypto.randomUUID(),label:item.label+' copy'};setStageElements(all=>[...all,copy]);setSelectedStageElementId(copy.id);}
           else if(showFile.cues.length<200){const copy={...structuredClone(item),id:crypto.randomUUID(),name:item.name+' copy',sourceSectionId:undefined};setShowFile(all=>({...all,cues:renumberCues([...all.cues,copy])}));setActiveCueId(copy.id);}
           }return;
@@ -3123,7 +3135,7 @@ export default function App() {
     };
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [workspace, showMode, nextCue?.id, cueTimelineSong, activeCue, selectedStageElement, showFile, editHistory, programMode, fxEditor,stageElements,customEffects]);
+  }, [workspace, showMode, nextCue?.id, cueTimelineSong, activeCue, selectedStageElement, showFile, editHistory, programMode, fxEditor,stageElements,customEffects,setupView,patch,savedLooks]);
 
   async function startAudioInput() {
     setAudioError('');

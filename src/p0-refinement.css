@@ -180,3 +180,8 @@
 .console-recording-bar button { flex:0 0 auto; min-height:30px; height:auto; padding:6px 10px; white-space:nowrap; }
 .fx-lane-label button { line-height:1.15; font-size:10px; }
 @media(max-width:800px) { .timeline-toolbar { gap:6px; padding:6px; } .console-recording-bar { gap:6px; padding:6px 10px; } }
+
+/* Keep a usable clip canvas when transport or inspectors wrap. */
+.timeline-workspace>.show-bar-timeline { grid-template-rows:auto auto minmax(360px,1fr) auto; overflow:auto; }
+.timeline-workspace .timeline-edit-layout { min-height:360px; }
+.timeline-workspace .timeline-scroll { min-height:180px; }

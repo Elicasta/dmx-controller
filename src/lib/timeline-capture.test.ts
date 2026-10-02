@@ -22,7 +22,7 @@ describe('direct Timeline capture and overdub',()=>{
     const recording={id:'r',name:'Manual',trackName:'',createdAt:'now',durationMs:2000,frames:[{timeMs:0,updates:[[1,150] as [number,number]]}]};
     const clip=timelineCaptureClip(recording,4,120,4),timeline=appendTimelineCapture(EMPTY_TIMELINE,clip);
     expect(clip).toMatchObject({startBar:4,lengthBars:1,mode:'override'});
-    clip.frames[0].updates[0][1]=25;expect(recording.frames[0].updates[0][1]).toBe(150);
+    clip.frames[0].updates[0]=[1,25];expect(recording.frames[0].updates[0][1]).toBe(150);
     expect(isShowTimeline(timeline)).toBe(true);expect(EMPTY_TIMELINE.takeClips).toBeUndefined();
   });
   it('overrides only captured channels after cues and returns to automation outside its span',()=>{

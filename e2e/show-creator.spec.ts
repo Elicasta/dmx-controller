@@ -1152,3 +1152,19 @@ for(const width of [650,820,1280])test(`new Timeline controls remain spaced and 
   expect(await page.evaluate(()=>document.documentElement.scrollWidth)).toBeLessThanOrEqual(width);
   await page.getByRole('button',{name:'● Record',exact:true}).click();const bar=page.locator('.console-recording-bar');await expect(bar).toBeVisible();expect(await bar.evaluate(el=>el.scrollWidth<=el.clientWidth+1)).toBe(true);await page.screenshot({path:info.outputPath(`capture-${width}.png`)});await page.getByRole('button',{name:'Cancel',exact:true}).click();
 });
+
+test('Timeline capture keeps trimmed Song media running through Live navigation',async({page})=>{
+  await seed(page);await page.goto('/');await page.getByRole('button',{name:'SHOW',exact:true}).click();await page.getByRole('button',{name:'Timeline',exact:true}).click();
+  await page.getByLabel('Load timeline audio').setInputFiles({name:'record-clock.wav',mimeType:'audio/wav',buffer:wav()});
+  await page.getByLabel('Audio starts at bar',{exact:true}).fill('2');await page.getByLabel('Trim in seconds').fill('0.5');await page.getByLabel('Trim out seconds').fill('2.5');
+  await page.locator('.bar-ruler').click({position:{x:36,y:20}});await page.getByRole('button',{name:'● Record',exact:true}).click();
+  await expect.poll(()=>page.locator('audio').evaluate((a:HTMLAudioElement)=>a.paused)).toBe(false);await expect.poll(()=>page.locator('audio').evaluate((a:HTMLAudioElement)=>a.currentTime)).toBeGreaterThan(.5);
+  await page.getByRole('button',{name:'Stop + save',exact:true}).click();await expect.poll(async()=>((await readShow(page)).timeline?.takeClips??[]).length).toBe(1);expect((await readShow(page)).timeline.takeClips[0].startBar).toBe(1);
+});
+
+test('Select all, copy, paste and undo operate on Sections and fixture patch editing',async({page})=>{
+  await seed(page);await page.goto('/');await page.getByRole('button',{name:'SHOW',exact:true}).click();await page.getByRole('button',{name:'Show Creator',exact:true}).click();await page.getByRole('button',{name:/Worship Song/}).click();
+  await page.locator('.section-list').press('Control+a');await page.keyboard.press('Control+c');await page.keyboard.press('Control+v');await expect(page.locator('.section-list>article')).toHaveCount(16);await page.keyboard.press('Control+z');await expect(page.locator('.section-list>article')).toHaveCount(8);
+  await page.getByRole('button',{name:'BUILD',exact:true}).click();await page.getByRole('button',{name:'Fixtures',exact:true}).click();await page.keyboard.press('Control+a');await page.keyboard.press('Control+c');await page.keyboard.press('Control+v');
+  await expect.poll(()=>page.evaluate(()=>{const p=JSON.parse(localStorage.getItem('dmx-controller.patch.v1')??'[]');return (Array.isArray(p)?p:p.fixtures).length;})).toBe(8);await page.keyboard.press('Control+z');await expect.poll(()=>page.evaluate(()=>{const p=JSON.parse(localStorage.getItem('dmx-controller.patch.v1')??'[]');return (Array.isArray(p)?p:p.fixtures).length;})).toBe(4);
+});
