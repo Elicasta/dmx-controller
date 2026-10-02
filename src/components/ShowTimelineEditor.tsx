@@ -22,6 +22,8 @@ import {
   type TimelineTakeClip,
 } from "../lib/show-design";
 type Props = {
+  onRecord?: (bar:number,overdub:boolean)=>void;
+  keepMediaOnRelease?: ()=>boolean;
   onImportVideoClip?: (file:File,startBar:number)=>void;
   onPlayingChange?: (playing:boolean)=>void;
   onExportVideo?: (clip?:TimelineMediaClip)=>void;
@@ -83,15 +85,19 @@ export default function ShowTimelineEditor(props: Props) {
     onMasterBpmChange,
   tempoLocked, onTempoLockChange,
   } = props;
+  const [selectedLane,setSelectedLane]=useState(0);
   const recipes=props.fxRecipes ?? FX_RECIPES;
-  const clipClipboard=useRef<{kind:'cue'|'video'|'take';clip:TimelineClip|TimelineMediaClip|TimelineTakeClip}|null>(null);
+  const clipClipboard=useRef<Array<{kind:'cue'|'video'|'take';clip:TimelineClip|TimelineMediaClip|TimelineTakeClip}>>([]);
+  const [selectedIds,setSelectedIds]=useState<Set<string>>(new Set());
   const selectedRef=useRef('');
   const audioStarting = useRef(false);
   const playAttempt = useRef(0);
   const [libraryMode,setLibraryMode]=useState<"cues"|"fx"|"myfx">("cues");
   const [localSelectedId, setLocalSelectedId] = useState("");
   const selectedId = props.selectedClipId ?? localSelectedId;
+  useEffect(()=>{if(props.selectedClipId==='')setSelectedIds(new Set());},[props.selectedClipId]);
   function setSelectedId(id: string) {
+    setSelectedIds(new Set([id]));
     setLocalSelectedId(id);
     const clip = [...latest.current.timeline.clips,...latest.current.timeline.videoClips??[],...latest.current.timeline.takeClips??[]].find(item => item.id === id);
     latest.current.onSelectClip?.(id, clip?.startBar ?? cursorRef.current);
@@ -142,17 +148,22 @@ export default function ShowTimelineEditor(props: Props) {
     const target=event.target as HTMLElement|null;if(target?.closest('input,textarea,select,[contenteditable="true"]') || !(event.ctrlKey||event.metaKey))return;
     const key=event.key.toLowerCase();
     if(key==='z'||key==='y'){event.preventDefault();pause();history(key==='y'||event.shiftKey?'redo':'undo');}
+    else if(key==='a'){event.preventDefault();const t=latest.current.timeline;setSelectedIds(new Set([...t.clips,...t.videoClips??[],...t.takeClips??[]].map(c=>c.id)));}
     else if(key==='c'){
-      const t=latest.current.timeline,id=selectedRef.current;
-      const clip=t.clips.find(c=>c.id===id)??t.videoClips?.find(c=>c.id===id)??t.takeClips?.find(c=>c.id===id);
-      if(clip){event.preventDefault();clipClipboard.current={kind:'cueId' in clip?'cue':'mediaId' in clip?'video':'take',clip:structuredClone(clip)};}
+      const t=latest.current.timeline,ids=selectedIds.size?selectedIds:new Set([selectedRef.current]);
+      const clips=[...t.clips,...t.videoClips??[],...t.takeClips??[]].filter(c=>ids.has(c.id));
+      if(clips.length){event.preventDefault();clipClipboard.current=clips.map(clip=>({kind:'cueId' in clip?'cue':'mediaId' in clip?'video':'take',clip:structuredClone(clip)}));}
     }
-    else if(key==='v' && clipClipboard.current){event.preventDefault();pause();const {kind,clip:source}=clipClipboard.current,t=latest.current.timeline;
-      const clip={...structuredClone(source),id:crypto.randomUUID(),startBar:snapBar(cursorRef.current,snap)};
-      if(kind==='cue' && t.clips.length<1000)edit({...t,clips:[...t.clips,clip as TimelineClip]});
-      if(kind==='video' && (t.videoClips?.length??0)<100)edit({...t,videoClips:[...t.videoClips??[],clip as TimelineMediaClip]});
-      if(kind==='take' && (t.takeClips?.length??0)<24)edit({...t,takeClips:[...t.takeClips??[],clip as TimelineTakeClip]});
-      setSelectedId(clip.id);
+    else if(key==='v' && clipClipboard.current.length){event.preventDefault();pause();const copied=clipClipboard.current,t=latest.current.timeline;
+      const anchor=Math.min(...copied.map(c=>c.clip.startBar)),laneAnchor=Math.min(...copied.filter(c=>c.kind==='cue').map(c=>(c.clip as TimelineClip).lane));
+      const cues:TimelineClip[]=[],videos:TimelineMediaClip[]=[],takes:TimelineTakeClip[]=[];
+      for(const {kind,clip:source} of copied){const clip={...structuredClone(source),id:crypto.randomUUID(),startBar:Math.max(0,snapBar(cursorRef.current,snap)+source.startBar-anchor)};
+        if(kind==='cue')cues.push({...clip as TimelineClip,lane:Math.min(15,selectedLane+(source as TimelineClip).lane-laneAnchor)});
+        else if(kind==='video')videos.push(clip as TimelineMediaClip);else takes.push(clip as TimelineTakeClip);
+      }
+      if(t.clips.length+cues.length>1000||(t.videoClips?.length??0)+videos.length>100||(t.takeClips?.length??0)+takes.length>24){setAudioError('Paste exceeds the Timeline clip limit.');return;}
+      edit({...t,clips:[...t.clips,...cues],videoClips:[...t.videoClips??[],...videos],takeClips:[...t.takeClips??[],...takes]});
+      const pasted=[...cues,...videos,...takes];if(pasted[0])setSelectedId(pasted[0].id);setSelectedIds(new Set(pasted.map(c=>c.id)));
     }
   };
   useEffect(()=>{const keydown=(event:KeyboardEvent)=>shortcutRef.current(event);window.addEventListener('keydown',keydown);return()=>window.removeEventListener('keydown',keydown);},[]);
@@ -241,6 +252,7 @@ export default function ShowTimelineEditor(props: Props) {
     audioRef.current?.pause();
   }
   function stop() {
+    if(latest.current.keepMediaOnRelease?.())return;
     pause();
     cursorRef.current = 0;
     setCursor(0);
@@ -249,6 +261,7 @@ export default function ShowTimelineEditor(props: Props) {
     latest.current.onReset?.();
   }
   function seek(bar: number) {
+    if(latest.current.keepMediaOnRelease?.())return;
     const next = clamp(bar, 0, 100000);
     cursorRef.current = next;
     setCursor(next);
@@ -256,6 +269,7 @@ export default function ShowTimelineEditor(props: Props) {
     syncAudio(next * runtimeBarMs(latest.current), true);
   }
   function play() {
+    if(latest.current.keepMediaOnRelease?.())return;
     if (playingRef.current) {
       pause();
       return;
@@ -320,7 +334,7 @@ export default function ShowTimelineEditor(props: Props) {
     raf.current = requestAnimationFrame(tick);
   }
   useEffect(() => {
-    const stopTransport=()=>{++playAttempt.current;audioStarting.current=false;playingRef.current=false;setPlaying(false);latest.current.onPlayingChange?.(false);if(raf.current!==null)cancelAnimationFrame(raf.current);raf.current=null;latest.current.audioRef.current?.pause();latest.current.onStop();};
+    const stopTransport=()=>{if(latest.current.keepMediaOnRelease?.())return;++playAttempt.current;audioStarting.current=false;playingRef.current=false;setPlaying(false);latest.current.onPlayingChange?.(false);if(raf.current!==null)cancelAnimationFrame(raf.current);raf.current=null;latest.current.audioRef.current?.pause();latest.current.onStop();};
     window.addEventListener('lumarig-stop-timeline',stopTransport);
     return ()=>window.removeEventListener('lumarig-stop-timeline',stopTransport);
   },[]);
@@ -328,8 +342,9 @@ export default function ShowTimelineEditor(props: Props) {
     () => () => {
       ++playAttempt.current;
       playingRef.current = false;
-      latest.current.onPlayingChange?.(false);
       if (raf.current !== null) cancelAnimationFrame(raf.current);
+      if(latest.current.keepMediaOnRelease?.())return;
+      latest.current.onPlayingChange?.(false);
       latest.current.audioRef.current?.pause();
       (latest.current.onRelease ?? latest.current.onStop)();
     },
@@ -348,10 +363,13 @@ export default function ShowTimelineEditor(props: Props) {
       .catch(() => { if (!cancelled) setAudioError('Waveform unavailable for this codec. Media playback remains available.'); });
     return () => { cancelled = true; controller.abort(); };
   }, [audioUrl]);
+  const muteKey=(timeline.mutedLanes??[]).join(',');
+  useEffect(()=>{if(!playingRef.current)latest.current.onFrame(cursorRef.current*runtimeBarMs(latest.current));},[muteKey]);
   function seekPointer(e: PointerEvent<HTMLElement>) {
     if (drag.current || e.button !== 0) return;
     const lane = e.currentTarget.closest<HTMLElement>('.timeline-lane, .bar-ruler');
     if (!lane) return;
+    if(lane.dataset.lane!==undefined)setSelectedLane(Number(lane.dataset.lane));
     seek((e.clientX - lane.getBoundingClientRect().left) / zoomRef.current);
   }
   function beginTrim(e: PointerEvent<HTMLElement>, kind: 'trim-in' | 'trim-out') {
@@ -382,6 +400,7 @@ export default function ShowTimelineEditor(props: Props) {
     e.preventDefault();
     e.stopPropagation();
     pause();
+    setSelectedLane(clip.lane);
     if(selectedId!==clip.id)setSelectedId(clip.id);
     if(kind==="move")seek(clip.startBar);
     e.currentTarget.setPointerCapture(e.pointerId);
@@ -516,6 +535,8 @@ export default function ShowTimelineEditor(props: Props) {
         </div>
       </header>
       <div className="timeline-toolbar">
+        <button className="record-button" disabled={Boolean(props.keepMediaOnRelease?.())} onClick={()=>{pause();props.onRecord?.(cursorRef.current,false);}}>● Record</button>
+        <button disabled={Boolean(props.keepMediaOnRelease?.())} onClick={()=>{pause();props.onRecord?.(cursorRef.current,true);}}>● Overdub</button>
         <button
           className="console-primary"
           disabled={!timeline.clips.length && !timeline.videoClips?.length && !timeline.takeClips?.length && !audioUrl}
@@ -609,7 +630,7 @@ export default function ShowTimelineEditor(props: Props) {
             SHOW CUES <small>{cues.length}</small>
           </header>
           <p>Drag to a lane or click to append.</p>
-          {libraryMode!=="cues" ? <><p>Target: {props.fxTargetName??"current group"}. Drag a recipe to a lane.</p>{recipes.filter(r=>libraryMode!=="myfx" || r.id.startsWith("custom:")).map(recipe=><button className="timeline-fx-recipe" key={recipe.id} draggable onDragStart={e=>{e.dataTransfer.setData("application/lumarig-fx",recipe.id);e.dataTransfer.effectAllowed="copy";}} onClick={()=>{checkpoint();props.onAddFx?.(recipe.id,clipEnd,0);}}><span>{recipe.name}<small>{recipe.category}</small></span></button>)}</> : cues.length ? (
+          {libraryMode!=="cues" ? <><p>Target: {props.fxTargetName??"current group"} · FX {selectedLane+1}. Click to insert at the playhead or drag to a lane.</p>{recipes.filter(r=>libraryMode!=="myfx" || r.id.startsWith("custom:")).map(recipe=><button className="timeline-fx-recipe" key={recipe.id} draggable onDragStart={e=>{e.dataTransfer.setData("application/lumarig-fx",recipe.id);e.dataTransfer.effectAllowed="copy";}} onClick={()=>{checkpoint();props.onAddFx?.(recipe.id,cursorRef.current,selectedLane);}}><span>{recipe.name}<small>{recipe.category}</small></span></button>)}</> : cues.length ? (
             cues.filter(c=>!props.songFilter||(c.trackName?.trim()||"Unfiled cues")===props.songFilter).map((c) => (
               <button
                 key={c.id}
@@ -749,15 +770,15 @@ export default function ShowTimelineEditor(props: Props) {
                 </div>
               </div>
               {(['video','take'] as const).map(kind=><div className="timeline-lane-row" key={kind}><div className="lane-label">{kind==='video'?'VIDEO':'TAKE'}</div><div className="timeline-lane asset-lane" style={{width:totalBars*zoom,'--bar-width':`${zoom}px`,'--beat-width':`${zoom/timeline.beatsPerBar}px`} as import('react').CSSProperties} onPointerDown={seekPointer} onDragOver={e=>{if(kind==='video' && e.dataTransfer.types.includes('Files')){e.preventDefault();e.stopPropagation();}}} onDrop={e=>{if(kind!=='video')return;const file=e.dataTransfer.files[0];if(file){e.preventDefault();e.stopPropagation();pause();props.onImportVideoClip?.(file,clamp((e.clientX-e.currentTarget.getBoundingClientRect().left)/zoom,0,100000));}}}>
-                {(kind==='video'?timeline.videoClips??[]:timeline.takeClips??[]).map(clip=><div key={clip.id} role="button" tabIndex={0} aria-label={`${kind==='video'?'Video':'Recorded take'} clip ${clip.name}`} className={`timeline-clip asset-clip ${selectedId===clip.id?'selected':''} ${clip.enabled?'':'muted'}`} style={{left:clip.startBar*zoom,width:clip.lengthBars*zoom,'--section-color':kind==='video'?'#64baff':'#d3a1ff'} as import('react').CSSProperties} onPointerDown={e=>beginAsset(e,clip,kind)} onPointerMove={movePointer} onPointerUp={endPointer} onPointerCancel={cancelPointer} onKeyDown={e=>{if(e.key==='Enter'){pause();setSelectedId(clip.id);seek(clip.startBar);}if(e.key==='ArrowLeft'||e.key==='ArrowRight'){e.preventDefault();assetChange(kind,clip.id,{startBar:Math.max(0,clip.startBar+(e.key==='ArrowRight'?snap:-snap))});}}}><strong>{clip.name}</strong><small>{((clip.trimOutMs-clip.trimInMs)/1000).toFixed(2)} s</small><span className="clip-resize" aria-label={`Resize ${kind} clip`} onPointerDown={e=>beginAsset(e,clip,kind,true)} onPointerMove={movePointer} onPointerUp={endPointer} onPointerCancel={cancelPointer}/></div>)}
+                {(kind==='video'?timeline.videoClips??[]:timeline.takeClips??[]).map(clip=><div key={clip.id} role="button" tabIndex={0} aria-label={`${kind==='video'?'Video':'Recorded take'} clip ${clip.name}`} className={`timeline-clip asset-clip ${(selectedId===clip.id || selectedIds.has(clip.id))?'selected':''} ${clip.enabled?'':'muted'}`} style={{left:clip.startBar*zoom,width:clip.lengthBars*zoom,'--section-color':kind==='video'?'#64baff':'#d3a1ff'} as import('react').CSSProperties} onPointerDown={e=>beginAsset(e,clip,kind)} onPointerMove={movePointer} onPointerUp={endPointer} onPointerCancel={cancelPointer} onKeyDown={e=>{if(e.key==='Enter'){pause();setSelectedId(clip.id);seek(clip.startBar);}if(e.key==='ArrowLeft'||e.key==='ArrowRight'){e.preventDefault();assetChange(kind,clip.id,{startBar:Math.max(0,clip.startBar+(e.key==='ArrowRight'?snap:-snap))});}}}><strong>{clip.name}</strong><small>{((clip.trimOutMs-clip.trimInMs)/1000).toFixed(2)} s</small><span className="clip-resize" aria-label={`Resize ${kind} clip`} onPointerDown={e=>beginAsset(e,clip,kind,true)} onPointerMove={movePointer} onPointerUp={endPointer} onPointerCancel={cancelPointer}/></div>)}
               </div></div>)}
               {Array.from({ length: laneCount }, (_, lane) => (
                 <div key={lane} className="timeline-lane-row">
-                  <div className="lane-label">FX {lane + 1}</div>
+                  <div className={`lane-label fx-lane-label ${selectedLane===lane?'selected':''}`}><button aria-label={`Select FX lane ${lane+1}`} aria-pressed={selectedLane===lane} onClick={()=>setSelectedLane(lane)}>FX {lane + 1}</button><button aria-label={`Mute FX lane ${lane+1}`} aria-pressed={(timeline.mutedLanes??[]).includes(lane)} onClick={()=>{const muted=timeline.mutedLanes??[];edit({...timeline,mutedLanes:muted.includes(lane)?muted.filter(l=>l!==lane):[...muted,lane]});}}>{(timeline.mutedLanes??[]).includes(lane)?'Muted':'On'}</button></div>
                   <div
                     data-lane={lane}
                     onPointerDown={seekPointer}
-                    className="timeline-lane"
+                    className={`timeline-lane ${(timeline.mutedLanes??[]).includes(lane)?'lane-muted':''} ${selectedLane===lane?'lane-selected':''}`}
                     style={
                       {
                         width: totalBars * zoom,
@@ -786,7 +807,7 @@ export default function ShowTimelineEditor(props: Props) {
                             tabIndex={0}
                             role="button"
                             aria-label={`Timeline clip ${cue?.name ?? "Missing cue"}`}
-                            className={`timeline-clip ${selectedId === c.id ? "selected" : ""} ${c.enabled ? "" : "muted"}`}
+                            className={`timeline-clip ${(selectedId === c.id || selectedIds.has(c.id)) ? "selected" : ""} ${c.enabled ? "" : "muted"}`}
                             style={
                               {
                                 left: c.startBar * zoom,

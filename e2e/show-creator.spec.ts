@@ -1117,3 +1117,58 @@ test('recorded takes become independent Song versions with editable lighting fra
   await expect.poll(async()=>{const show=await readShow(page);return show.timelineShows?.find((t:any)=>t.name.includes('Take One'))?.timeline.takeClips?.[0]?.frames[0]?.updates.find((u:any)=>u[0]===1)?.[1];}).toBe(88);
   const show=await readShow(page);expect(show.songs.find((s:any)=>s.sourceRecordingId==='take').versionOf).toBe('song-master');expect(show.recordings[0].frames[0].updates[0][1]).toBe(100);expect(show.songs.find((s:any)=>s.id==='song').name).toBe('Hineh Ma Tov');
 });
+
+for(const mode of ['Record','Overdub'])test(`Timeline ${mode} writes directly at playhead and preserves existing clips`,async({page})=>{
+  await seed(page);await page.addInitScript(()=>localStorage.setItem('dmx-controller.show.v1',JSON.stringify({version:4,name:'Direct record',cues:[{id:'base',number:1,name:'Base',fadeMs:0,values:{red:255,green:0,blue:0,uv:0,dimmer:255},changes:[[2,180]]}],timeline:{bpm:120,beatsPerBar:4,audioOffsetBars:0,clips:[{id:'base-clip',cueId:'base',startBar:0,lengthBars:16,lane:0,enabled:true}]}})));
+  await page.goto('/');await page.getByRole('button',{name:'SHOW',exact:true}).click();await page.getByRole('button',{name:'Timeline',exact:true}).click();
+  await page.locator('.bar-ruler').click({position:{x:72,y:20}});await page.getByRole('button',{name:`● ${mode}`,exact:true}).click();
+  await expect(page.locator('.console-recording-bar')).toContainText(mode==='Overdub'?'TIMELINE OVERDUB':'TIMELINE RECORD');
+  await page.getByRole('button',{name:'Fixtures',exact:true}).click();await page.getByLabel('Wash 1 brightness').fill('80');
+  await expect.poll(()=>page.locator('.console-recording-bar').textContent()).not.toContain('00:00.0');
+  await page.getByRole('button',{name:'Pause recording',exact:true}).click();const paused=await page.locator('.console-recording-bar small').textContent();await page.waitForTimeout(150);expect(await page.locator('.console-recording-bar small').textContent()).toBe(paused);
+  await page.getByRole('button',{name:'Resume recording',exact:true}).click();await page.waitForTimeout(100);await page.getByRole('button',{name:'Stop + save',exact:true}).click();
+  await expect(page.locator('.take-lane, .asset-clip').first()).toBeVisible();
+  await expect.poll(async()=>((await readShow(page)).timeline?.takeClips??[]).length).toBe(1);
+  const show=await readShow(page),take=show.timeline.takeClips[0];expect(take.startBar).toBe(2);expect(take.mode).toBe('override');expect(show.timeline.clips).toHaveLength(1);expect(show.recordings).toHaveLength(1);
+  expect(take.frames.some((f:any)=>f.updates.some((u:any)=>u[1]===204))).toBe(true);
+  if(mode==='Overdub')expect(take.frames.flatMap((f:any)=>f.updates).every((u:any)=>u[0]!==2)).toBe(true);
+  await page.reload();await page.getByRole('button',{name:'SHOW',exact:true}).click();await page.getByRole('button',{name:'Timeline',exact:true}).click();await expect(page.locator('.asset-clip')).toHaveCount(1);
+});
+
+test('FX lanes mute persistently, target insertion and select-all arrangement copying',async({page})=>{
+  await seed(page);await page.goto('/');await page.getByRole('button',{name:'SHOW',exact:true}).click();await page.getByRole('button',{name:'Timeline',exact:true}).click();
+  await page.getByRole('button',{name:'Select FX lane 2',exact:true}).click();await page.getByRole('button',{name:'FX recipes',exact:true}).click();await page.locator('.timeline-fx-recipe').first().click();
+  await expect.poll(async()=>((await readShow(page)).timeline?.clips??[])[0]?.lane).toBe(1);
+  await page.getByRole('button',{name:'Mute FX lane 2',exact:true}).click();await expect(page.getByRole('button',{name:'Mute FX lane 2',exact:true})).toHaveAttribute('aria-pressed','true');
+  await page.locator('.show-bar-timeline').press('Control+a');await page.keyboard.press('Control+c');await page.keyboard.press('Control+v');await expect(page.locator('.timeline-clip')).toHaveCount(2);await page.keyboard.press('Control+z');await expect(page.locator('.timeline-clip')).toHaveCount(1);
+  await page.reload();await page.getByRole('button',{name:'SHOW',exact:true}).click();await page.getByRole('button',{name:'Timeline',exact:true}).click();await expect(page.getByRole('button',{name:'Mute FX lane 2',exact:true})).toHaveAttribute('aria-pressed','true');
+});
+
+for(const width of [650,820,1280])test(`new Timeline controls remain spaced and bounded at ${width}px`,async({page},info)=>{
+  await seed(page);await page.setViewportSize({width,height:800});await page.goto('/');await page.getByRole('button',{name:'SHOW',exact:true}).click();await page.getByRole('button',{name:'Timeline',exact:true}).click();
+  const geometry=await page.locator('.timeline-toolbar').evaluate(el=>{const outer=el.getBoundingClientRect();return {x:outer.x,right:outer.right,items:[...el.querySelectorAll(':scope>button,:scope>label,:scope>output')].map(e=>{const r=e.getBoundingClientRect();return {text:e.textContent,x:r.x,y:r.y,right:r.right,bottom:r.bottom,width:r.width,height:r.height};}).filter(r=>r.width&&r.height)};});
+  for(const r of geometry.items){expect(r.x).toBeGreaterThanOrEqual(geometry.x);expect(r.right).toBeLessThanOrEqual(geometry.right+1);}
+  for(let i=0;i<geometry.items.length;i++)for(let j=i+1;j<geometry.items.length;j++){const a=geometry.items[i],b=geometry.items[j];expect(Math.min(a.right,b.right)-Math.max(a.x,b.x)>1 && Math.min(a.bottom,b.bottom)-Math.max(a.y,b.y)>1,`${a.text} overlaps ${b.text}`).toBe(false);}
+  expect(await page.evaluate(()=>document.documentElement.scrollWidth)).toBeLessThanOrEqual(width);
+  await page.getByRole('button',{name:'● Record',exact:true}).click();const bar=page.locator('.console-recording-bar');await expect(bar).toBeVisible();expect(await bar.evaluate(el=>el.scrollWidth<=el.clientWidth+1)).toBe(true);await page.screenshot({path:info.outputPath(`capture-${width}.png`)});await page.getByRole('button',{name:'Cancel',exact:true}).click();
+});
+
+test('Timeline capture keeps trimmed Song media running through Live navigation',async({page})=>{
+  await seed(page);await page.goto('/');await page.getByRole('button',{name:'SHOW',exact:true}).click();await page.getByRole('button',{name:'Timeline',exact:true}).click();
+  await page.getByLabel('Load timeline audio').setInputFiles({name:'record-clock.wav',mimeType:'audio/wav',buffer:wav()});
+  await expect(page.getByLabel('Trim out seconds')).toHaveValue('3');
+  const targetTimeline=await page.getByLabel('Timeline show').inputValue();
+  await page.getByLabel('Audio starts at bar',{exact:true}).fill('2');await page.getByLabel('Trim in seconds').fill('0.5');await page.getByLabel('Trim out seconds').fill('2.5');
+  await page.locator('.bar-ruler').click({position:{x:36,y:20}});await page.getByRole('button',{name:'● Record',exact:true}).click();
+  await expect.poll(()=>page.locator('audio').evaluate((a:HTMLAudioElement)=>a.paused)).toBe(false);await expect.poll(()=>page.locator('audio').evaluate((a:HTMLAudioElement)=>a.currentTime)).toBeGreaterThan(.5);
+  await page.getByRole('button',{name:'Stop + save',exact:true}).click();
+  const savedTimeline=async()=>{const show=await readShow(page);return targetTimeline?show.timelineShows.find((t:any)=>t.id===targetTimeline).timeline:show.timeline;};
+  await expect.poll(async()=>((await savedTimeline()).takeClips??[]).length).toBe(1);expect((await savedTimeline()).takeClips[0].startBar).toBe(1);
+});
+
+test('Select all, copy, paste and undo operate on Sections and fixture patch editing',async({page})=>{
+  await seed(page);await page.goto('/');await page.getByRole('button',{name:'SHOW',exact:true}).click();await page.getByRole('button',{name:'Show Creator',exact:true}).click();await page.getByRole('button',{name:/Worship Song/}).click();
+  await page.locator('.section-list').press('Control+a');await page.keyboard.press('Control+c');await page.keyboard.press('Control+v');await expect(page.locator('.section-list>article')).toHaveCount(16);await page.keyboard.press('Control+z');await expect(page.locator('.section-list>article')).toHaveCount(8);
+  await page.getByRole('button',{name:'BUILD',exact:true}).click();await page.getByRole('button',{name:'Fixtures',exact:true}).click();await page.keyboard.press('Control+a');await page.keyboard.press('Control+c');await page.keyboard.press('Control+v');
+  await expect.poll(()=>page.evaluate(()=>{const p=JSON.parse(localStorage.getItem('dmx-controller.patch.v1')??'[]');return (Array.isArray(p)?p:p.fixtures).length;})).toBe(8);await page.keyboard.press('Control+z');await expect.poll(()=>page.evaluate(()=>{const p=JSON.parse(localStorage.getItem('dmx-controller.patch.v1')??'[]');return (Array.isArray(p)?p:p.fixtures).length;})).toBe(4);
+});
