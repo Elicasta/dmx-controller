@@ -53,18 +53,20 @@ function cleanConfig(config: RemoteRelayConfig) {
   return { url, publishableKey: config.publishableKey.trim() };
 }
 
-async function operatorClient(config: RemoteRelayConfig): Promise<{ client: SupabaseClient; userId: string }> {
+export async function operatorClient(config: RemoteRelayConfig): Promise<{ client: SupabaseClient; userId: string }> {
   const { url, publishableKey } = cleanConfig(config);
   const client = getLumaSupabaseClient(url, publishableKey);
   let session = (await client.auth.getSession()).data.session;
   const desiredEmail = config.email.trim().toLowerCase();
-  if (!session || session.user.email?.toLowerCase() !== desiredEmail || session.user.is_anonymous) {
-    if (!config.password) throw new Error('Connect Secure Cloud Relay on this computer first.');
+  const sessionEmail = session?.user.email?.toLowerCase() || '';
+  const sessionUsable = Boolean(session && !session.user.is_anonymous && (!desiredEmail || sessionEmail === desiredEmail));
+  if (!sessionUsable) {
+    if (!desiredEmail || !config.password) throw new Error('Sign in to LumaRig Cloud on this computer first.');
     const result = await client.auth.signInWithPassword({ email: desiredEmail, password: config.password });
     if (result.error) throw result.error;
     session = result.data.session;
   }
-  if (!session) throw new Error('Supabase operator session is unavailable.');
+  if (!session || session.user.is_anonymous) throw new Error('Supabase operator session is unavailable.');
   return { client, userId: session.user.id };
 }
 
@@ -290,4 +292,96 @@ export async function revokePairedController(config: RemoteRelayConfig, deviceId
     .eq('operator_id', userId)
     .eq('id', deviceId);
   dbError(result.error, 'Controller could not be revoked.');
+}
+
+export type CloudAccount = { userId: string; email: string; };
+export type CloudSongDocument = {
+  songId: string; title: string; artist: string; bpm: number; musicalKey: string;
+  arrangement: string[]; notes: string; program: unknown; revision: number; updatedAt: string;
+};
+export type CloudRecordingLabel = {
+  takeId: string; songId: string | null; showId: string | null; label: string; notes: string; updatedAt: string;
+};
+
+export async function currentCloudAccount(config: RemoteRelayConfig): Promise<CloudAccount | null> {
+  const { url, publishableKey } = cleanConfig(config);
+  const client = getLumaSupabaseClient(url, publishableKey);
+  const session = (await client.auth.getSession()).data.session;
+  if (!session || session.user.is_anonymous) return null;
+  return { userId: session.user.id, email: session.user.email || config.email || '' };
+}
+
+export async function signInCloudAccount(config: RemoteRelayConfig, email: string, password: string): Promise<CloudAccount> {
+  const { url, publishableKey } = cleanConfig(config);
+  const client = getLumaSupabaseClient(url, publishableKey);
+  const result = await client.auth.signInWithPassword({ email: email.trim().toLowerCase(), password });
+  if (result.error) throw result.error;
+  if (!result.data.session || result.data.user.is_anonymous) throw new Error('LumaRig Cloud did not return a permanent account session.');
+  return { userId: result.data.user.id, email: result.data.user.email || email.trim().toLowerCase() };
+}
+
+export async function signOutCloudAccount(config: RemoteRelayConfig) {
+  const { url, publishableKey } = cleanConfig(config);
+  const client = getLumaSupabaseClient(url, publishableKey);
+  const result = await client.auth.signOut();
+  if (result.error) throw result.error;
+}
+
+export async function fetchCloudSongLibrary(config: RemoteRelayConfig): Promise<CloudSongDocument[]> {
+  const { client } = await operatorClient(config);
+  const result = await client.from('lumarig_song_documents')
+    .select('song_id,title,artist,bpm,musical_key,arrangement,notes,program,revision,updated_at')
+    .is('deleted_at', null).order('updated_at', { ascending: false });
+  dbError(result.error, 'Cloud Song Library could not be loaded.');
+  return (result.data ?? []).map((row) => ({
+    songId: String(row.song_id), title: String(row.title), artist: String(row.artist || ''),
+    bpm: Number(row.bpm), musicalKey: String(row.musical_key || ''),
+    arrangement: Array.isArray(row.arrangement) ? row.arrangement.map(String) : [],
+    notes: String(row.notes || ''), program: row.program, revision: Number(row.revision), updatedAt: String(row.updated_at)
+  }));
+}
+
+export async function saveCloudSong(config: RemoteRelayConfig, input: {
+  songId: string; title: string; artist?: string; bpm: number; musicalKey?: string;
+  arrangement?: string[]; notes?: string; program: unknown; expectedRevision?: number; deviceId?: string;
+}) {
+  const { client } = await operatorClient(config);
+  const result = await client.rpc('lumarig_save_song', {
+    p_song_id: input.songId, p_title: input.title, p_artist: input.artist || '', p_bpm: input.bpm,
+    p_musical_key: input.musicalKey || '', p_arrangement: input.arrangement || [], p_notes: input.notes || '',
+    p_program: input.program, p_expected_revision: input.expectedRevision ?? 0, p_device_id: input.deviceId || 'lumarig-desktop'
+  }).single();
+  dbError(result.error, 'Cloud Song could not be saved.');
+  const data = result.data as { song_id?: unknown; revision?: unknown; updated_at?: unknown; conflict?: unknown } | null;
+  if (!data?.song_id || data.revision == null || !data.updated_at) throw new Error('Cloud Song save returned no result.');
+  return { songId: String(data.song_id), revision: Number(data.revision), updatedAt: String(data.updated_at), conflict: Boolean(data.conflict) };
+}
+
+export async function fetchCloudRecordingLabels(config: RemoteRelayConfig): Promise<CloudRecordingLabel[]> {
+  const { client } = await operatorClient(config);
+  const result = await client.from('lumarig_recording_labels').select('take_id,song_id,show_id,label,notes,updated_at').order('updated_at', { ascending: false });
+  dbError(result.error, 'Cloud recorded-take labels could not be loaded.');
+  return (result.data ?? []).map((row) => ({
+    takeId: String(row.take_id), songId: row.song_id ? String(row.song_id) : null, showId: row.show_id ? String(row.show_id) : null,
+    label: String(row.label || 'Recorded Take'), notes: String(row.notes || ''), updatedAt: String(row.updated_at)
+  }));
+}
+
+export async function saveCloudRecordingLabel(config: RemoteRelayConfig, input: { takeId: string; songId?: string | null; showId?: string | null; label: string; notes?: string; }) {
+  const { client, userId } = await operatorClient(config);
+  const result = await client.from('lumarig_recording_labels').upsert({
+    user_id: userId, take_id: input.takeId, song_id: input.songId || null, show_id: input.showId || null,
+    label: input.label.trim() || 'Recorded Take', notes: input.notes || ''
+  }, { onConflict: 'user_id,take_id' });
+  dbError(result.error, 'Recorded-take label could not be saved.');
+}
+
+export async function watchCloudLibrary(config: RemoteRelayConfig, onChange: () => void) {
+  const { client, userId } = await operatorClient(config);
+  const channel = client.channel('lumarig-cloud-library-' + userId)
+    .on('postgres_changes', { event: '*', schema: 'public', table: 'lumarig_song_documents', filter: 'user_id=eq.' + userId }, onChange)
+    .on('postgres_changes', { event: '*', schema: 'public', table: 'lumarig_show_documents', filter: 'user_id=eq.' + userId }, onChange)
+    .on('postgres_changes', { event: '*', schema: 'public', table: 'lumarig_recording_labels', filter: 'user_id=eq.' + userId }, onChange)
+    .subscribe();
+  return () => { void client.removeChannel(channel); };
 }
