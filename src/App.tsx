@@ -19,7 +19,7 @@ import MediaLibraryPanel from './components/MediaLibraryPanel';
 import { buildSong, songsForShow, renameSong, storeSongMedia, readSongMedia, type SongRecord } from './lib/song-bank';
 import { waveformForBlob } from './lib/media-waveform';
 import { analyzeTempo, correctedDownbeat } from './lib/tempo-analysis';
-import { cancelPortableBackupRestore, collectMediaIds, commitPortableBackupRestore, countMediaIds, exportPortableBackup, exportPortablePackage, importPortableBackup, importPortablePackage, mediaNameForId, persistManagedMedia, readMediaAsset, type MediaAsset } from './lib/media-library';
+import { cancelPortableBackupRestore, collectMediaIds, commitPortableBackupRestore, countMediaIds, exportPortableBackup, exportPortablePackage, importPortableBackup, importPortablePackage, mediaNameForId, persistManagedMedia, readMediaAsset, readMediaLibrary, type MediaAsset } from './lib/media-library';
 import ResizableWorkspace from './components/ResizableWorkspace';
 import DraggablePanelDeck from './components/DraggablePanelDeck';
 import StageMonitor, { openStageWindow, useStagePublisher } from './components/StageMonitor';
@@ -1064,6 +1064,15 @@ export default function App() {
   const [stageVideoInputs, setStageVideoInputs] = useState<StageVideoInputOption[]>([]);
   const [stageVideoInputError, setStageVideoInputError] = useState('');
   const [stageVideoInputPermissionBlocked, setStageVideoInputPermissionBlocked] = useState(false);
+  const [screenImageAssets, setScreenImageAssets] = useState<MediaAsset[]>([]);
+  useEffect(() => {
+    let active = true;
+    void readMediaLibrary().then((library) => {
+      if (!active) return;
+      setScreenImageAssets(library.assets.filter((asset) => asset.kind === 'image' && !asset.missing));
+    }).catch(() => {});
+    return () => { active = false; };
+  }, []);
   const [stageMonitorOpen,setStageMonitorOpen]=useState(false);
   const [midiMapOpen,setMidiMapOpen]=useState(false);
   const [timelineShowId,setTimelineShowId]=useState('');
@@ -3805,6 +3814,56 @@ export default function App() {
   async function importScreenVideo(screenId:string,file:File) {
     if(!/\.mp4$/i.test(file.name)){setMessage('Choose an MP4 video file.');return;}
     await loadShowAudioFile(file);routeTimelineVideo(screenId);
+  }
+  async function refreshScreenImageAssets() {
+    const library = await readMediaLibrary();
+    setScreenImageAssets(library.assets.filter((asset) => asset.kind === 'image' && !asset.missing));
+  }
+
+  async function importScreenImage(screenId:string,file:File) {
+    if(!file.type.startsWith('image/') && !/\.(png|jpe?g|webp|gif|bmp|tiff?)$/i.test(file.name)) {
+      throw Error('Choose a still image file.');
+    }
+    const mediaId=crypto.randomUUID();
+    const asset=await persistManagedMedia(mediaId,file,file.name,null,'image');
+    if(!asset) throw Error('Still-image screen assets require the installed LumaRig desktop app.');
+    setScreenImageAssets(current=>[asset,...current.filter(item=>item.id!==asset.id)]);
+    setStageElements(current=>current.map(element=>{
+      if(element.id!==screenId || element.type!=='led-screen')return element;
+      const previous=element.mediaSource?.kind!=='none' ? element.mediaSource : undefined;
+      return {...element,mediaSource:{
+        kind:'image',
+        mediaId:asset.id,
+        sourceName:asset.name,
+        fit:previous?.fit ?? 'contain',
+        scale:previous?.scale ?? 1,
+        offsetX:previous?.offsetX ?? 0,
+        offsetY:previous?.offsetY ?? 0
+      }};
+    }));
+    setMessage(`${asset.name} added to the shared Media Library and routed to this screen.`);
+  }
+
+  function setScreenSourceKind(screenId:string,kind:'none'|'timeline'|'ndi'|'image'|'color'|'test-pattern') {
+    setStageElements(current=>current.map(element=>{
+      if(element.id!==screenId || element.type!=='led-screen')return element;
+      const previous=element.mediaSource?.kind!=='none' ? element.mediaSource : undefined;
+      const framing={
+        fit:previous?.fit ?? 'contain',
+        scale:previous?.scale ?? 1,
+        offsetX:previous?.offsetX ?? 0,
+        offsetY:previous?.offsetY ?? 0
+      };
+      if(kind==='timeline')return {...element,mediaSource:{kind:'timeline',sourceName:'Timeline video',...framing}};
+      if(kind==='ndi')return {...element,mediaSource:{kind:'ndi',sourceName:'ProPresenter',...framing}};
+      if(kind==='image'){
+        const asset=screenImageAssets[0];
+        return {...element,mediaSource:{kind:'image',mediaId:asset?.id ?? '',sourceName:asset?.name ?? 'Still image',...framing}};
+      }
+      if(kind==='color')return {...element,mediaSource:{kind:'color',color:element.color || '#000000'}};
+      if(kind==='test-pattern')return {...element,mediaSource:{kind:'test-pattern',pattern:'bars'}};
+      return {...element,mediaSource:{kind:'none'}};
+    }));
   }
   function loadStagePreset(presetId: StagePresetId) {
     const preset = instantiateStagePreset(presetId);
