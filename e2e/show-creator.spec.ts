@@ -1024,6 +1024,6 @@ test('cue targets focus the same fixture in Stage and Programmer', async ({page}
     await expect(page.locator('.setup-inspector header')).toContainText(name);
     await page.getByRole('button',{name:'CREATE',exact:true}).click();
     await page.getByRole('button',{name:'Programmer',exact:true}).click();
-    await expect.poll(()=>page.evaluate(()=>JSON.parse(localStorage.getItem('dmx-controller.patch.v1')??'[]').filter((fixture:any)=>fixture.selected).map((fixture:any)=>fixture.name))).toEqual([name]);
+    await expect.poll(()=>page.evaluate(()=>{ const document=JSON.parse(localStorage.getItem('dmx-controller.patch.v1')??'[]'); return (Array.isArray(document)?document:document.fixtures).filter((fixture:any)=>fixture.selected).map((fixture:any)=>fixture.name); })).toEqual([name]);
   }
 });
