@@ -2005,7 +2005,7 @@ export default function App() {
 
   async function syncShowSnapshotToCloud(snapshot: ShowProjectSnapshot) {
     const known = cloudShows.find((item) => item.showId === snapshot.id);
-    const folderId = cloudFolderId || null;
+    const folderId = cloudFolderId || snapshot.cloudFolderId || null;
     const media = songsForShow(snapshot.show)
       .filter((song): song is SongRecord & { mediaId: string } => Boolean(song.mediaId))
       .filter((song, index, list) => list.findIndex((candidate) => candidate.mediaId === song.mediaId) === index);
@@ -2166,6 +2166,7 @@ export default function App() {
     setStageElements(snapshot.stageElements.map((element) => migrateStageElement(element, snapshot.stageSettings.dimensions)));
     setStageSettings(snapshot.stageSettings);
     setSavedLooks(snapshot.looks);
+    setCloudFolderId(snapshot.cloudFolderId || '');
     setActiveCueId(null);
     setSelectedStageElementId(null);
     setMessage(`${snapshot.name} loaded from the show library.`);
