@@ -60,6 +60,17 @@ function describeVideoInputFailure(error: unknown): StageVideoInputError {
   );
 }
 
+async function cameraPermissionState(): Promise<PermissionState | 'unknown'> {
+  const permissions = navigator.permissions;
+  if (!permissions?.query) return 'unknown';
+  try {
+    const result = await permissions.query({ name: 'camera' as PermissionName });
+    return result.state;
+  } catch {
+    return 'unknown';
+  }
+}
+
 export async function requestStageVideoInputs(): Promise<StageVideoInputScanResult> {
   if (!navigator.mediaDevices?.enumerateDevices) {
     throw new StageVideoInputError(
@@ -90,6 +101,15 @@ export async function requestStageVideoInputs(): Promise<StageVideoInputScanResu
     return { inputs: beforePermission, permission: 'granted' };
   }
 
+  const permissionState = await cameraPermissionState();
+  if (permissionState === 'denied') {
+    return {
+      inputs: beforePermission,
+      permission: 'limited',
+      warning: 'Camera/video-input permission is blocked for LumaRig. Open Camera Privacy Settings, enable LumaRig, quit the app completely, then reopen and scan again.'
+    };
+  }
+
   if (!navigator.mediaDevices.getUserMedia) {
     if (beforePermission.length) {
       return {
@@ -103,11 +123,29 @@ export async function requestStageVideoInputs(): Promise<StageVideoInputScanResu
 
   let permissionStream: MediaStream | null = null;
   try {
-    permissionStream = await navigator.mediaDevices.getUserMedia({ video: true, audio: false });
+    // Prefer a concrete device when enumerateDevices already exposed one. This
+    // is friendlier to macOS virtual-camera bridges such as NDI Webcam Input
+    // than asking WebKit for an arbitrary default camera.
+    const firstDeviceId = beforePermission.find((input) => input.deviceId)?.deviceId;
+    permissionStream = await navigator.mediaDevices.getUserMedia({
+      video: firstDeviceId ? { deviceId: { exact: firstDeviceId } } : true,
+      audio: false
+    });
   } catch (error) {
     const described = describeVideoInputFailure(error);
-    if (described.code === 'permission-denied' && beforePermission.length) {
-      return { inputs: beforePermission, permission: 'limited', warning: described.message };
+    if (described.code === 'permission-denied') {
+      return {
+        inputs: beforePermission,
+        permission: 'limited',
+        warning: described.message
+      };
+    }
+    if (described.code === 'no-device' && beforePermission.length) {
+      return {
+        inputs: beforePermission,
+        permission: 'limited',
+        warning: 'LumaRig can see video-input device records, but none can be opened. Start NDI Webcam Input / Virtual Input, then scan again.'
+      };
     }
     throw described;
   } finally {
@@ -115,7 +153,14 @@ export async function requestStageVideoInputs(): Promise<StageVideoInputScanResu
   }
 
   try {
-    return { inputs: await enumerate(), permission: 'granted' };
+    const afterPermission = await enumerate();
+    return {
+      inputs: afterPermission,
+      permission: afterPermission.some((input) => !/^Video Input \d+$/i.test(input.label)) ? 'granted' : 'limited',
+      warning: afterPermission.length && afterPermission.every((input) => /^Video Input \d+$/i.test(input.label))
+        ? 'Video permission was granted, but macOS/WebKit is still hiding device names. Quit and reopen LumaRig once, then scan again.'
+        : undefined
+    };
   } catch (error) {
     throw describeVideoInputFailure(error);
   }
