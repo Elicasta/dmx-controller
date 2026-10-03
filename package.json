@@ -10,7 +10,9 @@
     "tauri": "tauri",
     "tauri:dev": "tauri dev",
     "tauri:build": "tauri build",
-    "test:ui": "playwright test"
+    "test:ui": "playwright test",
+    "check:version": "node scripts/release-version.mjs --check",
+    "sync:release-version": "node scripts/release-version.mjs"
   },
   "dependencies": {
     "@supabase/supabase-js": "2.116.0",
