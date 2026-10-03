@@ -971,7 +971,7 @@ export default function App() {
     void connectRemoteRelay();
   }, [cloudAccount?.userId, remoteRelayConfig.roomCode]);
   const [message, setMessage] = useState('Control station ready. Connect DMX when you want physical output.');
-  const [appVersion, setAppVersion] = useState('0.2.7');
+  const [appVersion, setAppVersion] = useState('0.2.8');
   useEffect(() => {
     if (!cloudAccount) return;
     void registerCloudDesktop(remoteRelayConfig, appVersion).catch(() => {});
