@@ -12,19 +12,48 @@ use dmx::{DmxEngine, DmxStatus};
 use midi::{MidiEngine, MidiEvent, MidiInputInfo, MidiStatus};
 use output::{artnet::ArtNetEngine, lumaviz_direct::LumaVizDirectEngine, udmx::UdmxDeviceInfo};
 use studio_bridge::{StudioBridge, StudioBridgeEnvelope, StudioBridgeResponse, StudioBridgeStatus};
-use tauri::{State, Manager};
+use tauri::{Manager, PhysicalPosition, State};
 use tauri::webview::{PermissionKind, PermissionResponse};
+
+fn move_output_to_secondary(window: &tauri::WebviewWindow) -> Result<bool, String> {
+    let monitors = window.available_monitors().map_err(|error| error.to_string())?;
+    if monitors.len() < 2 {
+        return Ok(false);
+    }
+
+    let primary = window.primary_monitor().map_err(|error| error.to_string())?;
+    let secondary = monitors.into_iter().find(|monitor| {
+        primary.as_ref().map(|primary| {
+            let left = monitor.position();
+            let right = primary.position();
+            left.x != right.x || left.y != right.y
+        }).unwrap_or(true)
+    });
+
+    let Some(monitor) = secondary else {
+        return Ok(false);
+    };
+    let position = monitor.position();
+    window
+        .set_fullscreen_on_monitor(PhysicalPosition::new(position.x as f64, position.y as f64))
+        .map_err(|error| error.to_string())?;
+    Ok(true)
+}
 
 #[tauri::command]
 fn open_media_output(app: tauri::AppHandle) -> Result<(), String> {
     if let Some(window) = app.get_webview_window("media-output") {
+        let _ = move_output_to_secondary(&window);
         return window.set_focus().map_err(|e| e.to_string());
     }
-    tauri::WebviewWindowBuilder::new(&app, "media-output", tauri::WebviewUrl::App("index.html?media-output=1".into()))
+    let window = tauri::WebviewWindowBuilder::new(&app, "media-output", tauri::WebviewUrl::App("index.html?media-output=1".into()))
         .title("LumaRig · Video Output")
         .inner_size(1280.0, 720.0)
         .min_inner_size(320.0, 180.0)
-        .build().map(|_| ()).map_err(|e| e.to_string())
+        .build()
+        .map_err(|e| e.to_string())?;
+    let _ = move_output_to_secondary(&window);
+    Ok(())
 }
 #[tauri::command]
 fn toggle_media_output_fullscreen(app: tauri::AppHandle) -> Result<(), String> {
@@ -61,13 +90,17 @@ fn open_video_input_privacy_settings() -> Result<(), String> {
 #[tauri::command]
 fn open_stage_monitor(app: tauri::AppHandle) -> Result<(), String> {
     if let Some(window) = app.get_webview_window("stage-monitor") {
+        let _ = move_output_to_secondary(&window);
         return window.set_focus().map_err(|e| e.to_string());
     }
-    tauri::WebviewWindowBuilder::new(&app, "stage-monitor", tauri::WebviewUrl::App("index.html?stage-monitor=1".into()))
+    let window = tauri::WebviewWindowBuilder::new(&app, "stage-monitor", tauri::WebviewUrl::App("index.html?stage-monitor=1".into()))
         .title("LumaRig · Visualizer")
         .inner_size(1280.0, 800.0)
         .min_inner_size(720.0, 480.0)
-        .build().map(|_| ()).map_err(|e| e.to_string())
+        .build()
+        .map_err(|e| e.to_string())?;
+    let _ = move_output_to_secondary(&window);
+    Ok(())
 }
 
 
