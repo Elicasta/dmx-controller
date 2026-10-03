@@ -17,7 +17,9 @@ permissions:
   contents: read
 
 concurrency:
-  group: lumarig-macos-release-${{ inputs.version }}
+  # macOS and Windows both update the same GitHub Release + latest.json.
+  # Serialize a version across both workflows so updater metadata cannot race.
+  group: lumarig-release-${{ inputs.version }}
   cancel-in-progress: false
 
 jobs:
