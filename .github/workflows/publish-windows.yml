@@ -17,7 +17,8 @@ permissions:
   contents: read
 
 concurrency:
-  group: lumarig-windows-release-${{ inputs.version }}
+  # Share the macOS lock because both workflows update the same release manifest.
+  group: lumarig-release-${{ inputs.version }}
   cancel-in-progress: false
 
 jobs:
