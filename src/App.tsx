@@ -1,3 +1,4 @@
+import packageMeta from '../package.json';
 import {pasteFixtures} from './lib/fixture-clipboard';
 import {ManualOverdub,timelineCaptureClip,appendTimelineCapture} from './lib/timeline-capture';
 import { cueContext, cueTargetIds } from './lib/show-selection';
@@ -971,7 +972,7 @@ export default function App() {
     void connectRemoteRelay();
   }, [cloudAccount?.userId, remoteRelayConfig.roomCode]);
   const [message, setMessage] = useState('Control station ready. Connect DMX when you want physical output.');
-  const [appVersion, setAppVersion] = useState('0.2.8');
+  const [appVersion, setAppVersion] = useState(packageMeta.version);
   useEffect(() => {
     if (!cloudAccount) return;
     void registerCloudDesktop(remoteRelayConfig, appVersion).catch(() => {});
