@@ -65,6 +65,14 @@ function scale(value: Vec3, amount: number): Vec3 {
   return { x: value.x * amount, y: value.y * amount, z: value.z * amount };
 }
 
+function subtractVec(a: Vec3, b: Vec3): Vec3 {
+  return { x: a.x - b.x, y: a.y - b.y, z: a.z - b.z };
+}
+
+function dotVec(a: Vec3, b: Vec3) {
+  return a.x * b.x + a.y * b.y + a.z * b.z;
+}
+
 function magnitude(value: Vec3) {
   return Math.hypot(value.x, value.y, value.z);
 }
@@ -109,6 +117,36 @@ function surfaceAxes(surface: BeamSurface): [Vec3, Vec3] {
     return [{ x: 1, y: 0, z: 0 }, { x: 0, y: 1, z: 0 }];
   }
   return [{ x: 0, y: 0, z: 1 }, { x: 0, y: 1, z: 0 }];
+}
+
+function surfaceNormal(surface: BeamSurface): Vec3 {
+  if (surface === 'floor') return { x: 0, y: 1, z: 0 };
+  if (surface === 'ceiling') return { x: 0, y: -1, z: 0 };
+  if (surface === 'back-wall') return { x: 0, y: 0, z: 1 };
+  if (surface === 'front-wall') return { x: 0, y: 0, z: -1 };
+  if (surface === 'left-wall') return { x: 1, y: 0, z: 0 };
+  return { x: -1, y: 0, z: 0 };
+}
+
+function spillAxes(surface: BeamSurface, directionInput: Vec3): { major: Vec3; minor: Vec3; stretch: number } {
+  const normal = surfaceNormal(surface);
+  const direction = normalizeVec(directionInput);
+  const tangent = subtractVec(direction, scale(normal, dotVec(direction, normal)));
+  const fallback = surfaceAxes(surface);
+  const major = magnitude(tangent) > 1e-5 ? normalizeVec(tangent) : fallback[0];
+  const minor = normalizeVec(cross(normal, major));
+  const incidence = Math.max(.18, Math.abs(dotVec(direction, normal)));
+  return { major, minor, stretch: clamp(1 / incidence, 1, 3.6) };
+}
+
+function cameraFacingBeamRadial(directionInput: Vec3, camera: VisualizerCamera): Vec3 {
+  const direction = normalizeVec(directionInput);
+  const cameraAxes = cameraBasis(camera);
+  const candidates = [cameraAxes.right, cameraAxes.up]
+    .map((axis) => subtractVec(axis, scale(direction, dotVec(axis, direction))));
+  const best = candidates.sort((a, b) => magnitude(b) - magnitude(a))[0];
+  if (best && magnitude(best) > 1e-5) return normalizeVec(best);
+  return beamBasis(direction).side;
 }
 
 function rotateLocal(point: Vec3, rotation: EulerDegrees): Vec3 {
@@ -444,15 +482,15 @@ function drawLightSpill(
       .08,
       Math.max(snapshot.dimensions.roomWidth, snapshot.dimensions.roomHeight) * .42
     );
-    const [axisA, axisB] = surfaceAxes(hit.surface);
+    const footprint = spillAxes(hit.surface, geometry.beam.direction);
     const center = projectVisualizerPoint(hit.point, camera, width, height);
     if (center.depth <= .02) return;
 
     const color = fixtureColor(snapshot, fixture);
-    const segments = quality === 'high' ? 24 : 16;
+    const segments = quality === 'high' ? 28 : 18;
     const layers = quality === 'high'
-      ? [{ factor: 1, alpha: .045 }, { factor: .7, alpha: .07 }, { factor: .38, alpha: .12 }]
-      : [{ factor: 1, alpha: .04 }, { factor: .48, alpha: .09 }];
+      ? [{ factor: 1, alpha: .038 }, { factor: .72, alpha: .064 }, { factor: .4, alpha: .115 }]
+      : [{ factor: 1, alpha: .035 }, { factor: .5, alpha: .085 }];
 
     for (const layer of layers) {
       const points: Projected[] = [];
@@ -461,8 +499,8 @@ function drawLightSpill(
         const world = add(
           hit.point,
           add(
-            scale(axisA, Math.cos(angle) * radius * layer.factor),
-            scale(axisB, Math.sin(angle) * radius * layer.factor)
+            scale(footprint.major, Math.cos(angle) * radius * layer.factor * footprint.stretch),
+            scale(footprint.minor, Math.sin(angle) * radius * layer.factor)
           )
         );
         points.push(projectVisualizerPoint(world, camera, width, height));
@@ -475,8 +513,7 @@ function drawLightSpill(
 
     if (quality === 'high') {
       const hotRadius = Math.max(.03, radius * .13);
-      const [axisAHot] = surfaceAxes(hit.surface);
-      const edge = projectVisualizerPoint(add(hit.point, scale(axisAHot, hotRadius)), camera, width, height);
+      const edge = projectVisualizerPoint(add(hit.point, scale(footprint.minor, hotRadius)), camera, width, height);
       const screenRadius = clamp(Math.hypot(edge.x - center.x, edge.y - center.y), 1.5, 42);
       const glow = ctx.createRadialGradient(center.x, center.y, 0, center.x, center.y, screenRadius);
       glow.addColorStop(0, rgba(color, .32 * intensity));
@@ -535,6 +572,29 @@ function drawBeams(
       .52
     );
 
+    // Always draw one camera-facing cone silhouette. Fixed radial slices can
+    // collapse to almost zero screen width at grazing camera angles; this
+    // slice keeps the volumetric beam readable while still using true 3D
+    // beam origin/direction/radius.
+    const facingRadial = cameraFacingBeamRadial(geometry.beam.direction, camera);
+    const facingSourceRadius = Math.min(.045, radius * .04);
+    const silhouette = [
+      projectVisualizerPoint(add(geometry.beam.origin, scale(facingRadial, -facingSourceRadius)), camera, width, height),
+      projectVisualizerPoint(add(geometry.beam.origin, scale(facingRadial, facingSourceRadius)), camera, width, height),
+      projectVisualizerPoint(add(endpoint, scale(facingRadial, radius)), camera, width, height),
+      projectVisualizerPoint(add(endpoint, scale(facingRadial, -radius)), camera, width, height),
+    ];
+    if (silhouette.every((point) => point.depth > .02)) {
+      const silhouetteGradient = ctx.createLinearGradient(startCenter.x, startCenter.y, endCenter.x, endCenter.y);
+      silhouetteGradient.addColorStop(0, rgba(color, baseAlpha * .78));
+      silhouetteGradient.addColorStop(.28, rgba(color, baseAlpha * .64));
+      silhouetteGradient.addColorStop(.75, rgba(color, baseAlpha * .34));
+      silhouetteGradient.addColorStop(1, rgba(color, baseAlpha * .06));
+      polygon(ctx, silhouette);
+      ctx.fillStyle = silhouetteGradient;
+      ctx.fill();
+    }
+
     for (let slice = 0; slice < sliceCount; slice += 1) {
       const angle = sliceCount === 1 ? 0 : slice / sliceCount * Math.PI;
       const radial = radialDirection(basis.side, basis.up, angle);
@@ -589,7 +649,17 @@ function drawBeams(
 
   ctx.restore();
 }
+const crowdLayoutCache = new Map<string, Array<Vec3 & { seed: number }>>();
+
 function crowdPoints(stage: StageDimensions, quality: VisualizerQuality) {
+  const cacheKey = [
+    quality,
+    stage.width.toFixed(3), stage.depth.toFixed(3),
+    stage.roomWidth.toFixed(3), stage.roomDepth.toFixed(3)
+  ].join(':');
+  const cached = crowdLayoutCache.get(cacheKey);
+  if (cached) return cached;
+
   const points: Array<Vec3 & { seed: number }> = [];
   const half = Math.min(stage.roomWidth / 2 - .8, Math.max(stage.width / 2, 4));
   const start = stage.depth + 1.2;
@@ -598,15 +668,20 @@ function crowdPoints(stage: StageDimensions, quality: VisualizerQuality) {
   const zStep = quality === 'high' ? .82 : quality === 'quality' ? .94 : 1.25;
   const limit = quality === 'high' ? 420 : quality === 'quality' ? 310 : 175;
   let row = 0;
-  for (let z = start; z <= end; z += zStep) {
+  outer: for (let z = start; z <= end; z += zStep) {
     const offset = row % 2 ? xStep * .45 : 0;
     let column = 0;
     for (let x = -half + offset; x <= half; x += xStep) {
       points.push({ x, y: 0, z, seed: ((row * 37 + column * 17) % 101) / 100 });
-      if (points.length >= limit) return points;
+      if (points.length >= limit) break outer;
       column += 1;
     }
     row += 1;
+  }
+  crowdLayoutCache.set(cacheKey, points);
+  if (crowdLayoutCache.size > 24) {
+    const oldest = crowdLayoutCache.keys().next().value;
+    if (oldest) crowdLayoutCache.delete(oldest);
   }
   return points;
 }
