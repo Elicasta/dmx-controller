@@ -24,7 +24,7 @@ import ResizableWorkspace from './components/ResizableWorkspace';
 import DraggablePanelDeck from './components/DraggablePanelDeck';
 import StageMonitor, { openStageWindow, useStagePublisher } from './components/StageMonitor';
 import Visualizer3D from './components/Visualizer3D';
-import { StageMediaSurface, StageVideoInputError, requestStageVideoInputs, type StageVideoInputOption } from './components/StageMediaSurface';
+import { StageMediaSurface, StageVideoInputError, requestStageVideoInputs, resolveStageVideoInputDevice, type StageVideoInputOption } from './components/StageMediaSurface';
 import SongCueLibrary from './components/SongCueLibrary';
 import { moveRundownItemCues } from './lib/show';
 import { activeTimelineCueId, createSection, EMPTY_TIMELINE, FX_RECIPES, SHOW_COLORS, buildSectionCues, renderEffectStack, renderShowTimeline, isEffectRecipe, isShowSection, type EffectStackLayer, type ShowSection } from './lib/show-design';
@@ -4331,15 +4331,18 @@ export default function App() {
         if (displays.length) displayCount = displays.length;
       }
 
-      const assignedVideoInputs = stageElements.filter((element) =>
+      const assignedVideoSources = stageElements.flatMap((element) =>
         element.type === 'led-screen'
         && element.mediaSource?.kind === 'ndi'
-        && Boolean(element.mediaSource.deviceId)
-      ).length;
+        && element.mediaSource.deviceId
+          ? [element.mediaSource]
+          : []
+      );
+      const assignedVideoInputs = assignedVideoSources.length;
 
       let currentVideoInputs = stageVideoInputs;
       let permissionBlocked = stageVideoInputPermissionBlocked;
-      if (assignedVideoInputs && !currentVideoInputs.length && !permissionBlocked) {
+      if (assignedVideoInputs && !permissionBlocked) {
         try {
           const scan = await requestStageVideoInputs();
           currentVideoInputs = scan.inputs;
@@ -4353,6 +4356,13 @@ export default function App() {
           setStageVideoInputError(error instanceof Error ? error.message : String(error));
         }
       }
+
+      const missingVideoInputNames = permissionBlocked ? [] : assignedVideoSources
+        .filter((source) => {
+          const resolvedDeviceId = resolveStageVideoInputDevice(source, currentVideoInputs);
+          return !resolvedDeviceId || !currentVideoInputs.some((input) => input.deviceId === resolvedDeviceId);
+        })
+        .map((source) => source.sourceName?.trim() || source.deviceId || 'Unnamed video input');
 
       const timelineClipCount = (showFileRef.current.timeline?.clips.length ?? 0)
         + (showFileRef.current.timelineShows ?? []).reduce((sum, item) => sum + item.timeline.clips.length, 0);
@@ -4369,6 +4379,7 @@ export default function App() {
         displayCount,
         assignedVideoInputs,
         videoInputCount: currentVideoInputs.length,
+        missingVideoInputNames: [...new Set(missingVideoInputNames)],
         videoPermissionBlocked: permissionBlocked,
         visualizerError: directStatus.lastError || '',
       }));
