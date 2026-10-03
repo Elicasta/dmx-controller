@@ -168,7 +168,7 @@ import { TransportEngine, type TransportSource, type TransportUpdate } from './c
 import { buildShowPreflight, preflightSummary, type ShowPreflightItem } from './core/show-preflight';
 import { ConnectionManager, type ConnectionRecord } from './core/connection-manager';
 import { lumaLivePositionMs, loadLumaLiveConnection, pairLumaLive, readLumaLiveState, saveLumaLiveConnection, scanLumaLive, sendLumaLiveCommand, type LumaLiveConnection, type LumaLiveEndpoint, type LumaLiveState } from './core/lumalive-client';
-import { loadProPresenterUrl, proPresenterSummary, readProPresenterStatus, saveProPresenterUrl, sendProPresenterCommand, type ProPresenterStatus } from './core/propresenter-client';
+import { loadProPresenterUrl, observeProPresenterTransport, proPresenterSummary, proPresenterTransportMs, readProPresenterStatus, saveProPresenterUrl, sendProPresenterCommand, type ProPresenterStatus, type ProPresenterTransportObservation } from './core/propresenter-client';
 import { QRCodeSVG } from 'qrcode.react';
 import {
   createCloudShowFolder,
@@ -762,6 +762,7 @@ export default function App() {
   const [proPresenterWatching, setProPresenterWatching] = useState(false);
   const [proPresenterBusy, setProPresenterBusy] = useState(false);
   const [proPresenterError, setProPresenterError] = useState('');
+  const proPresenterTransportObservationRef = useRef<ProPresenterTransportObservation | null>(null);
 
   const [studioBridgeStatus, setStudioBridgeStatus] = useState<StudioBridgeStatus>({ listening: false, port: 47777, connectedClients: 0 });
   useEffect(() => {
@@ -1244,12 +1245,45 @@ export default function App() {
     }
   }
 
+  function syncProPresenterTransport(status: ProPresenterStatus, forcedPlaying?: boolean) {
+    const positionMs = proPresenterTransportMs(status);
+    if (positionMs == null) return;
+
+    const observation = observeProPresenterTransport(
+      proPresenterTransportObservationRef.current,
+      positionMs,
+      Date.now()
+    );
+    proPresenterTransportObservationRef.current = observation;
+
+    if (forcedPlaying === true || observation.movingTicks >= 2) {
+      applySharedTransport({
+        source:'propresenter',
+        playing:true,
+        positionMs,
+        bpm:effectBpmRef.current,
+        claim:true
+      });
+      return;
+    }
+
+    if (
+      forcedPlaying === false
+      || (observation.stillTicks >= 2 && transportEngineRef.current!.snapshot().source === 'propresenter')
+    ) {
+      releaseSharedTransport('propresenter', positionMs);
+    }
+  }
+
   async function controlProPresenter(operation:'next'|'previous'|'retrigger'|'play'|'pause'|'timeline-play'|'timeline-pause'|'timeline-rewind') {
     setProPresenterError('');
     try {
       await sendProPresenterCommand(proPresenterUrl,operation);
       const status=await readProPresenterStatus(proPresenterUrl);
       setProPresenterStatus(status);
+      if(operation==='play'||operation==='timeline-play') syncProPresenterTransport(status,true);
+      else if(operation==='pause'||operation==='timeline-pause'||operation==='timeline-rewind') syncProPresenterTransport(status,false);
+      else syncProPresenterTransport(status);
       const summary=proPresenterSummary(status);
       connectionManagerRef.current!.heartbeat('propresenter',summary.presentation || summary.current || operation);
       refreshConnectionRecords();
@@ -1270,6 +1304,7 @@ export default function App() {
         const status=await readProPresenterStatus(proPresenterUrl);
         if(cancelled)return;
         setProPresenterStatus(status);
+        syncProPresenterTransport(status);
         const summary=proPresenterSummary(status);
         connectionManagerRef.current!.upsert({
           id:'propresenter',kind:'propresenter',name:'ProPresenter',status:'connected',
@@ -1281,13 +1316,20 @@ export default function App() {
         if(cancelled)return;
         const message=error instanceof Error?error.message:String(error);
         setProPresenterError(message);
+        proPresenterTransportObservationRef.current=null;
+        if(transportEngineRef.current!.snapshot().source==='propresenter') releaseSharedTransport('propresenter');
         connectionManagerRef.current!.fail('propresenter',message,true);
         refreshConnectionRecords();
       }
     };
     void poll();
     const timer=window.setInterval(()=>void poll(),750);
-    return()=>{cancelled=true;window.clearInterval(timer);};
+    return()=>{
+      cancelled=true;
+      window.clearInterval(timer);
+      proPresenterTransportObservationRef.current=null;
+      if(transportEngineRef.current!.snapshot().source==='propresenter') releaseSharedTransport('propresenter');
+    };
   },[proPresenterWatching,proPresenterUrl]);
 
 
