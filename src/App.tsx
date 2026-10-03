@@ -982,6 +982,7 @@ export default function App() {
   // is still polled separately, but a delayed USB status refresh must not make
   // editor/Visualizer previews latch black.
   const [runtimeBlackout, setRuntimeBlackout] = useState(false);
+  const blackoutActive = runtimeBlackout || dmxStatus.blackout;
   const dmxConnectedRef = useRef(false);
   const [busy, setBusy] = useState(false);
 
@@ -3175,8 +3176,10 @@ export default function App() {
   }
 
   async function toggleBlackout() {
-    if (dmxStatus.blackout && settings.confirmBlackoutRelease && !window.confirm('Release blackout and restore programmed output?')) return;
-    await setBlackoutState(!dmxStatus.blackout, 'ui');
+    // If runtime and native USB status ever disagree, a press resolves toward
+    // RELEASE instead of being able to accidentally latch a second blackout.
+    if (blackoutActive && settings.confirmBlackoutRelease && !window.confirm('Release blackout and restore programmed output?')) return;
+    await setBlackoutState(!blackoutActive, 'ui');
   }
 
   async function dispatchStudioBridgeCommand(id: string, command: StudioBridgeCommand) {
@@ -5672,7 +5675,7 @@ export default function App() {
         <div className="console-header-status">
           <button className="tempo-pill" onClick={tapTempo}><TempoPulse bpm={masterTempoBpm} audioRef={showTrackAudioRef} running={Boolean(activeEffect || activeCustomEffectId || showRecordingActive || playingRecordingId || externalTransportRunning || timelinePlaying)} /><strong>{masterTempoBpm} BPM</strong><small>{tempoSource === 'midi' ? 'MIDI CLOCK' : 'TAP'}</small></button>
           <button aria-label="Connections" title="Connections and DMX status" className={`connection-pill ${dmxStatus.connected ? 'online' : ''}`} onClick={() => { setWorkspace('build'); setSetupView('settings'); }}><i /><span><strong>DMX</strong><small>{dmxStatus.connected ? 'CONNECTED' : 'VIRTUAL'}</small></span></button>
-          <button className={`console-blackout ${dmxStatus.blackout ? 'active' : ''}`} onClick={toggleBlackout}>{dmxStatus.blackout ? 'RELEASE BLACKOUT' : 'BLACKOUT'}</button>
+          <button className={`console-blackout ${blackoutActive ? 'active' : ''}`} onClick={toggleBlackout}>{blackoutActive ? 'RELEASE BLACKOUT' : 'BLACKOUT'}</button>
         </div>
       </header>
 
@@ -5691,7 +5694,7 @@ export default function App() {
           if(result.accepted)setSharedTransport(result.state);
         }
       }} onEnded={()=>{releaseSharedTransport('tracks',showTrackDurationMs);handleShowTrackEnded();}} />
-      {dmxStatus.blackout && <div className="blackout-banner"><strong>BLACKOUT ACTIVE</strong><span>Programmed fixture values are preserved.</span><button onClick={toggleBlackout}>Release Blackout</button></div>}
+      {blackoutActive && <div className="blackout-banner"><strong>BLACKOUT ACTIVE</strong><span>Programmed fixture values are preserved.</span><button onClick={toggleBlackout}>Release Blackout</button></div>}
       {showRecordingActive && <section className="console-recording-bar"><span className="recording-pulse" /><div><strong>{timelineRecordingOrigin.current ? timelineRecordingOrigin.current.overdub?'TIMELINE OVERDUB':'TIMELINE RECORD' : 'RECORDING SHOW'}</strong><small>{showTrackName || 'Lighting only'} · {formatShowTime(showRecordingElapsedMs)}</small></div><button onClick={recordingPaused?playRecorderTransport:pauseRecorderTransport}>{recordingPaused?'Resume recording':'Pause recording'}</button><button onClick={() => stopShowRecording(true)}>Stop + save</button><button onClick={() => stopShowRecording(false)}>Cancel</button></section>}
       {activeRecordingPlayback && <section className="console-recording-bar playback"><span className="playback-pulse" /><div><strong>{recordingPlaybackExternalRef.current ? 'EXTERNAL SYNC' : 'RECORDED SHOW'}</strong><small>{activeRecordingPlayback.name} · {formatShowTime(showTrackPositionMs)} / {formatShowTime(activeRecordingPlayback.durationMs)}</small></div><button onClick={() => stopRecordedShowPlayback()}>Stop</button></section>}
 
@@ -6283,14 +6286,14 @@ export default function App() {
 
       {workspace === 'live' && <section className={`live-console live-console-v3 ${liveView === 'performance' ? 'controller-live-view' : ''}`}>
         {liveView !== 'performance' && <header className="live-command-bar">
-          <div className="live-show-state"><small>LIVE PERFORMANCE</small><strong>{showFile.name}</strong><span>{dmxStatus.blackout ? 'BLACKOUT ACTIVE' : liveEffectLabel ? `FX · ${liveEffectLabel}` : 'LOCAL CONTROL'}</span></div>
+          <div className="live-show-state"><small>LIVE PERFORMANCE</small><strong>{showFile.name}</strong><span>{blackoutActive ? 'BLACKOUT ACTIVE' : liveEffectLabel ? `FX · ${liveEffectLabel}` : 'LOCAL CONTROL'}</span></div>
           <div className="live-cue-deck">
             <button className="live-back" onClick={goPreviousCue}>BACK</button>
             <div className="live-cue-card current"><small>CURRENT</small><strong>{activeCue?.name ?? 'Ready'}</strong><span>{activeCue ? `Cue ${activeCue.number}` : 'No cue running'}</span></div>
             <button className="live-go-v3" onClick={goNextCue} disabled={!nextCue}><b>GO</b><small>{nextCue?.name ?? 'END'}</small></button>
             <div className="live-cue-card next"><small>NEXT</small><strong>{nextCue?.name ?? 'End of show'}</strong><span>{nextCue ? `Cue ${nextCue.number}` : '—'}</span></div>
           </div>
-          <button className={`live-blackout-v3 ${dmxStatus.blackout?'active':''}`} onClick={toggleBlackout}>{dmxStatus.blackout?'RELEASE':'BLACKOUT'}</button>
+          <button className={`live-blackout-v3 ${blackoutActive?'active':''}`} onClick={toggleBlackout}>{blackoutActive?'RELEASE':'BLACKOUT'}</button>
         </header>}
 
         <nav className="live-view-tabs">{([
@@ -6304,7 +6307,7 @@ export default function App() {
           currentCue={activeCue?.name ?? 'READY'}
           currentCueNumber={activeCue?.number}
           nextCue={nextCue?.name}
-          blackout={dmxStatus.blackout}
+          blackout={blackoutActive}
           outputHealthy={!dmxStatus.last_error}
           dmxConnected={dmxStatus.connected}
           master={globalMaster}
@@ -6382,7 +6385,7 @@ export default function App() {
         </div>}
 
         {liveView === 'masters' && <div className="live-detail-view live-masters-view">
-          <header><div><span>MASTER CONTROLS</span><h2>Output authority</h2></div><button className={`live-blackout-v3 ${dmxStatus.blackout?'active':''}`} onClick={toggleBlackout}>{dmxStatus.blackout?'RELEASE BLACKOUT':'BLACKOUT'}</button></header>
+          <header><div><span>MASTER CONTROLS</span><h2>Output authority</h2></div><button className={`live-blackout-v3 ${blackoutActive?'active':''}`} onClick={toggleBlackout}>{dmxStatus.blackout?'RELEASE BLACKOUT':'BLACKOUT'}</button></header>
           <div className="master-control-grid"><section><span>GRAND MASTER</span><strong>{globalMaster}%</strong><input type="range" min="0" max={settings.masterLimit} value={globalMaster} onChange={(event)=>applyGlobalMaster(Number(event.target.value))}/><div>{[0,10,25,50,75,100].map((value)=><button key={value} onClick={()=>applyGlobalMaster(value)}>{value}%</button>)}</div></section>{fixtureGroups.map((group)=><section key={group.id}><span>{group.name.toUpperCase()}</span><strong>{Math.round(groupMasters[group.id] ?? group.masterDefault)}%</strong><input type="range" min="0" max="100" value={Math.round(groupMasters[group.id] ?? group.masterDefault)} onChange={(event)=>applyGroupMaster(group,Number(event.target.value))}/><div><button onClick={()=>applyGroupMaster(group,0)}>0</button><button onClick={()=>applyGroupMaster(group,50)}>50</button><button onClick={()=>applyGroupMaster(group,100)}>FULL</button></div></section>)}</div>
         </div>}
 
