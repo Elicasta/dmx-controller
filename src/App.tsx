@@ -161,7 +161,7 @@ import { cuePlaybackDuration, renderCueTimedFrame } from './core/cue-timing';
 import { orderFixtures, type FixtureOrderMode } from './core/fixture-order';
 import { phaserStepValue, type PhaserStep } from './core/phaser-engine';
 import { makeSelectionGrid, moveFixtureInSelectionGrid, normalizeSelectionGrid, type SelectionGridTraversal } from './core/selection-grid';
-import { RemoteRelay, type RelayCommandEnvelope, type RemoteRelayConfig, type RemoteRelayStatus } from './core/remote-relay';
+import { LUMARIG_CLOUD_PUBLISHABLE_KEY, LUMARIG_CLOUD_URL, migrateRemoteRelayProject, RemoteRelay, type RelayCommandEnvelope, type RemoteRelayConfig, type RemoteRelayStatus } from './core/remote-relay';
 import { desktopDeviceId } from './core/supabase-client';
 import { StudioBridgeDispatcher } from './core/studio-bridge-dispatcher';
 import { TransportEngine, type TransportSource, type TransportUpdate } from './core/transport-engine';
@@ -325,8 +325,8 @@ const STAGE_SETTINGS_STORAGE_KEY = 'dmx-controller.stage-settings.v2';
 const STAGE_PRESET_STORAGE_KEY = 'dmx-controller.stage-preset.v1';
 const REMOTE_RELAY_STORAGE_KEY = 'dmx-controller.remote-relay.v1';
 // Publishable Supabase credentials are safe to ship in desktop/web clients; RLS is the security boundary.
-const DEFAULT_SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL || 'https://jtvrrsyqvahslelpmtvv.supabase.co';
-const DEFAULT_SUPABASE_PUBLISHABLE_KEY = import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY || 'sb_publishable_mxvEMBRj6KAEBtS_N2uHaw_dXd5bMlj';
+const DEFAULT_SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL || LUMARIG_CLOUD_URL;
+const DEFAULT_SUPABASE_PUBLISHABLE_KEY = import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY || LUMARIG_CLOUD_PUBLISHABLE_KEY;
 const REMOTE_APP_URL = import.meta.env.VITE_REMOTE_APP_URL || 'https://mycontroller-three.vercel.app';
 const FADE_TIMES = [0, 500, 1000, 2000, 5000] as const;
 
@@ -600,7 +600,12 @@ function loadRemoteRelayConfig(): RemoteRelayConfig {
   const value = loadJson<Partial<RemoteRelayConfig>>(REMOTE_RELAY_STORAGE_KEY, fallback, (item): item is Partial<RemoteRelayConfig> => (
     Boolean(item) && typeof item === 'object'
   ));
-  return { ...fallback, ...value, password: '' };
+  const loaded = { ...fallback, ...value, password: '' };
+  const migrated = migrateRemoteRelayProject(loaded);
+  if (migrated.migrated && typeof window !== 'undefined') {
+    window.localStorage.setItem(REMOTE_RELAY_STORAGE_KEY, JSON.stringify(migrated.config));
+  }
+  return migrated.config;
 }
 
 function loadStageElements(): StageElement[] {
