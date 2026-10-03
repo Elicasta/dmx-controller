@@ -1256,3 +1256,18 @@ test('Media Library degrades safely in browser preview', async ({page}, info) =>
   expect(await page.locator('.show-console-v3').evaluate(e => e.scrollWidth <= e.clientWidth + 1)).toBe(true);
   await page.screenshot({path:info.outputPath('media-library-browser-preview.png')});
 });
+
+
+test('LIVE Show preflight reports rehearsal blockers and warnings', async ({page}) => {
+  await seed(page);
+  await page.setViewportSize({width: 900, height: 720});
+  await page.goto('/');
+  await page.getByRole('button', {name:'LIVE', exact:true}).click();
+  await page.locator('.live-view-tabs').getByRole('button', {name:'System', exact:true}).click();
+  await page.getByRole('button', {name:'RUN SHOW PREFLIGHT', exact:true}).click();
+  await expect(page.locator('.show-preflight-panel')).not.toHaveClass(/idle/);
+  await expect(page.locator('.show-preflight-list article').filter({hasText:'Blackout'})).toContainText('PASS');
+  await expect(page.locator('.show-preflight-list article').filter({hasText:'DMX Output'})).toContainText('WARN');
+  await expect(page.locator('.show-preflight-list article').filter({hasText:'Displays'})).toContainText('WARN');
+  expect(await page.locator('.live-detail-view').evaluate(element => element.scrollWidth <= element.clientWidth + 1)).toBe(true);
+});
