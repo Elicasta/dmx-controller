@@ -653,7 +653,7 @@ export default function ShowTimelineEditor(props: Props) {
             onChange={(e)=>setTrackHeight(clamp(Number(e.target.value),44,140))}
           />
         </label>
-        <div className="track-height-presets" role="group" aria-label="Timeline track height presets">
+        <div className="track-height-presets" role="group" aria-label="Track height presets">
           <button aria-pressed={trackHeight===48} onClick={()=>setTrackHeight(48)}>Compact</button>
           <button aria-pressed={trackHeight===80} onClick={()=>setTrackHeight(80)}>Normal</button>
           <button aria-pressed={trackHeight===120} onClick={()=>setTrackHeight(120)}>Tall</button>
