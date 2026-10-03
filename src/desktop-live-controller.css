@@ -49,3 +49,23 @@
   .desk-busk-groups{grid-template-columns:repeat(8,minmax(0,1fr))}
   .desk-surface-pages{grid-template-columns:32px repeat(4,36px) 32px minmax(80px,1fr) 88px}
 }
+
+@media (pointer:coarse){
+  .desk-surface-header button,
+  .desk-surface-status button,
+  .desk-surface-label,
+  .desk-surface-flash,
+  .desk-ma-command button,
+  .desk-ma-pool button,
+  .desk-ma-executors>article>button:last-child,
+  .desk-busk-body>aside button,
+  .desk-busk-scenes button,
+  .desk-busk-groups button,
+  .desk-surface-pages button,
+  .desk-quick-actions button,
+  .desk-assign-grid button{min-height:44px}
+  .desk-touch-fader{min-width:44px;touch-action:none}
+  .desk-touch-thumb{width:44px;height:26px}
+  .desk-busk-pad{min-height:52px}
+  .desk-busk-encoders input{touch-action:none}
+}
