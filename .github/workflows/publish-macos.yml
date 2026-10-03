@@ -21,7 +21,44 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  validate:
+    name: Validate release candidate
+    runs-on: macos-latest
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: lts/*
+          cache: npm
+
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Rust build
+        uses: swatinem/rust-cache@v2
+        with:
+          workspaces: "./src-tauri -> target"
+
+      - name: Install frontend dependencies
+        run: npm ci
+
+      - name: Verify source release metadata
+        run: npm run check:version
+
+      - name: Frontend tests
+        run: npm test
+
+      - name: Frontend production build
+        run: npm run build
+
+      - name: Native tests
+        run: cargo test --manifest-path src-tauri/Cargo.toml
+
   publish:
+    needs: validate
     name: Build ${{ matrix.label }}
     runs-on: macos-latest
     strategy:
