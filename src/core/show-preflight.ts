@@ -19,6 +19,7 @@ export type ShowPreflightInput = {
   displayCount: number;
   assignedVideoInputs: number;
   videoInputCount: number;
+  missingVideoInputNames: string[];
   videoPermissionBlocked: boolean;
   visualizerError?: string;
 };
@@ -49,6 +50,10 @@ export function buildShowPreflight(input: ShowPreflightInput): ShowPreflightItem
   if (input.assignedVideoInputs > 0) {
     if (input.videoPermissionBlocked) {
       items.push({ id: 'video-input', label: 'Video Inputs', level: 'fail', detail: 'A screen uses a live video input, but camera/video-input permission is blocked.' });
+    } else if (input.missingVideoInputNames.length) {
+      const names = input.missingVideoInputNames.slice(0, 3).join(', ');
+      const remainder = input.missingVideoInputNames.length > 3 ? ` +${input.missingVideoInputNames.length - 3} more` : '';
+      items.push({ id: 'video-input', label: 'Video Inputs', level: 'fail', detail: `Assigned video input unavailable: ${names}${remainder}.` });
     } else if (input.videoInputCount === 0) {
       items.push({ id: 'video-input', label: 'Video Inputs', level: 'fail', detail: 'A screen expects a live video input, but no video input is currently available.' });
     } else {
