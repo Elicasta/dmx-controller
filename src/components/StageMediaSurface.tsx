@@ -60,6 +60,30 @@ function describeVideoInputFailure(error: unknown): StageVideoInputError {
   );
 }
 
+type NdiStageSource = Extract<StageScreenSource, { kind: 'ndi' }>;
+
+export function resolveStageVideoInputDevice(
+  source: NdiStageSource,
+  inputs: StageVideoInputOption[],
+): string | undefined {
+  const selected = inputs.find((input) => input.deviceId === source.deviceId);
+  if (selected) return selected.deviceId;
+
+  const wantedName = (source.sourceName ?? '').trim().toLowerCase();
+  if (wantedName) {
+    const renamed = inputs.find((input) => input.label.trim().toLowerCase() === wantedName);
+    if (renamed) return renamed.deviceId;
+  }
+
+  return source.deviceId;
+}
+
+export function stageVideoReconnectDelay(error: unknown, attempt: number): number | null {
+  const described = error instanceof StageVideoInputError ? error : describeVideoInputFailure(error);
+  if (described.code === 'permission-denied' || described.code === 'unsupported') return null;
+  return Math.min(4000, 500 * (2 ** Math.max(0, attempt)));
+}
+
 async function cameraPermissionState(): Promise<PermissionState | 'unknown'> {
   const permissions = navigator.permissions;
   if (!permissions?.query) return 'unknown';
@@ -167,7 +191,7 @@ export async function requestStageVideoInputs(): Promise<StageVideoInputScanResu
 }
 export function StageMediaSurface({ source }: { source?: StageScreenSource }) {
   const videoRef = useRef<HTMLVideoElement | null>(null);
-  const [status, setStatus] = useState<'idle' | 'connecting' | 'live' | 'error'>('idle');
+  const [status, setStatus] = useState<'idle' | 'connecting' | 'reconnecting' | 'live' | 'error'>('idle');
   const [imageUrl,setImageUrl]=useState('');
 
   useEffect(() => {
@@ -177,38 +201,120 @@ export function StageMediaSurface({ source }: { source?: StageScreenSource }) {
       return;
     }
 
+    const ndiSource = source;
     let cancelled = false;
     let stream: MediaStream | null = null;
-    setStatus('connecting');
+    let retryTimer: number | null = null;
+    let retryAttempt = 0;
+    let trackCleanup: (() => void) | null = null;
 
-    void navigator.mediaDevices.getUserMedia({
-      video: { deviceId: { exact: source.deviceId } },
-      audio: false
-    }).then(async (nextStream) => {
-      if (cancelled) {
-        nextStream.getTracks().forEach((track) => track.stop());
-        return;
+    const clearRetry = () => {
+      if (retryTimer !== null) {
+        window.clearTimeout(retryTimer);
+        retryTimer = null;
       }
-      stream = nextStream;
-      if (videoRef.current) {
-        videoRef.current.srcObject = nextStream;
-        try {
+    };
+
+    const stopStream = () => {
+      trackCleanup?.();
+      trackCleanup = null;
+      stream?.getTracks().forEach((track) => track.stop());
+      stream = null;
+      if (videoRef.current) videoRef.current.srcObject = null;
+    };
+
+    const resolveDeviceId = async (recovering: boolean) => {
+      if (!recovering || !navigator.mediaDevices?.enumerateDevices) return ndiSource.deviceId;
+      try {
+        const devices = await navigator.mediaDevices.enumerateDevices();
+        const inputs = devices
+          .filter((device) => device.kind === 'videoinput')
+          .map((device, index) => ({
+            deviceId: device.deviceId,
+            label: device.label || `Video Input ${index + 1}`,
+          }));
+        return resolveStageVideoInputDevice(ndiSource, inputs) ?? ndiSource.deviceId;
+      } catch {
+        return ndiSource.deviceId;
+      }
+    };
+
+    const scheduleReconnect = (delay: number) => {
+      if (cancelled) return;
+      clearRetry();
+      stopStream();
+      setStatus('reconnecting');
+      retryTimer = window.setTimeout(() => {
+        retryTimer = null;
+        void connect(true);
+      }, delay);
+    };
+
+    const connect = async (recovering: boolean) => {
+      if (cancelled) return;
+      clearRetry();
+      stopStream();
+      setStatus(recovering ? 'reconnecting' : 'connecting');
+
+      const deviceId = await resolveDeviceId(recovering);
+      if (cancelled || !deviceId) return;
+
+      try {
+        const nextStream = await navigator.mediaDevices.getUserMedia({
+          video: { deviceId: { exact: deviceId } },
+          audio: false
+        });
+        if (cancelled) {
+          nextStream.getTracks().forEach((track) => track.stop());
+          return;
+        }
+
+        stream = nextStream;
+        const videoTrack = nextStream.getVideoTracks?.()[0] ?? nextStream.getTracks().find((track) => track.kind === 'video');
+        if (videoTrack?.addEventListener) {
+          const onEnded = () => scheduleReconnect(250);
+          videoTrack.addEventListener('ended', onEnded, { once: true });
+          trackCleanup = () => videoTrack.removeEventListener?.('ended', onEnded);
+        }
+
+        if (videoRef.current) {
+          videoRef.current.srcObject = nextStream;
           await videoRef.current.play();
-          if (!cancelled) setStatus('live');
-        } catch {
-          if (!cancelled) setStatus('error');
+        }
+        if (!cancelled) {
+          retryAttempt = 0;
+          setStatus('live');
+        }
+      } catch (error) {
+        if (cancelled) return;
+        setStatus('error');
+        const delay = stageVideoReconnectDelay(error, retryAttempt);
+        if (delay !== null) {
+          retryAttempt += 1;
+          scheduleReconnect(delay);
         }
       }
-    }).catch(() => {
-      if (!cancelled) setStatus('error');
-    });
+    };
+
+    const onDeviceChange = () => {
+      retryAttempt = 0;
+      scheduleReconnect(150);
+    };
+
+    navigator.mediaDevices.addEventListener?.('devicechange', onDeviceChange);
+    void connect(false);
 
     return () => {
       cancelled = true;
-      stream?.getTracks().forEach((track) => track.stop());
-      if (videoRef.current) videoRef.current.srcObject = null;
+      clearRetry();
+      navigator.mediaDevices.removeEventListener?.('devicechange', onDeviceChange);
+      stopStream();
     };
-  }, [source?.kind, source?.kind === 'ndi' ? source.deviceId : undefined]);
+  }, [
+    source?.kind,
+    source?.kind === 'ndi' ? source.deviceId : undefined,
+    source?.kind === 'ndi' ? source.sourceName : undefined,
+  ]);
 
   useEffect(()=>{
     if(source?.kind!=='image' || !source.mediaId){setImageUrl('');return;}
@@ -255,6 +361,6 @@ export function StageMediaSurface({ source }: { source?: StageScreenSource }) {
       aria-label={source.sourceName ? `${source.sourceName} screen feed` : 'Live stage screen feed'}
       style={{...framing,visibility:source.kind==='timeline' && status!=='live'?'hidden':undefined}}
     />
-    {status !== 'live' && <span className="stage-media-status">{status === 'connecting' ? 'Connecting…' : status === 'error' ? 'Input unavailable' : source.kind==='timeline' ? 'Load Timeline video' : 'NDI'}</span>}
+    {status !== 'live' && <span className="stage-media-status">{status === 'connecting' ? 'Connecting…' : status === 'reconnecting' ? 'Reconnecting…' : status === 'error' ? 'Input unavailable' : source.kind==='timeline' ? 'Load Timeline video' : 'NDI'}</span>}
   </span>;
 }
