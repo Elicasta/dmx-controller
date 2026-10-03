@@ -15,6 +15,47 @@ use studio_bridge::{StudioBridge, StudioBridgeEnvelope, StudioBridgeResponse, St
 use tauri::{Manager, PhysicalPosition, State};
 use tauri::webview::{PermissionKind, PermissionResponse};
 
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct DisplayOutputInfo {
+    name: String,
+    width: u32,
+    height: u32,
+    x: i32,
+    y: i32,
+    primary: bool,
+}
+
+#[tauri::command]
+fn display_outputs(app: tauri::AppHandle) -> Result<Vec<DisplayOutputInfo>, String> {
+    let window = app
+        .get_webview_window("main")
+        .or_else(|| app.get_webview_window("stage-monitor"))
+        .or_else(|| app.get_webview_window("media-output"))
+        .ok_or("No LumaRig desktop window is available.")?;
+    let monitors = window.available_monitors().map_err(|error| error.to_string())?;
+    let primary = window.primary_monitor().map_err(|error| error.to_string())?;
+    Ok(monitors
+        .into_iter()
+        .map(|monitor| {
+            let position = monitor.position();
+            let size = monitor.size();
+            let is_primary = primary.as_ref().map(|candidate| {
+                let primary_position = candidate.position();
+                primary_position.x == position.x && primary_position.y == position.y
+            }).unwrap_or(false);
+            DisplayOutputInfo {
+                name: monitor.name().cloned().unwrap_or_else(|| "Display".to_string()),
+                width: size.width,
+                height: size.height,
+                x: position.x,
+                y: position.y,
+                primary: is_primary,
+            }
+        })
+        .collect())
+}
+
 fn move_output_to_secondary(window: &tauri::WebviewWindow) -> Result<bool, String> {
     let monitors = window.available_monitors().map_err(|error| error.to_string())?;
     if monitors.len() < 2 {
@@ -210,6 +251,7 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             open_stage_monitor,
+            display_outputs,
             open_video_input_privacy_settings,
             lumalive::scan_lumalive,
             lumalive::pair_lumalive,
