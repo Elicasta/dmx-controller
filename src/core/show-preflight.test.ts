@@ -12,6 +12,7 @@ const ready = {
   displayCount: 2,
   assignedVideoInputs: 0,
   videoInputCount: 0,
+  missingVideoInputNames: [],
   videoPermissionBlocked: false,
 };
 
@@ -32,6 +33,18 @@ describe('show preflight', () => {
     });
     expect(items.filter(item => item.level === 'fail').map(item => item.id)).toEqual(['blackout', 'media', 'video-input']);
     expect(preflightSummary(items).level).toBe('fail');
+  });
+
+  it('blocks when a different camera exists but the assigned live input is missing', () => {
+    const items = buildShowPreflight({
+      ...ready,
+      assignedVideoInputs: 1,
+      videoInputCount: 2,
+      missingVideoInputNames: ['NDI Webcam Input'],
+    });
+    const video = items.find(item => item.id === 'video-input');
+    expect(video?.level).toBe('fail');
+    expect(video?.detail).toMatch(/NDI Webcam Input/);
   });
 
   it('warns instead of failing for intentional virtual DMX or one-display rehearsal', () => {
