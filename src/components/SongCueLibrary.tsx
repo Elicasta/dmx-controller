@@ -160,14 +160,26 @@ export default function SongCueLibrary(p: Props) {
                       <small>{item.cues.length} cues{p.timelineNames.includes(item.name) ? ' · timeline show' : ''}</small>
                     </span>
                   </button>
-                  <details className="cue-context-menu rundown-item-menu">
-                    <summary aria-label={`Actions for ${item.name}`} title={`Actions for ${item.name}`}>•••</summary>
-                    <div>
-                      <button disabled={itemIndex === 0} onClick={(event) => { (event.currentTarget.closest('details') as HTMLDetailsElement).open=false; p.onMoveSong(section.id, item.name, -1); }}>Move item up</button>
-                      <button disabled={itemIndex === items.length - 1} onClick={(event) => { (event.currentTarget.closest('details') as HTMLDetailsElement).open=false; p.onMoveSong(section.id, item.name, 1); }}>Move item down</button>
-                      {(item.kind === 'song' || p.timelineNames.includes(item.name)) && <button onClick={(event) => { (event.currentTarget.closest('details') as HTMLDetailsElement).open=false; p.onTimeline(item.name); }}>Open Timeline</button>}
-                    </div>
-                  </details>
+                  <div className="rundown-item-header-actions">
+                    {(item.kind === 'song' || p.timelineNames.includes(item.name)) && (
+                      <button
+                        className="rundown-timeline-button"
+                        aria-label={`Open timeline for ${item.name}`}
+                        title={`Open timeline for ${item.name}`}
+                        onClick={() => p.onTimeline(item.name)}
+                      >
+                        Timeline
+                      </button>
+                    )}
+                    <details className="cue-context-menu rundown-item-menu">
+                      <summary aria-label={`Actions for ${item.name}`} title={`Actions for ${item.name}`}>•••</summary>
+                      <div>
+                        <button disabled={itemIndex === 0} onClick={(event) => { (event.currentTarget.closest('details') as HTMLDetailsElement).open=false; p.onMoveSong(section.id, item.name, -1); }}>Move item up</button>
+                        <button disabled={itemIndex === items.length - 1} onClick={(event) => { (event.currentTarget.closest('details') as HTMLDetailsElement).open=false; p.onMoveSong(section.id, item.name, 1); }}>Move item down</button>
+                        {(item.kind === 'song' || p.timelineNames.includes(item.name)) && <button onClick={(event) => { (event.currentTarget.closest('details') as HTMLDetailsElement).open=false; p.onTimeline(item.name); }}>Open Timeline</button>}
+                      </div>
+                    </details>
+                  </div>
                 </header>
 
                 {expanded && item.cues.map((cue) => <article key={cue.id} className={p.activeId === cue.id ? 'active' : ''}>
