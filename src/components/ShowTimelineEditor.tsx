@@ -97,6 +97,7 @@ export default function ShowTimelineEditor(props: Props) {
   const audioStarting = useRef(false);
   const playAttempt = useRef(0);
   const [libraryMode,setLibraryMode]=useState<"cues"|"fx"|"myfx">("cues");
+  const [libraryDragActive,setLibraryDragActive]=useState(false);
   const [localSelectedId, setLocalSelectedId] = useState("");
   const selectedId = props.selectedClipId ?? localSelectedId;
   useEffect(()=>{if(props.selectedClipId==='')setSelectedIds(new Set());},[props.selectedClipId]);
