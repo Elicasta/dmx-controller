@@ -165,6 +165,7 @@ import { RemoteRelay, type RelayCommandEnvelope, type RemoteRelayConfig, type Re
 import { desktopDeviceId } from './core/supabase-client';
 import { StudioBridgeDispatcher } from './core/studio-bridge-dispatcher';
 import { TransportEngine, type TransportSource, type TransportUpdate } from './core/transport-engine';
+import { buildShowPreflight, preflightSummary, type ShowPreflightItem } from './core/show-preflight';
 import { ConnectionManager, type ConnectionRecord } from './core/connection-manager';
 import { lumaLivePositionMs, loadLumaLiveConnection, pairLumaLive, readLumaLiveState, saveLumaLiveConnection, scanLumaLive, sendLumaLiveCommand, type LumaLiveConnection, type LumaLiveEndpoint, type LumaLiveState } from './core/lumalive-client';
 import { loadProPresenterUrl, proPresenterSummary, readProPresenterStatus, saveProPresenterUrl, sendProPresenterCommand, type ProPresenterStatus } from './core/propresenter-client';
@@ -1312,6 +1313,8 @@ export default function App() {
   const [stageVideoInputs, setStageVideoInputs] = useState<StageVideoInputOption[]>([]);
   const [stageVideoInputError, setStageVideoInputError] = useState('');
   const [stageVideoInputPermissionBlocked, setStageVideoInputPermissionBlocked] = useState(false);
+  const [showPreflightItems, setShowPreflightItems] = useState<ShowPreflightItem[]>([]);
+  const [showPreflightBusy, setShowPreflightBusy] = useState(false);
   const [screenImageAssets, setScreenImageAssets] = useState<MediaAsset[]>([]);
   useEffect(() => {
     let active = true;
@@ -4263,6 +4266,82 @@ export default function App() {
     setMessage(`${preset.name} loaded as a separate stage scene.`);
   }
 
+  async function runShowPreflight() {
+    if (showPreflightBusy) return;
+    setShowPreflightBusy(true);
+    try {
+      const mediaIds = collectMediaIds(showFileRef.current);
+      const library = await readMediaLibrary().catch(() => ({ version: 1, folders: [], assets: [] as MediaAsset[] }));
+      const missingMediaNames: string[] = [];
+      for (const mediaId of mediaIds) {
+        const asset = library.assets.find((candidate) => candidate.id === mediaId);
+        if (asset) {
+          if (asset.missing) missingMediaNames.push(asset.name);
+          continue;
+        }
+        const legacy = await readSongMedia(mediaId).catch(() => undefined);
+        if (!legacy) missingMediaNames.push(mediaNameForId(showFileRef.current, mediaId) ?? mediaId);
+      }
+
+      let displayCount = 1;
+      if ('__TAURI_INTERNALS__' in window) {
+        const displays = await invoke<Array<{ name:string;width:number;height:number;x:number;y:number;primary:boolean }>>('display_outputs').catch(() => []);
+        if (displays.length) displayCount = displays.length;
+      }
+
+      const assignedVideoInputs = stageElements.filter((element) =>
+        element.type === 'led-screen'
+        && element.mediaSource?.kind === 'ndi'
+        && Boolean(element.mediaSource.deviceId)
+      ).length;
+
+      let currentVideoInputs = stageVideoInputs;
+      let permissionBlocked = stageVideoInputPermissionBlocked;
+      if (assignedVideoInputs && !currentVideoInputs.length && !permissionBlocked) {
+        try {
+          const scan = await requestStageVideoInputs();
+          currentVideoInputs = scan.inputs;
+          permissionBlocked = scan.permission === 'limited' && Boolean(scan.warning?.toLowerCase().includes('permission'));
+          setStageVideoInputs(scan.inputs);
+          setStageVideoInputPermissionBlocked(permissionBlocked);
+          setStageVideoInputError(scan.warning ?? '');
+        } catch (error) {
+          permissionBlocked = error instanceof StageVideoInputError && error.code === 'permission-denied';
+          setStageVideoInputPermissionBlocked(permissionBlocked);
+          setStageVideoInputError(error instanceof Error ? error.message : String(error));
+        }
+      }
+
+      const timelineClipCount = (showFileRef.current.timeline?.clips.length ?? 0)
+        + (showFileRef.current.timelineShows ?? []).reduce((sum, item) => sum + item.timeline.clips.length, 0);
+
+      setShowPreflightItems(buildShowPreflight({
+        dmxConnected: dmxStatus.connected,
+        dmxError: dmxStatus.last_error || '',
+        blackout: blackoutActive,
+        fixtureCount: patchRef.current.length,
+        cueCount: showFileRef.current.cues.length,
+        songCount: songsForShow(showFileRef.current).length,
+        timelineClipCount,
+        missingMediaNames: [...new Set(missingMediaNames)],
+        displayCount,
+        assignedVideoInputs,
+        videoInputCount: currentVideoInputs.length,
+        videoPermissionBlocked: permissionBlocked,
+        visualizerError: directStatus.lastError || '',
+      }));
+    } catch (error) {
+      setShowPreflightItems([{
+        id: 'preflight-error',
+        label: 'Preflight',
+        level: 'fail',
+        detail: error instanceof Error ? error.message : String(error),
+      }]);
+    } finally {
+      setShowPreflightBusy(false);
+    }
+  }
+
   async function scanStageVideoInputs() {
     setStageVideoInputError('');
     setStageVideoInputPermissionBlocked(false);
@@ -5666,6 +5745,8 @@ export default function App() {
   const inspectedFixture = patch.find((fixture) => fixture.selected) ?? stageFixture;
   const selectedCompatibleColors = compatibleColorFixtures(selectedFixtureTargets);
 
+  const showPreflightSummary = showPreflightItems.length ? preflightSummary(showPreflightItems) : null;
+
   return (
     <main className={`console-app workspace-${workspace} ${dmxStatus.blackout ? 'blackout-is-active' : ''}`}>
       {(libraryOpening || transitionBusy) && <div className="library-save-guard" role="alert" aria-busy="true">{libraryOpening ? 'Opening saved programming…' : 'Saving Show before switching…'}</div>}
@@ -6395,8 +6476,12 @@ export default function App() {
         </div>}
 
         {liveView === 'settings' && <div className="live-detail-view">
-          <header><div><span>LIVE SYSTEM STATUS</span><h2>Connections + safety</h2></div><button onClick={()=>{setWorkspace('build');setSetupView('settings');}}>OPEN CONNECTIONS</button></header>
-          <div className="live-settings-grid"><section className={dmxStatus.connected?'healthy':''}><span>DMX OUTPUT</span><strong>{dmxStatus.connected?'CONNECTED':'VIRTUAL OUTPUT'}</strong><small>{dmxStatus.device_name || 'No physical interface'}</small></section><section className={directStatus.clients>0?'healthy':''}><span>LUMAVIZ</span><strong>{directStatus.clients>0?'CONNECTED':'READY'}</strong><small>{directStatus.framesSent.toLocaleString()} frames sent</small></section><section className={studioBridgeStatus.connectedClients>0?'healthy':''}><span>LUMASTUDIO</span><strong>{studioBridgeStatus.connectedClients>0?'CONNECTED':'READY'}</strong><small>{studioBridgeStatus.connectedClients} client(s)</small></section><section className={midiStatus.connected?'healthy':''}><span>MIDI</span><strong>{midiStatus.connected?'CONNECTED':'OFFLINE'}</strong><small>{midiStatus.input_name || 'No input'}</small></section><section><span>MASTER LIMIT</span><strong>{settings.masterLimit}%</strong><small>Configured output ceiling</small></section><section className={dmxStatus.blackout?'danger':''}><span>BLACKOUT</span><strong>{dmxStatus.blackout?'ACTIVE':'CLEAR'}</strong><small>Output safety state</small></section></div>
+          <header><div><span>LIVE SYSTEM STATUS</span><h2>Connections + safety</h2></div><div><button className="console-primary" disabled={showPreflightBusy} onClick={()=>void runShowPreflight()}>{showPreflightBusy?'CHECKING…':'RUN SHOW PREFLIGHT'}</button><button onClick={()=>{setWorkspace('build');setSetupView('settings');}}>OPEN CONNECTIONS</button></div></header>
+          <div className="live-settings-grid"><section className={dmxStatus.connected?'healthy':''}><span>DMX OUTPUT</span><strong>{dmxStatus.connected?'CONNECTED':'VIRTUAL OUTPUT'}</strong><small>{dmxStatus.device_name || 'No physical interface'}</small></section><section className={directStatus.clients>0?'healthy':''}><span>LUMAVIZ</span><strong>{directStatus.clients>0?'CONNECTED':'READY'}</strong><small>{directStatus.framesSent.toLocaleString()} frames sent</small></section><section className={studioBridgeStatus.connectedClients>0?'healthy':''}><span>LUMASTUDIO</span><strong>{studioBridgeStatus.connectedClients>0?'CONNECTED':'READY'}</strong><small>{studioBridgeStatus.connectedClients} client(s)</small></section><section className={midiStatus.connected?'healthy':''}><span>MIDI</span><strong>{midiStatus.connected?'CONNECTED':'OFFLINE'}</strong><small>{midiStatus.input_name || 'No input'}</small></section><section><span>MASTER LIMIT</span><strong>{settings.masterLimit}%</strong><small>Configured output ceiling</small></section><section className={blackoutActive?'danger':''}><span>BLACKOUT</span><strong>{blackoutActive?'ACTIVE':'CLEAR'}</strong><small>Output safety state</small></section></div>
+          <section className={`show-preflight-panel ${showPreflightSummary?.level ?? 'idle'}`}>
+            <header><div><span>SHOW PREFLIGHT</span><strong>{showPreflightSummary?.label ?? 'NOT RUN'}</strong></div><small>{showPreflightItems.length ? 'Machine + show validation' : 'Run this after connecting your show hardware and media.'}</small></header>
+            {showPreflightItems.length ? <div className="show-preflight-list">{showPreflightItems.map((item)=><article key={item.id} className={item.level}><i/><span><strong>{item.label}</strong><small>{item.detail}</small></span><b>{item.level.toUpperCase()}</b></article>)}</div> : <div className="show-preflight-empty">Checks DMX, blackout, media, displays, assigned video inputs, Visualizer health, and supported Show size.</div>}
+          </section>
         </div>}
 
         <footer className="live-system-strip"><span className={dmxStatus.connected?'healthy':''}>● DMX {dmxStatus.connected?'ONLINE':'VIRTUAL'}</span><span className={directStatus.clients>0?'healthy':''}>● VIZ {directStatus.clients>0?'LINKED':'WAITING'}</span><span className={studioBridgeStatus.connectedClients>0?'healthy':''}>● STUDIO {studioBridgeStatus.connectedClients>0?'LINKED':'WAITING'}</span><span className={midiStatus.connected?'healthy':''}>● MIDI {midiStatus.connected?'ONLINE':'OFF'}</span><span>{liveEffectLabel?`FX ${liveEffectLabel.toUpperCase()}`:'FX IDLE'}</span><b>{formatShowTime(externalSongPositionMs || showTrackPositionMs)}</b></footer>
