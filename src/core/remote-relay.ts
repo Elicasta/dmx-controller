@@ -9,6 +9,30 @@ export type RemoteRelayConfig = {
   roomCode: string;
 };
 
+export const LUMARIG_CLOUD_URL = 'https://lmldxkukfksfswzbliuy.supabase.co';
+export const LUMARIG_CLOUD_PUBLISHABLE_KEY = 'sb_publishable_0t7OtaGP4O7zNxcYaGansw_2diBelTK';
+export const LEGACY_LUMARIG_CLOUD_URLS = ['https://jtvrrsyqvahslelpmtvv.supabase.co'] as const;
+
+function cleanRelayUrl(value: string) {
+  return value.trim().replace(/\/$/, '');
+}
+
+export function migrateRemoteRelayProject(config: RemoteRelayConfig) {
+  const url = cleanRelayUrl(config.url);
+  if (!LEGACY_LUMARIG_CLOUD_URLS.includes(url as typeof LEGACY_LUMARIG_CLOUD_URLS[number])) {
+    return { config: { ...config, url }, migrated: false };
+  }
+  return {
+    config: {
+      ...config,
+      url: LUMARIG_CLOUD_URL,
+      publishableKey: LUMARIG_CLOUD_PUBLISHABLE_KEY,
+      password: '',
+    },
+    migrated: true,
+  };
+}
+
 export type RemoteRelayStatus = 'disconnected' | 'connecting' | 'connected' | 'error';
 
 export type RelayCommandEnvelope = {
