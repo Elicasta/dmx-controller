@@ -1,79 +1,111 @@
 # Releasing LumaRig
 
-The source repository can stay private. Installed apps must be able to download the updater manifest and signed bundles without a GitHub login, so release artifacts are published to a separate public repository:
+LumaRig source lives in `Elicasta/dmx-controller`. Public signed installers and updater metadata are published to `Elicasta/dmx-controller-releases` so installed apps can update without GitHub source access.
 
-- Source: `Elicasta/dmx-controller` (private)
-- Releases: `Elicasta/dmx-controller-releases` (public)
+## Current release line
 
-## One-time setup
+The public updater line is already active. The latest published release before this branch is **0.5.2**. The current release candidate is **0.6.0**.
 
-### 1. Create the public release repository
+Never publish a version lower than the latest public release. Tauri's updater compares semantic versions, so a lower version will not be offered as an upgrade to newer installations.
 
-Create `Elicasta/dmx-controller-releases` as a public repository and initialize it with a README so it has a `main` branch.
+## One-time repository setup
 
-Do not put source code in this repository. It only hosts GitHub Releases and updater assets.
+The source repository needs these Actions secrets:
 
-### 2. Add four Actions secrets to the private source repository
-
-Open:
-
-`dmx-controller → Settings → Secrets and variables → Actions`
-
-Create these repository secrets:
-
-| Secret | Value |
+| Secret | Purpose |
 | --- | --- |
-| `TAURI_SIGNING_PUBLIC_KEY` | Contents of `~/.tauri/dmx-controller.key.pub` |
-| `TAURI_SIGNING_PRIVATE_KEY` | Contents of `~/.tauri/dmx-controller.key` |
-| `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` | Password used when the updater key was generated |
-| `DMX_RELEASE_TOKEN` | Fine-grained GitHub token with Contents read/write access to only `dmx-controller-releases` |
+| `TAURI_SIGNING_PUBLIC_KEY` | Public updater verification key |
+| `TAURI_SIGNING_PRIVATE_KEY` | Private updater signing key |
+| `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` | Password for the private updater key |
+| `DMX_RELEASE_TOKEN` | Fine-grained token with Contents read/write access to `dmx-controller-releases` |
 
-Never commit the private updater key, its password, or the release token.
+Never commit the private updater key, its password, or the release token. Keep a secure backup of the private updater key and password. Losing either prevents future builds from updating installations that trust the current key.
 
-Keep a secure backup of the private updater key and its password. Losing either prevents future versions from updating installations that trust this signing key.
+## Release gate
 
-### 3. First updater-enabled install
+Before publishing:
 
-The currently installed 0.2.0 build does not contain the updater. Publish version `0.3.0`, download the Apple Silicon DMG on the M1 Mac, and install it once manually.
+1. Merge the intended release candidate into `main`.
+2. Confirm the `main` CI run is green.
+3. Confirm the version in source is aligned with `npm run check:version`.
+4. Confirm the requested release version is greater than the latest release in `dmx-controller-releases`.
+5. Keep real-hardware checks separate from software CI: physical DMX, real NDI/camera devices, second-display routing, and multitouch show operation still need a real-machine pass when those areas changed.
 
-After 0.3.0 is installed, later releases can be installed from inside LumaRig.
+The publish workflows run their own validation again before signing. A green PR alone does not bypass the release workflow's tests.
 
-## Publish a release without Terminal
+## Version source
 
-1. Push or merge the code you want to ship into `main`.
-2. Open the private source repository on GitHub.
-3. Open **Actions → Publish macOS Release → Run workflow**.
-4. Enter a version greater than the installed version, such as `0.3.1`.
-5. Enter release notes.
-6. Run the workflow.
+`package.json` is the app-version source used by Tauri through `src-tauri/tauri.conf.json`.
+
+Release metadata is kept aligned across:
+
+- `package.json`
+- `package-lock.json`
+- `src-tauri/Cargo.toml`
+- `src-tauri/Cargo.lock`
+
+Use:
+
+```bash
+npm run check:version
+```
+
+to verify alignment.
+
+The publish workflows call:
+
+```bash
+npm run sync:release-version -- <version>
+```
+
+before packaging, so the requested release version is stamped atomically into the frontend and native metadata.
+
+## Publish macOS
+
+Open **Actions → Publish macOS Release → Run workflow** on the source repository.
+
+Enter the release version, for example `0.6.0`, plus release notes.
 
 The workflow:
 
-1. runs the frontend and native test suites;
-2. builds Apple Silicon, Intel, and Universal macOS versions;
-3. ad-hoc signs the macOS bundles;
-4. signs updater artifacts with the Tauri updater key;
-5. publishes the installers and signatures to the public release repository;
-6. generates `latest.json` for the installed apps.
+1. validates source version metadata;
+2. runs frontend tests;
+3. builds the frontend;
+4. runs native Rust tests;
+5. validates release secrets;
+6. stamps the requested version;
+7. builds Apple Silicon, Intel, and Universal macOS packages;
+8. signs updater artifacts with the Tauri updater key;
+9. publishes installers, signatures, and `latest.json` to `dmx-controller-releases`.
 
-## In-app behavior
+macOS application signing is currently ad-hoc. This is suitable for the current internal/private distribution flow, but macOS may require approval in Privacy & Security. External distribution should move to Developer ID signing and notarization.
 
-LumaRig checks for an update shortly after launch and also exposes **Setup → Settings → Software Update → Check for Updates**.
+## Publish Windows
 
-When an operator installs an update while physical DMX is connected, the app stops active effects, disarms audio-reactive output, zeros/disconnects uDMX, installs the signed update, and restarts. This avoids leaving the USB interface intentionally live during the app replacement/restart.
+Open **Actions → Publish Windows Release → Run workflow**.
+
+The workflow:
+
+1. validates release secrets;
+2. stamps and verifies the requested version;
+3. runs frontend tests and the production build;
+4. performs a native Windows x64 compile check;
+5. builds and publishes NSIS and MSI installers plus updater signatures.
+
+## In-app updater behavior
+
+Installed LumaRig builds read:
+
+`https://github.com/Elicasta/dmx-controller-releases/releases/latest/download/latest.json`
+
+When an operator installs an update while physical DMX is connected, LumaRig stops active effects, disarms audio-reactive output, disconnects/zeros uDMX, installs the signed update, and restarts.
 
 ## Version rules
 
 Use semantic versions:
 
-- patch: `0.3.0 → 0.3.1` for fixes
-- minor: `0.3.1 → 0.4.0` for feature releases
-- major: `0.x → 1.0.0` when the controller is ready for a stable production milestone
+- patch: `0.5.2 → 0.5.3` for contained fixes;
+- minor: `0.5.x → 0.6.0` for a feature release;
+- major: `0.x → 1.0.0` when LumaRig reaches the intended stable-production milestone.
 
-The release workflow injects the requested version into the build. You do not need to edit three separate version files manually.
-
-## Apple signing
-
-The current pipeline uses Tauri's ad-hoc macOS signing identity (`-`). This is enough for the current private/test distribution flow, but macOS can still require the user to approve the app in Privacy & Security.
-
-For polished external distribution, replace ad-hoc signing with a Developer ID Application certificate and Apple notarization.
+Do not reuse a published version number.
