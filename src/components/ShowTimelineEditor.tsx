@@ -98,6 +98,11 @@ export default function ShowTimelineEditor(props: Props) {
   const playAttempt = useRef(0);
   const [libraryMode,setLibraryMode]=useState<"cues"|"fx"|"myfx">("cues");
   const [libraryDragActive,setLibraryDragActive]=useState(false);
+  const setLibraryDragging = (active: boolean, target?: EventTarget | null) => {
+    setLibraryDragActive(active);
+    const root = target instanceof HTMLElement ? target.closest<HTMLElement>('.show-bar-timeline') : null;
+    if (root) root.dataset.libraryDragging = active ? 'true' : 'false';
+  };
   const [localSelectedId, setLocalSelectedId] = useState("");
   const selectedId = props.selectedClipId ?? localSelectedId;
   useEffect(()=>{if(props.selectedClipId==='')setSelectedIds(new Set());},[props.selectedClipId]);
@@ -511,7 +516,7 @@ export default function ShowTimelineEditor(props: Props) {
   }
   function dropCue(e: import("react").DragEvent<HTMLElement>, lane: number) {
     e.preventDefault();
-    setLibraryDragActive(false);
+    setLibraryDragging(false, e.currentTarget);
     const recipeId=e.dataTransfer.getData("application/lumarig-fx");
     if(recipes.some(r=>r.id===recipeId)){
       checkpoint();
@@ -650,7 +655,7 @@ export default function ShowTimelineEditor(props: Props) {
             max={140}
             step={2}
             value={trackHeight}
-            onChange={(e)=>setTrackHeight(clamp(Number(e.target.value),44,140))}
+            onInput={(e)=>setTrackHeight(clamp(Number((e.currentTarget as HTMLInputElement).value),44,140))}
           />
         </label>
         <div className="track-height-presets" role="group" aria-label="Track height presets">
@@ -707,17 +712,17 @@ export default function ShowTimelineEditor(props: Props) {
             SHOW CUES <small>{cues.length}</small>
           </header>
           <p>Drag to a lane or click to append.</p>
-          {libraryMode!=="cues" ? <><p>Target: {props.fxTargetName??"current group"} · FX {selectedLane+1}. Click to insert at the playhead or drag to a lane.</p>{recipes.filter(r=>libraryMode!=="myfx" || r.id.startsWith("custom:")).map(recipe=><button className="timeline-fx-recipe" key={recipe.id} draggable onDragStart={e=>{setLibraryDragActive(true);e.dataTransfer.setData("application/lumarig-fx",recipe.id);e.dataTransfer.effectAllowed="copy";}} onDragEnd={()=>setLibraryDragActive(false)} onClick={()=>{checkpoint();props.onAddFx?.(recipe.id,cursorRef.current,selectedLane);}}><span>{recipe.name}<small>{recipe.category}</small></span></button>)}</> : cues.length ? (
+          {libraryMode!=="cues" ? <><p>Target: {props.fxTargetName??"current group"} · FX {selectedLane+1}. Click to insert at the playhead or drag to a lane.</p>{recipes.filter(r=>libraryMode!=="myfx" || r.id.startsWith("custom:")).map(recipe=><button className="timeline-fx-recipe" key={recipe.id} draggable onDragStart={e=>{setLibraryDragging(true,e.currentTarget);e.dataTransfer.setData("application/lumarig-fx",recipe.id);e.dataTransfer.effectAllowed="copy";}} onDragEnd={e=>setLibraryDragging(false,e.currentTarget)} onClick={()=>{checkpoint();props.onAddFx?.(recipe.id,cursorRef.current,selectedLane);}}><span>{recipe.name}<small>{recipe.category}</small></span></button>)}</> : cues.length ? (
             cues.filter(c=>!props.songFilter||(c.trackName?.trim()||"Unfiled cues")===props.songFilter).map((c) => (
               <button
                 key={c.id}
                 draggable
                 onDragStart={(e) => {
-                  setLibraryDragActive(true);
+                  setLibraryDragging(true, e.currentTarget);
                   e.dataTransfer.setData("application/lumarig-cue", c.id);
                   e.dataTransfer.effectAllowed = "copy";
                 }}
-                onDragEnd={() => setLibraryDragActive(false)}
+                onDragEnd={(e) => setLibraryDragging(false, e.currentTarget)}
                 onClick={() => addClip(c.id)}
                 style={
                   {
