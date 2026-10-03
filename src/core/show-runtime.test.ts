@@ -174,6 +174,31 @@ describe('ShowRuntime', () => {
     expect(exact.frame).toEqual(colored.frame);
   });
 
+  it('restores programmed output when a stale Timeline blackout layer is cleared', () => {
+    const runtime = new ShowRuntime({ patch: DEFAULT_PATCH });
+    runtime.dispatch(controlCommand('ui', {
+      type: 'frame.update', universe: 1, updates: [[5, 190]]
+    }));
+    const masked = runtime.dispatch(controlCommand('cue', {
+      type: 'playback.layer.set',
+      universe: 1,
+      layerId: 'timeline',
+      priority: 35,
+      mode: 'ltp',
+      updates: [[5, 0]]
+    }));
+    expect(masked.baseFrame[4]).toBe(190);
+    expect(masked.frame[4]).toBe(0);
+
+    const restored = runtime.dispatch(controlCommand('cue', {
+      type: 'playback.layer.clear',
+      universe: 1,
+      layerId: 'timeline'
+    }));
+    expect(restored.baseFrame[4]).toBe(190);
+    expect(restored.frame[4]).toBe(190);
+  });
+
   it('layers FX over the programmer without rewriting the base frame', () => {
     const runtime = new ShowRuntime({ patch: DEFAULT_PATCH });
     runtime.dispatch(controlCommand('ui', {

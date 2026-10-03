@@ -491,6 +491,22 @@ test('integrated visualizer keeps venue presets isolated and opens the renderer'
 });
 
 
+test('Show Creator preview clears a stale Timeline blackout layer',async({page})=>{
+  await seed(page);await page.goto('/');
+  await page.getByRole('button',{name:'SHOW',exact:true}).click();
+  await page.getByRole('button',{name:'Show Creator',exact:true}).click();
+  await page.getByRole('button',{name:/Worship Song/}).click();
+  await page.getByRole('button',{name:'Build / Update 8 Sections',exact:true}).click();
+  await page.getByRole('button',{name:'Timeline',exact:true}).click();
+  await page.getByRole('button',{name:'Mute FX lane 1',exact:true}).click();
+  await page.locator('.workspace-utility-bar').getByRole('button',{name:'Visualizer',exact:true}).click();
+  const level=()=>page.locator('.floating-stage-monitor [data-fixture="f0"]').getAttribute('data-level');
+  await expect.poll(level).toBe('0');
+  await page.getByRole('button',{name:'Show Creator',exact:true}).click();
+  await page.locator('.section-preview-controls').getByRole('button',{name:/Preview/}).click();
+  await expect.poll(async()=>Number(await level())).toBeGreaterThan(0);
+});
+
 test('master tempo stays consistent from Creator through Timeline and LIVE',async({page})=>{
  await seed(page);
  await page.setViewportSize({width:1280,height:800});
@@ -699,7 +715,7 @@ for (const width of [650,820]) test(`P0 workspaces stay bounded at ${width}px`, 
     await page.screenshot({path:info.outputPath(`live-${name}-${width}.png`)});
   }
   await page.getByRole('button',{name:'SHOW',exact:true}).click();
-  for(const name of ['Show Creator','Cues','Timeline','Song Bank','Show Library']) {
+  for(const name of ['Show Creator','Cues','Timeline','Song Bank','Media Library','Show Library']) {
     await page.getByRole('button',{name,exact:true}).click();
     expect(await page.locator('.show-console-v3').evaluate(e=>e.scrollWidth<=e.clientWidth+1), name).toBe(true);
     if(name==='Show Creator') {
@@ -1079,7 +1095,29 @@ test('Recording chooses library media and pauses recording time without losing t
   await expect(page.locator('.recorded-takes-console article')).toHaveCount(1);
 });
 
-test('Timeline video display assignment survives reload and follows media seeks on the stage',async({page})=>{
+test('NDI video scan turns WebView permission denial into a recovery action',async({page})=>{
+  await seed(page);
+  await page.addInitScript(()=>{
+    Object.defineProperty(navigator,'mediaDevices',{
+      configurable:true,
+      value:{
+        getUserMedia:async()=>{throw new DOMException('The request is not allowed by the user agent or the platform','NotAllowedError');},
+        enumerateDevices:async()=>[]
+      }
+    });
+  });
+  await page.goto('/');
+  await page.getByRole('button',{name:'BUILD',exact:true}).click();
+  await page.getByRole('button',{name:'Stage',exact:true}).click();
+  await page.locator('.stage-preset-grid').getByRole('button',{name:/Apostolic Day 2026/}).click();
+  const source=page.locator('.screen-source-inspector').getByRole('combobox',{name:'Source'});
+  await source.selectOption('ndi');
+  await page.getByRole('button',{name:'Scan NDI / Video Inputs',exact:true}).click();
+  await expect(page.locator('.screen-source-inspector .stage-source-error')).toContainText('Video input access is blocked');
+  await expect(page.locator('.screen-source-inspector').getByRole('button',{name:'Open Camera Privacy Settings',exact:true})).toBeVisible();
+});
+
+test('Timeline video display framing survives reload and follows media seeks on the stage',async({page})=>{
   await seed(page);await page.goto('/');
   await page.getByRole('button',{name:'BUILD',exact:true}).click();await page.getByRole('button',{name:'Stage',exact:true}).click();
   await page.locator('.stage-preset-grid').getByRole('button',{name:/Apostolic Day 2026/}).click();
@@ -1087,6 +1125,20 @@ test('Timeline video display assignment survives reload and follows media seeks 
   const screen=await page.evaluate(()=>JSON.parse(localStorage.getItem('dmx-controller.stage-elements.v1')??'{}').elements.find((e:any)=>e.type==='led-screen'));
   const bytes=Buffer.from(readFileSync(new URL('./fixtures/screen-video.mp4.base64',import.meta.url),'utf8'),'base64');
   await page.getByLabel('Import screen video').first().setInputFiles({name:'Screen transport test.mp4',mimeType:'video/mp4',buffer:bytes});
+
+  await page.getByLabel('Build screen video fit').selectOption('cover');
+  const setRange=async(label:string,value:number)=>page.getByLabel(label).evaluate((element,next)=>{
+    const input=element as HTMLInputElement;input.value=String(next);input.dispatchEvent(new Event('input',{bubbles:true}));
+  },value);
+  await setRange('Build screen video size',150);
+  await setRange('Build screen video horizontal position',20);
+  await setRange('Build screen video vertical position',-25);
+  await expect.poll(async()=>page.evaluate((id)=>{
+    const doc=JSON.parse(localStorage.getItem('dmx-controller.stage-elements.v1')??'{"elements":[]}');
+    const source=doc.elements.find((e:any)=>e.id===id)?.mediaSource;
+    return source ? {fit:source.fit,scale:source.scale,offsetX:source.offsetX,offsetY:source.offsetY} : null;
+  },screen.id)).toEqual({fit:'cover',scale:1.5,offsetX:.2,offsetY:-.25});
+
   await page.getByRole('button',{name:'SHOW',exact:true}).click();await page.getByRole('button',{name:'Timeline',exact:true}).click();
   await expect(page.getByLabel('Display from Timeline')).toHaveValue(screen.id);
   await page.reload();await page.getByRole('button',{name:'SHOW',exact:true}).click();await page.getByRole('button',{name:'Timeline',exact:true}).click();await expect(page.getByLabel('Display from Timeline')).toHaveValue(screen.id);
@@ -1095,6 +1147,8 @@ test('Timeline video display assignment survives reload and follows media seeks 
   const video=page.getByLabel('Timeline video screen feed').first();
   await expect.poll(()=>video.evaluate((v:HTMLVideoElement)=>v.currentTime)).toBeCloseTo(.5,1);
   expect(await video.evaluate((v:HTMLVideoElement)=>v.videoWidth)).toBeGreaterThan(0);
+  expect(await video.evaluate((v:HTMLVideoElement)=>v.style.objectFit)).toBe('cover');
+  expect(await video.evaluate((v:HTMLVideoElement)=>v.style.transform)).toContain('scale(1.5)');
 });
 
 test('independent video clips import, trim, copy and undo on the Timeline',async({page},info)=>{
@@ -1107,6 +1161,23 @@ test('independent video clips import, trim, copy and undo on the Timeline',async
   await expect(page.getByRole('button',{name:'Export trimmed MP4',exact:true})).toBeVisible();await expect(page.getByRole('button',{name:'Pop Out Video',exact:true})).toBeVisible();
   await clip.press('Control+c');await clip.press('Control+v');await expect(page.locator('.asset-clip')).toHaveCount(2);await page.keyboard.press('Control+z');await expect(page.locator('.asset-clip')).toHaveCount(1);
   await page.screenshot({path:info.outputPath('timeline-independent-video.png')});
+});
+
+test('Timeline track height resizes vertically and persists',async({page})=>{
+  await seed(page);await page.goto('/');await page.getByRole('button',{name:'SHOW',exact:true}).click();await page.getByRole('button',{name:'Timeline',exact:true}).click();
+  const slider=page.getByLabel('Timeline track height');
+  await expect(slider).toHaveValue('80');
+  await slider.evaluate((element)=>{
+    const input=element as HTMLInputElement;input.value='120';input.dispatchEvent(new Event('input',{bubbles:true}));
+  });
+  await expect(page.locator('.timeline-lane').first()).toHaveCSS('height','120px');
+  await page.getByRole('button',{name:'Compact',exact:true}).click();
+  await expect(slider).toHaveValue('48');
+  await expect(page.locator('.timeline-lane').first()).toHaveCSS('height','48px');
+  await expect(page.locator('.show-bar-timeline')).toHaveAttribute('data-track-compact','true');
+  await page.reload();await page.getByRole('button',{name:'SHOW',exact:true}).click();await page.getByRole('button',{name:'Timeline',exact:true}).click();
+  await expect(page.getByLabel('Timeline track height')).toHaveValue('48');
+  await expect(page.locator('.timeline-lane').first()).toHaveCSS('height','48px');
 });
 
 test('recorded takes become independent Song versions with editable lighting frames',async({page})=>{
@@ -1171,4 +1242,32 @@ test('Select all, copy, paste and undo operate on Sections and fixture patch edi
   await page.locator('.section-list').press('Control+a');await page.keyboard.press('Control+c');await page.keyboard.press('Control+v');await expect(page.locator('.section-list>article')).toHaveCount(16);await page.keyboard.press('Control+z');await expect(page.locator('.section-list>article')).toHaveCount(8);
   await page.getByRole('button',{name:'BUILD',exact:true}).click();await page.getByRole('button',{name:'Fixtures',exact:true}).click();await page.keyboard.press('Control+a');await page.keyboard.press('Control+c');await page.keyboard.press('Control+v');
   await expect.poll(()=>page.evaluate(()=>{const p=JSON.parse(localStorage.getItem('dmx-controller.patch.v1')??'[]');return (Array.isArray(p)?p:p.fixtures).length;})).toBe(8);await page.keyboard.press('Control+z');await expect.poll(()=>page.evaluate(()=>{const p=JSON.parse(localStorage.getItem('dmx-controller.patch.v1')??'[]');return (Array.isArray(p)?p:p.fixtures).length;})).toBe(4);
+});
+
+
+test('Media Library degrades safely in browser preview', async ({page}, info) => {
+  await seed(page);
+  await page.setViewportSize({width: 900, height: 760});
+  await page.goto('/');
+  await page.getByRole('button', {name:'SHOW', exact:true}).click();
+  await page.locator('.show-subtabs').getByRole('button', {name:'Media Library', exact:true}).click();
+  await expect(page.locator('.media-library-unavailable')).toContainText('Open this in the installed LumaRig app.');
+  await expect(page.locator('.media-library-unavailable')).toContainText('macOS and Windows');
+  expect(await page.locator('.show-console-v3').evaluate(e => e.scrollWidth <= e.clientWidth + 1)).toBe(true);
+  await page.screenshot({path:info.outputPath('media-library-browser-preview.png')});
+});
+
+
+test('LIVE Show preflight reports rehearsal blockers and warnings', async ({page}) => {
+  await seed(page);
+  await page.setViewportSize({width: 900, height: 720});
+  await page.goto('/');
+  await page.getByRole('button', {name:'LIVE', exact:true}).click();
+  await page.locator('.live-view-tabs').getByRole('button', {name:'System', exact:true}).click();
+  await page.getByRole('button', {name:'RUN SHOW PREFLIGHT', exact:true}).click();
+  await expect(page.locator('.show-preflight-panel')).not.toHaveClass(/idle/);
+  await expect(page.locator('.show-preflight-list article').filter({hasText:'Blackout'})).toContainText('PASS');
+  await expect(page.locator('.show-preflight-list article').filter({hasText:'DMX Output'})).toContainText('WARN');
+  await expect(page.locator('.show-preflight-list article').filter({hasText:'Displays'})).toContainText('WARN');
+  expect(await page.locator('.live-detail-view').evaluate(element => element.scrollWidth <= element.clientWidth + 1)).toBe(true);
 });

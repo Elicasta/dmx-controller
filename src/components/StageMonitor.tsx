@@ -44,6 +44,15 @@ export async function openStageWindow(): Promise<boolean> {
   ));
 }
 
+async function toggleStageFullscreen() {
+  if ('__TAURI_INTERNALS__' in window) {
+    await invoke('toggle_stage_monitor_fullscreen');
+    return;
+  }
+  if (document.fullscreenElement) await document.exitFullscreen();
+  else await document.documentElement.requestFullscreen();
+}
+
 export default function StageMonitor({
   snapshot,
   floating = false,
@@ -55,6 +64,7 @@ export default function StageMonitor({
 }) {
   const [incoming, setIncoming] = useState<StageSnapshot | null>(null);
   const [collapsed, setCollapsed] = useState(false);
+  const [windowError, setWindowError] = useState('');
   const [position, setPosition] = useState(() => ({
     x: Math.max(20, window.innerWidth - 680),
     y: Math.max(80, window.innerHeight - 500)
@@ -76,6 +86,7 @@ export default function StageMonitor({
   return <section
     className={`stage-monitor ${floating ? 'floating-stage-monitor' : ''} ${collapsed ? 'collapsed' : ''}`}
     style={floating ? { left: position.x, top: position.y } : undefined}
+    onDoubleClick={() => { if (!floating) void toggleStageFullscreen().catch(() => setWindowError('Fullscreen could not be changed.')); }}
   >
     <header
       onPointerDown={(event) => {
@@ -101,13 +112,14 @@ export default function StageMonitor({
         <small>{data ? `${data.patch.length} fixtures · ${data.elements.length} objects` : 'Waiting for show state'}</small>
       </div>
       <div>
-        {floating && <>
+        {floating ? <>
           <button onClick={() => void openStageWindow().then((open) => { if (open) onClose?.(); })}>Pop out ↗</button>
           <button aria-label="Collapse visualizer" onClick={() => setCollapsed(!collapsed)}>{collapsed ? 'Expand' : 'Collapse'}</button>
-        </>}
+        </> : <button onClick={() => void toggleStageFullscreen().catch(() => setWindowError('Fullscreen could not be changed.'))}>Fullscreen</button>}
         {onClose && <button aria-label="Close visualizer" onClick={onClose}>×</button>}
       </div>
     </header>
+    {windowError && <p className="stage-monitor-window-error" role="status">{windowError}</p>}
     {!collapsed && (data
       ? <Visualizer3D snapshot={data} compact={floating}/>
       : <div className="visualizer-waiting"><strong>Waiting for LumaRig…</strong><span>Open a show in the main window and the visualizer will attach automatically.</span></div>)}

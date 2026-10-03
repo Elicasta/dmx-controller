@@ -48,7 +48,14 @@ export type EffectPreset = {
   momentary?: boolean;
 };
 
+export type CustomEffectStepTrigger = {
+  step: number;
+  name: string;
+  effect: CustomEffect;
+};
+
 export type CustomEffect = {
+  stepTriggers?: CustomEffectStepTrigger[];
   gridPhaseMode?: GridPhaseMode;
   colorPalette?: string[];
   colorBlend?: 'step' | 'smooth';
@@ -166,10 +173,31 @@ export function renderCustomEffect(
         steps: effect.steps
       }];
 
-  return [...(effect.parameter === 'color' ? renderColorPhaser(effect, fixtures, elapsedMs, selectionGrid) : []), ...renderPhaserProgram({
+  const updates = [...(effect.parameter === 'color' ? renderColorPhaser(effect, fixtures, elapsedMs, selectionGrid) : []), ...renderPhaserProgram({
     ...timing,
     lanes: [...primaryLanes, ...(effect.lanes ?? [])]
   }, fixtures, elapsedMs, baseUniverse)];
+
+  const triggerCount=Math.max(
+    effect.steps?.length ?? 0,
+    effect.colorPalette?.length ?? 0,
+    ...(effect.lanes ?? []).map(lane=>lane.steps?.length ?? 0)
+  );
+  if(triggerCount && effect.stepTriggers?.length){
+    const cycleMs=60000/Math.max(20,effect.bpm)*Math.max(.0625,effect.cycleBeats ?? 1);
+    const cyclePosition=((elapsedMs%cycleMs)+cycleMs)%cycleMs;
+    const step=Math.min(triggerCount-1,Math.floor(cyclePosition/cycleMs*triggerCount));
+    const trigger=effect.stepTriggers.find(item=>item.step===step);
+    if(trigger){
+      const stepMs=cycleMs/triggerCount;
+      const localMs=cyclePosition-step*stepMs;
+      const triggerEffect={...trigger.effect,stepTriggers:undefined};
+      const merged=new Map<number,number>(updates);
+      renderCustomEffect(triggerEffect,fixtures,localMs,baseUniverse,selectionGrid).forEach(([channel,value])=>merged.set(channel,value));
+      return [...merged.entries()];
+    }
+  }
+  return updates;
 }
 
 export const EFFECT_PRESETS: ReadonlyArray<EffectPreset> = [

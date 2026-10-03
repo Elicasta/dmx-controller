@@ -196,7 +196,12 @@ export function removeCuePreservingTracking(
 export function isShowFile(value: unknown): value is ShowFile {
   if (!value || typeof value !== 'object') return false;
   const candidate = value as Partial<ShowFile>;
-  if (![1, 2, 3, 4].includes(candidate.version ?? 0) || typeof candidate.name !== 'string' || !Array.isArray(candidate.cues)) {
+  if (
+    ![1, 2, 3, 4].includes(candidate.version ?? 0)
+    || typeof candidate.name !== 'string'
+    || !Array.isArray(candidate.cues)
+    || candidate.cues.length > 200
+  ) {
     return false;
   }
   if (candidate.timelineShows !== undefined && (!Array.isArray(candidate.timelineShows) || candidate.timelineShows.length > 100 || !candidate.timelineShows.every(item=>item && typeof item.id==='string' && typeof item.name==='string' && isShowTimeline(item.timeline)))) return false;
@@ -265,10 +270,10 @@ export function isShowFile(value: unknown): value is ShowFile {
     && (candidate.creatorSections === undefined || (Array.isArray(candidate.creatorSections) && candidate.creatorSections.length <= 200 && candidate.creatorSections.every(isShowSection)))
     && cuesValid
     && externalTrackValid
-    && (candidate.groups === undefined || (Array.isArray(candidate.groups) && candidate.groups.every(isFixtureGroup)))
-    && (candidate.positionPalettes === undefined || (Array.isArray(candidate.positionPalettes) && candidate.positionPalettes.every(isPositionPalette)))
+    && (candidate.groups === undefined || (Array.isArray(candidate.groups) && candidate.groups.length <= 64 && candidate.groups.every(isFixtureGroup)))
+    && (candidate.positionPalettes === undefined || (Array.isArray(candidate.positionPalettes) && candidate.positionPalettes.length <= 64 && candidate.positionPalettes.every(isPositionPalette)))
     && (candidate.recordings === undefined || (
-    Array.isArray(candidate.recordings) && candidate.recordings.every(isShowRecording)
+    Array.isArray(candidate.recordings) && candidate.recordings.length <= 24 && candidate.recordings.every(isShowRecording)
   ));
 }
 

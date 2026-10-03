@@ -1,7 +1,7 @@
 {
   "name": "dmx-controller-mac-udmx-test",
   "private": true,
-  "version": "0.2.7",
+  "version": "0.6.0",
   "type": "module",
   "scripts": {
     "dev": "vite",
@@ -10,11 +10,14 @@
     "tauri": "tauri",
     "tauri:dev": "tauri dev",
     "tauri:build": "tauri build",
-    "test:ui": "playwright test"
+    "test:ui": "playwright test",
+    "check:version": "node scripts/release-version.mjs --check",
+    "sync:release-version": "node scripts/release-version.mjs"
   },
   "dependencies": {
     "@supabase/supabase-js": "2.116.0",
     "@tauri-apps/api": "2.12.0",
+    "qrcode.react": "4.2.0",
     "react": "^19.0.0",
     "react-dom": "^19.0.0"
   },

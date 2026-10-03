@@ -11,6 +11,7 @@ import {
   type PointerEvent,
 } from "react";
 import type { ShowCue } from "../lib/show";
+import type { TempoAnalysis } from '../lib/tempo-analysis';
 import {
   FX_RECIPES,
   barMs,
@@ -51,10 +52,13 @@ type Props = {
   onFrame: (elapsedMs: number) => void;
   onStop: () => void;
   onCreator: () => void;
+  onOpenStepEditor?: (cueId:string)=>void;
   tempoLocked: boolean;
   onTempoLockChange: (locked: boolean) => void;
   masterBpm: number;
   onMasterBpmChange: (bpm: number) => void;
+  tempoAnalysis?: TempoAnalysis;
+  onDownbeatChange?: (downbeatMs:number)=>void;
 };
 type Drag = {
   kind: "move" | "resize" | "audio" | "trim-in" | "trim-out" | "playhead" | "video-move" | "video-resize" | "take-move" | "take-resize";
@@ -93,6 +97,12 @@ export default function ShowTimelineEditor(props: Props) {
   const audioStarting = useRef(false);
   const playAttempt = useRef(0);
   const [libraryMode,setLibraryMode]=useState<"cues"|"fx"|"myfx">("cues");
+  const [libraryDragActive,setLibraryDragActive]=useState(false);
+  const setLibraryDragging = (active: boolean, target?: EventTarget | null) => {
+    setLibraryDragActive(active);
+    const root = target instanceof HTMLElement ? target.closest<HTMLElement>('.show-bar-timeline') : null;
+    if (root) root.dataset.libraryDragging = active ? 'true' : 'false';
+  };
   const [localSelectedId, setLocalSelectedId] = useState("");
   const selectedId = props.selectedClipId ?? localSelectedId;
   useEffect(()=>{if(props.selectedClipId==='')setSelectedIds(new Set());},[props.selectedClipId]);
@@ -106,6 +116,29 @@ export default function ShowTimelineEditor(props: Props) {
   const [playing, setPlaying] = useState(false);
   const [zoom, setZoom] = useState(36);
   const zoomRef = useRef(36);
+  const [trackHeight,setTrackHeight]=useState(()=>{
+    const saved=Number(window.localStorage.getItem('lumarig.timeline-track-height.v1') || 80);
+    return clamp(saved,44,140);
+  });
+  const trackHeightDragRef=useRef<{pointerId:number;startY:number;startHeight:number}|null>(null);
+  useEffect(()=>{window.localStorage.setItem('lumarig.timeline-track-height.v1',String(trackHeight));},[trackHeight]);
+  function beginTrackHeightDrag(e:PointerEvent<HTMLElement>){
+    if(e.button!==0)return;
+    e.preventDefault();
+    e.currentTarget.setPointerCapture(e.pointerId);
+    trackHeightDragRef.current={pointerId:e.pointerId,startY:e.clientY,startHeight:trackHeight};
+  }
+  function moveTrackHeightDrag(e:PointerEvent<HTMLElement>){
+    const drag=trackHeightDragRef.current;
+    if(!drag||drag.pointerId!==e.pointerId)return;
+    e.preventDefault();
+    setTrackHeight(clamp(drag.startHeight+(e.clientY-drag.startY),44,140));
+  }
+  function endTrackHeightDrag(e:PointerEvent<HTMLElement>){
+    if(trackHeightDragRef.current?.pointerId!==e.pointerId)return;
+    trackHeightDragRef.current=null;
+    if(e.currentTarget.hasPointerCapture(e.pointerId))e.currentTarget.releasePointerCapture(e.pointerId);
+  }
   const [snap, setSnap] = useState(1);
   const [followPlayhead, setFollowPlayhead] = useState(true);
   const followPlayheadRef = useRef(true);
@@ -483,6 +516,7 @@ export default function ShowTimelineEditor(props: Props) {
   }
   function dropCue(e: import("react").DragEvent<HTMLElement>, lane: number) {
     e.preventDefault();
+    setLibraryDragging(false, e.currentTarget);
     const recipeId=e.dataTransfer.getData("application/lumarig-fx");
     if(recipes.some(r=>r.id===recipeId)){
       checkpoint();
@@ -497,7 +531,7 @@ export default function ShowTimelineEditor(props: Props) {
     .map((p, i) => `M ${i} ${24 - p * 22} L ${i} ${24 + p * 22}`)
     .join(" ");
   return (
-    <div className="show-bar-timeline" data-history={historyVersion}
+    <div className="show-bar-timeline" data-history={historyVersion} data-track-compact={trackHeight < 64 ? 'true' : 'false'} data-library-dragging={libraryDragActive ? 'true' : 'false'} style={{'--timeline-track-height':`${trackHeight}px`} as import('react').CSSProperties}
       onDragOver={(e) => { if (e.dataTransfer.types.includes("Files")) { e.preventDefault(); e.dataTransfer.dropEffect = "copy"; } }}
       onDrop={(e) => {
         const file = e.dataTransfer.files?.[0];
@@ -563,6 +597,14 @@ export default function ShowTimelineEditor(props: Props) {
           }} />
         </label>
         <button className="tempo-lock" aria-pressed={tempoLocked} onClick={() => onTempoLockChange(!tempoLocked)}>{tempoLocked ? "Tempo Locked" : "Lock Tempo"}</button>
+        {props.tempoAnalysis && <span className="timeline-tempo-analysis" title={`Analyzed ${new Date(props.tempoAnalysis.analyzedAt).toLocaleString()}`}>
+          <b>{props.tempoAnalysis.bpm} detected</b>
+          <small>{Math.round(props.tempoAnalysis.confidence*100)}% · downbeat {(props.tempoAnalysis.downbeatMs/1000).toFixed(2)}s{props.tempoAnalysis.manualDownbeat?' corrected':''}</small>
+        </span>}
+        <button disabled={!audioUrl || !props.onDownbeatChange} onClick={()=>{
+          const downbeatMs=Math.max(0,Math.round((audioRef.current?.currentTime ?? 0)*1000));
+          props.onDownbeatChange?.(downbeatMs);
+        }}>Set Downbeat Here</button>
         <label>
           Beats / bar
           <input
@@ -604,6 +646,23 @@ export default function ShowTimelineEditor(props: Props) {
             onChange={(e) => setZoom(Number(e.target.value))}
           />
         </label>
+        <label>
+          Track height · {Math.round(trackHeight)} px
+          <input
+            aria-label="Timeline track height"
+            type="range"
+            min={44}
+            max={140}
+            step={2}
+            value={trackHeight}
+            onInput={(e)=>setTrackHeight(clamp(Number((e.currentTarget as HTMLInputElement).value),44,140))}
+          />
+        </label>
+        <div className="track-height-presets" role="group" aria-label="Track height presets">
+          <button aria-pressed={trackHeight===48} onClick={()=>setTrackHeight(48)}>Compact</button>
+          <button aria-pressed={trackHeight===80} onClick={()=>setTrackHeight(80)}>Normal</button>
+          <button aria-pressed={trackHeight===120} onClick={()=>setTrackHeight(120)}>Tall</button>
+        </div>
         <button onClick={() => { const width = Math.max(320, (scrollRef.current?.clientWidth ?? 900) - 120); setZoom(clamp(width / Math.max(1, totalBars), 4, 400)); }}>Fit</button>
         <button className={followPlayhead ? "active" : ""} aria-pressed={followPlayhead} onClick={() => setFollowPlayhead((value) => !value)}>Follow {followPlayhead ? "On" : "Off"}</button>
         <label className="file-button">
@@ -623,6 +682,29 @@ export default function ShowTimelineEditor(props: Props) {
           />
         </label>
       </div>
+      <div
+        className="timeline-track-height-drag"
+        role="separator"
+        aria-label="Resize Timeline tracks vertically"
+        aria-orientation="horizontal"
+        aria-valuemin={44}
+        aria-valuemax={140}
+        aria-valuenow={Math.round(trackHeight)}
+        tabIndex={0}
+        onPointerDown={beginTrackHeightDrag}
+        onPointerMove={moveTrackHeightDrag}
+        onPointerUp={endTrackHeightDrag}
+        onPointerCancel={endTrackHeightDrag}
+        onKeyDown={e=>{
+          if(e.key==='ArrowUp'||e.key==='ArrowDown'){
+            e.preventDefault();
+            setTrackHeight(value=>clamp(value+(e.key==='ArrowDown'?4:-4),44,140));
+          }else if(e.key==='Home'){e.preventDefault();setTrackHeight(44);}
+          else if(e.key==='End'){e.preventDefault();setTrackHeight(140);}
+        }}
+      >
+        <span>TRACK HEIGHT</span><i/><b>{Math.round(trackHeight)} px</b>
+      </div>
       <ResizableWorkspace className="timeline-edit-layout" storageKey="lumarig.timeline-columns.v1" compactMode="stack" leftLabel="Cue / FX Library" rightEnabled={false} leftDefault={220} centerMinimum={480}>
         <aside className="timeline-cue-library">
           <div className="timeline-library-tabs"><button aria-label="Cue library" aria-pressed={libraryMode==="cues"} onClick={()=>setLibraryMode("cues")}>Cues</button><button aria-pressed={libraryMode==="fx"} onClick={()=>setLibraryMode("fx")}>FX recipes</button><button aria-pressed={libraryMode==="myfx"} onClick={()=>setLibraryMode("myfx")}>My FX</button></div>
@@ -630,15 +712,17 @@ export default function ShowTimelineEditor(props: Props) {
             SHOW CUES <small>{cues.length}</small>
           </header>
           <p>Drag to a lane or click to append.</p>
-          {libraryMode!=="cues" ? <><p>Target: {props.fxTargetName??"current group"} · FX {selectedLane+1}. Click to insert at the playhead or drag to a lane.</p>{recipes.filter(r=>libraryMode!=="myfx" || r.id.startsWith("custom:")).map(recipe=><button className="timeline-fx-recipe" key={recipe.id} draggable onDragStart={e=>{e.dataTransfer.setData("application/lumarig-fx",recipe.id);e.dataTransfer.effectAllowed="copy";}} onClick={()=>{checkpoint();props.onAddFx?.(recipe.id,cursorRef.current,selectedLane);}}><span>{recipe.name}<small>{recipe.category}</small></span></button>)}</> : cues.length ? (
+          {libraryMode!=="cues" ? <><p>Target: {props.fxTargetName??"current group"} · FX {selectedLane+1}. Click to insert at the playhead or drag to a lane.</p>{recipes.filter(r=>libraryMode!=="myfx" || r.id.startsWith("custom:")).map(recipe=><button className="timeline-fx-recipe" key={recipe.id} draggable onDragStart={e=>{setLibraryDragging(true,e.currentTarget);e.dataTransfer.setData("application/lumarig-fx",recipe.id);e.dataTransfer.effectAllowed="copy";}} onDragEnd={e=>setLibraryDragging(false,e.currentTarget)} onClick={()=>{checkpoint();props.onAddFx?.(recipe.id,cursorRef.current,selectedLane);}}><span>{recipe.name}<small>{recipe.category}</small></span></button>)}</> : cues.length ? (
             cues.filter(c=>!props.songFilter||(c.trackName?.trim()||"Unfiled cues")===props.songFilter).map((c) => (
               <button
                 key={c.id}
                 draggable
                 onDragStart={(e) => {
+                  setLibraryDragging(true, e.currentTarget);
                   e.dataTransfer.setData("application/lumarig-cue", c.id);
                   e.dataTransfer.effectAllowed = "copy";
                 }}
+                onDragEnd={(e) => setLibraryDragging(false, e.currentTarget)}
                 onClick={() => addClip(c.id)}
                 style={
                   {
@@ -991,6 +1075,11 @@ export default function ShowTimelineEditor(props: Props) {
                 >
                   Duplicate
                 </button>
+                {(() => {
+                  const cue=cues.find(item=>item.id===selected.cueId);
+                  const hasSteps=Boolean(cue?.effectStack?.some(layer=>layer.effect.waveform==='step'||layer.effect.steps?.length||layer.effect.lanes?.some(lane=>lane.steps?.length)));
+                  return hasSteps && props.onOpenStepEditor ? <button disabled={playing} onClick={()=>props.onOpenStepEditor?.(selected.cueId)}>Open Step Editor ↗</button> : null;
+                })()}
                 <button
                   disabled={playing}
                   onClick={() => {

@@ -4,9 +4,9 @@ The Studio bridge is a semantic show-control API. Studio does not own DMX and ne
 
 ## Transport priority
 
-1. Loopback discovery when Studio and LumaRig run on the same machine.
-2. LAN discovery and direct WebSocket.
-3. Existing authenticated Supabase relay for remote networks.
+1. Loopback WebSocket when Studio and LumaRig run on the same machine.
+2. Existing authenticated Supabase relay for remote networks.
+3. Authenticated LAN discovery later, only after the bridge token/session handshake is implemented.
 
 All transports carry the same command envelope and result format.
 
@@ -22,7 +22,7 @@ The bridge handler must dispatch into the existing ShowRuntime/recording paths. 
 
 ## Discovery
 
-The native bridge server will advertise `_lumarig._tcp` and listen on loopback/LAN. Studio should prefer 127.0.0.1 when present. A bridge token/session handshake is required before accepting control from LAN peers.
+The current native bridge listens only on `127.0.0.1`. It is intentionally not exposed to the LAN without authentication. A future LAN mode must implement the bridge token/session handshake before binding to non-loopback interfaces.
 
 ## Failure behavior
 

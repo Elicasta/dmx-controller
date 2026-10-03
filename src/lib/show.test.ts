@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { applyLightingOffset, cueChanges, diffUniverse, isShowFile, midiSongPositionToMs, moveCue, removeCuePreservingTracking, renumberCues, resolveShowCueFrame, sanitizeShow, type ShowCue } from './show';
+import { applyLightingOffset, cueChanges, diffUniverse, isShowFile, midiSongPositionToMs, moveCue, removeCuePreservingTracking, renumberCues, resolveShowCueFrame, sanitizeShow, type ShowCue, type ShowFile } from './show';
+import { EMPTY_TIMELINE } from './show-design';
 
 function cue(id: string, number: number): ShowCue {
   return {
@@ -51,6 +52,82 @@ describe('show helpers', () => {
     const next = removeCuePreservingTracking(cues, 'bright');
     expect(next.map((item) => item.id)).toEqual(['red', 'white']);
     expect(resolveShowCueFrame(next, 1)).toEqual(whiteBright);
+  });
+
+  it('accepts supported large-show boundaries and rejects files beyond them', () => {
+    const cues = Array.from({ length: 200 }, (_, index) => cue(`cue-${index}`, index + 1));
+    const songs = Array.from({ length: 100 }, (_, index) => ({
+      id: `song-${index}`,
+      name: `Song ${index + 1}`,
+      bpm: 120,
+    }));
+    const thousandClips = Array.from({ length: 1000 }, (_, index) => ({
+      id: `clip-${index}`,
+      cueId: cues[index % cues.length].id,
+      startBar: index,
+      lengthBars: 1,
+      lane: index % 8,
+      enabled: true,
+    }));
+    const timelineShows = Array.from({ length: 100 }, (_, index) => ({
+      id: `timeline-${index}`,
+      name: `Timeline ${index + 1}`,
+      timeline: {
+        ...EMPTY_TIMELINE,
+        bpm: 120,
+        clips: index === 0 ? thousandClips : [],
+      },
+    }));
+    const large: ShowFile = {
+      version: 4,
+      name: 'Boundary Show',
+      cues,
+      songs,
+      timelineShows,
+    };
+
+    expect(isShowFile(large)).toBe(true);
+    expect(isShowFile({ ...large, cues: [...cues, cue('cue-over', 201)] })).toBe(false);
+    expect(isShowFile({
+      ...large,
+      songs: [...songs, { id: 'song-over', name: 'Song 101', bpm: 120 }],
+    })).toBe(false);
+    expect(isShowFile({
+      ...large,
+      timelineShows: [...timelineShows, { id: 'timeline-over', name: 'Timeline 101', timeline: EMPTY_TIMELINE }],
+    })).toBe(false);
+    expect(isShowFile({
+      ...large,
+      timelineShows: [{
+        id: 'timeline-too-many-clips',
+        name: 'Too Many Clips',
+        timeline: {
+          ...EMPTY_TIMELINE,
+          bpm: 120,
+          clips: [...thousandClips, { id: 'clip-over', cueId: cues[0].id, startBar: 1001, lengthBars: 1, lane: 0, enabled: true }],
+        },
+      }],
+    })).toBe(false);
+  });
+
+  it('caps oversized persisted collections during sanitization', () => {
+    const oversized = {
+      version: 4 as const,
+      name: 'Oversized',
+      cues: Array.from({ length: 240 }, (_, index) => cue(`cue-${index}`, index + 1)),
+      recordings: Array.from({ length: 30 }, (_, index) => ({
+        id: `take-${index}`,
+        name: `Take ${index}`,
+        trackName: 'song.wav',
+        durationMs: 1000,
+        createdAt: new Date(index * 1000).toISOString(),
+        frames: [],
+      })),
+    };
+    const cleaned = sanitizeShow(oversized);
+    expect(cleaned.cues).toHaveLength(200);
+    expect(cleaned.recordings).toHaveLength(24);
+    expect(cleaned.recordings?.[0].id).toBe('take-6');
   });
 
   it('validates and sanitizes persisted show data', () => {

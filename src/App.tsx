@@ -1,3 +1,4 @@
+import packageMeta from '../package.json';
 import {pasteFixtures} from './lib/fixture-clipboard';
 import {ManualOverdub,timelineCaptureClip,appendTimelineCapture} from './lib/timeline-capture';
 import { cueContext, cueTargetIds } from './lib/show-selection';
@@ -12,15 +13,19 @@ import RecorderTransport from './components/RecorderTransport';
 import { useEditHistory } from './lib/edit-history';
 import TempoPulse from './components/TempoPulse';
 import { useMediaOutputPublisher } from "./components/MediaOutput";
-import { readProgramState, saveProgramState, type Recovery } from './lib/program-storage';
-import { insertSongProgram, programId, type SongProgram } from './lib/song-library';
+import { importSongProgram, readProgramState, replaceProgramState, saveProgramState, upsertSongProgram, validateProgramState, type Recovery } from './lib/program-storage';
+import { extractSongProgram, insertSongProgram, isSongProgram, programId, type SongProgram } from './lib/song-library';
 import SongBank from './components/SongBank';
+import MediaLibraryPanel from './components/MediaLibraryPanel';
 import { buildSong, songsForShow, renameSong, storeSongMedia, readSongMedia, type SongRecord } from './lib/song-bank';
+import { waveformForBlob } from './lib/media-waveform';
+import { analyzeTempo, correctedDownbeat } from './lib/tempo-analysis';
+import { cancelPortableBackupRestore, collectMediaIds, commitPortableBackupRestore, countMediaIds, exportPortableBackup, exportPortablePackage, importPortableBackup, importPortablePackage, mediaNameForId, persistManagedMedia, readMediaAsset, readMediaLibrary, type MediaAsset } from './lib/media-library';
 import ResizableWorkspace from './components/ResizableWorkspace';
 import DraggablePanelDeck from './components/DraggablePanelDeck';
 import StageMonitor, { openStageWindow, useStagePublisher } from './components/StageMonitor';
 import Visualizer3D from './components/Visualizer3D';
-import { StageMediaSurface, requestStageVideoInputs, type StageVideoInputOption } from './components/StageMediaSurface';
+import { StageMediaSurface, StageVideoInputError, requestStageVideoInputs, resolveStageVideoInputDevice, type StageVideoInputOption } from './components/StageMediaSurface';
 import SongCueLibrary from './components/SongCueLibrary';
 import { moveRundownItemCues } from './lib/show';
 import { activeTimelineCueId, createSection, EMPTY_TIMELINE, FX_RECIPES, SHOW_COLORS, buildSectionCues, renderEffectStack, renderShowTimeline, isEffectRecipe, isShowSection, type EffectStackLayer, type ShowSection } from './lib/show-design';
@@ -157,8 +162,42 @@ import { cuePlaybackDuration, renderCueTimedFrame } from './core/cue-timing';
 import { orderFixtures, type FixtureOrderMode } from './core/fixture-order';
 import { phaserStepValue, type PhaserStep } from './core/phaser-engine';
 import { makeSelectionGrid, moveFixtureInSelectionGrid, normalizeSelectionGrid, type SelectionGridTraversal } from './core/selection-grid';
-import { RemoteRelay, type RelayCommandEnvelope, type RemoteRelayConfig, type RemoteRelayStatus } from './core/remote-relay';
+import { LUMARIG_CLOUD_PUBLISHABLE_KEY, LUMARIG_CLOUD_URL, migrateRemoteRelayProject, RemoteRelay, type RelayCommandEnvelope, type RemoteRelayConfig, type RemoteRelayStatus } from './core/remote-relay';
+import { desktopDeviceId } from './core/supabase-client';
 import { StudioBridgeDispatcher } from './core/studio-bridge-dispatcher';
+import { TransportEngine, type TransportSource, type TransportUpdate } from './core/transport-engine';
+import { buildShowPreflight, preflightSummary, type ShowPreflightItem } from './core/show-preflight';
+import { ConnectionManager, type ConnectionRecord } from './core/connection-manager';
+import { lumaLivePositionMs, loadLumaLiveConnection, pairLumaLive, readLumaLiveState, saveLumaLiveConnection, scanLumaLive, sendLumaLiveCommand, type LumaLiveConnection, type LumaLiveEndpoint, type LumaLiveState } from './core/lumalive-client';
+import { loadProPresenterUrl, observeProPresenterTransport, proPresenterSummary, proPresenterTransportMs, readProPresenterStatus, saveProPresenterUrl, sendProPresenterCommand, type ProPresenterStatus, type ProPresenterTransportObservation } from './core/propresenter-client';
+import { QRCodeSVG } from 'qrcode.react';
+import {
+  createCloudShowFolder,
+  createControllerPairing,
+  currentCloudAccount,
+  fetchCloudRecordingLabels,
+  fetchCloudShowLibrary,
+  fetchCloudSongLibrary,
+  listPairedControllers,
+  registerCloudDesktop,
+  revokePairedController,
+  saveCloudRecordingLabel,
+  saveCloudShow,
+  saveCloudSong,
+  signInCloudAccount,
+  signOutCloudAccount,
+  touchCloudDesktop,
+  uploadCloudShowMedia,
+  downloadCloudShowMedia,
+  watchCloudLibrary,
+  type CloudAccount,
+  type CloudRecordingLabel,
+  type CloudShowDocument,
+  type CloudShowFolder,
+  type CloudSongDocument,
+  type ControllerPairingSession,
+  type PairedController
+} from './core/cloud-services';
 import type { StudioBridgeCommand, StudioSongIdentity } from './core/studio-bridge-protocol';
 
 const ShowCreator = lazy(() => import('./components/ShowCreator'));
@@ -167,7 +206,7 @@ const ShowTimelineEditor = lazy(() => import('./components/ShowTimelineEditor'))
 type Workspace = 'build' | 'create' | 'show' | 'visualizer' | 'live';
 type SetupView = 'fixtures' | 'groups' | 'stage' | 'settings';
 type ProgramMode = 'stage' | 'looks' | 'fx' | 'colors' | 'media' | 'presets';
-type ShowMode = 'songs' | 'creator' | 'cues' | 'timeline' | 'tracks' | 'library' | 'sync' | 'recordings';
+type ShowMode = 'songs' | 'creator' | 'cues' | 'timeline' | 'tracks' | 'media' | 'library' | 'sync' | 'recordings';
 type LiveView = 'performance' | 'overrides' | 'groups' | 'masters' | 'shortcuts' | 'settings';
 type LiveBank = 'fixtures' | 'groups';
 type LivePaletteFamily = 'groups' | 'intensity' | 'position' | 'color' | 'beam' | 'fx';
@@ -180,6 +219,8 @@ type ShowProjectSnapshot = {
   templateId?: string;
   revision?: number;
   lastEditor?: 'lumarig' | 'lumaviz';
+  cloudRevision?: number;
+  cloudFolderId?: string | null;
   show: ShowFile;
   patch: PatchedFixture[];
   stageElements: StageElement[];
@@ -284,6 +325,10 @@ const STAGE_BACKUP_STORAGE_KEY = 'dmx-controller.stage-elements.backup.v1';
 const STAGE_SETTINGS_STORAGE_KEY = 'dmx-controller.stage-settings.v2';
 const STAGE_PRESET_STORAGE_KEY = 'dmx-controller.stage-preset.v1';
 const REMOTE_RELAY_STORAGE_KEY = 'dmx-controller.remote-relay.v1';
+// Publishable Supabase credentials are safe to ship in desktop/web clients; RLS is the security boundary.
+const DEFAULT_SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL || LUMARIG_CLOUD_URL;
+const DEFAULT_SUPABASE_PUBLISHABLE_KEY = import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY || LUMARIG_CLOUD_PUBLISHABLE_KEY;
+const REMOTE_APP_URL = import.meta.env.VITE_REMOTE_APP_URL || 'https://mycontroller-three.vercel.app';
 const FADE_TIMES = [0, 500, 1000, 2000, 5000] as const;
 
 const DEFAULT_SETTINGS: AppSettings = {
@@ -427,27 +472,30 @@ function loadShowFile(): ShowFile {
   return { ...EMPTY_SHOW, cues: [], groups: [], positionPalettes: [] };
 }
 
+function isShowProjectSnapshot(item: unknown): item is ShowProjectSnapshot {
+  if (!item || typeof item !== 'object') return false;
+  const candidate = item as Partial<ShowProjectSnapshot>;
+  return typeof candidate.id === 'string'
+    && typeof candidate.name === 'string'
+    && typeof candidate.savedAt === 'string'
+    && (candidate.status === 'template' || candidate.status === 'draft' || candidate.status === 'show')
+    && (candidate.cloudRevision === undefined || (typeof candidate.cloudRevision === 'number' && Number.isFinite(candidate.cloudRevision)))
+    && (candidate.cloudFolderId === undefined || candidate.cloudFolderId === null || typeof candidate.cloudFolderId === 'string')
+    && Boolean(candidate.show && isShowFile(candidate.show))
+    && Array.isArray(candidate.patch)
+    && candidate.patch.every(isPatchedFixture)
+    && Array.isArray(candidate.stageElements)
+    && candidate.stageElements.every(isStageElement)
+    && Array.isArray(candidate.looks)
+    && candidate.looks.every(isFixtureLook)
+    && Boolean(candidate.stageSettings && isStageSettings(candidate.stageSettings));
+}
+
 function loadShowLibrary(): ShowProjectSnapshot[] {
   if (typeof window === 'undefined') return [];
   try {
     const parsed: unknown = JSON.parse(window.localStorage.getItem(SHOW_LIBRARY_STORAGE_KEY) || '[]');
-    if (!Array.isArray(parsed)) return [];
-    return parsed.filter((item): item is ShowProjectSnapshot => {
-      if (!item || typeof item !== 'object') return false;
-      const candidate = item as Partial<ShowProjectSnapshot>;
-      return typeof candidate.id === 'string'
-        && typeof candidate.name === 'string'
-        && typeof candidate.savedAt === 'string'
-        && (candidate.status === 'template' || candidate.status === 'draft' || candidate.status === 'show')
-        && Boolean(candidate.show && isShowFile(candidate.show))
-        && Array.isArray(candidate.patch)
-        && candidate.patch.every(isPatchedFixture)
-        && Array.isArray(candidate.stageElements)
-        && candidate.stageElements.every(isStageElement)
-        && Array.isArray(candidate.looks)
-        && candidate.looks.every(isFixtureLook)
-        && Boolean(candidate.stageSettings);
-    }).slice(0, 40);
+    return Array.isArray(parsed) ? parsed.filter(isShowProjectSnapshot).slice(0, 40) : [];
   } catch {
     return [];
   }
@@ -544,8 +592,8 @@ function loadSettings(): AppSettings {
 
 function loadRemoteRelayConfig(): RemoteRelayConfig {
   const fallback: RemoteRelayConfig = {
-    url: import.meta.env.VITE_SUPABASE_URL || '',
-    publishableKey: import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY || '',
+    url: DEFAULT_SUPABASE_URL,
+    publishableKey: DEFAULT_SUPABASE_PUBLISHABLE_KEY,
     email: '',
     roomCode: '',
     password: '',
@@ -553,7 +601,12 @@ function loadRemoteRelayConfig(): RemoteRelayConfig {
   const value = loadJson<Partial<RemoteRelayConfig>>(REMOTE_RELAY_STORAGE_KEY, fallback, (item): item is Partial<RemoteRelayConfig> => (
     Boolean(item) && typeof item === 'object'
   ));
-  return { ...fallback, ...value, password: '' };
+  const loaded = { ...fallback, ...value, password: '' };
+  const migrated = migrateRemoteRelayProject(loaded);
+  if (migrated.migrated && typeof window !== 'undefined') {
+    window.localStorage.setItem(REMOTE_RELAY_STORAGE_KEY, JSON.stringify(migrated.config));
+  }
+  return migrated.config;
 }
 
 function loadStageElements(): StageElement[] {
@@ -642,7 +695,7 @@ export default function App() {
   const [programMode, setProgramMode] = useState<ProgramMode>(() => initialConsoleValue('program', ['stage', 'looks', 'fx', 'colors', 'media', 'presets'], 'stage'));
   const [programStageView, setProgramStageView] = useState<'visualizer' | 'plot'>('visualizer');
   const [visualizerToolsOpen, setVisualizerToolsOpen] = useState(false);
-  const [showMode, setShowMode] = useState<ShowMode>(() => initialConsoleValue('show', ['songs', 'creator', 'cues', 'timeline', 'tracks', 'library', 'sync', 'recordings'], 'cues'));
+  const [showMode, setShowMode] = useState<ShowMode>(() => initialConsoleValue('show', ['songs', 'creator', 'cues', 'timeline', 'tracks', 'media', 'library', 'sync', 'recordings'], 'cues'));
   const [liveView, setLiveView] = useState<LiveView>(() => initialConsoleValue('live', ['performance', 'overrides', 'groups', 'masters', 'shortcuts', 'settings'], 'performance'));
   useEffect(() => { try { for (const [key,value] of Object.entries({workspace,setup:setupView,program:programMode,show:showMode,live:liveView})) writeCompatibilityStorage('lumarig-navigation:' + key, value); } catch { /* optional preferences */ } }, [workspace,setupView,programMode,showMode,liveView]);
   const [fixtureSearch, setFixtureSearch] = useState('');
@@ -668,6 +721,13 @@ export default function App() {
   showFileRef.current = showFile;
   const saveSequence = useRef(0);
   const [showLibrary, setShowLibrary] = useState<ShowProjectSnapshot[]>(loadShowLibrary);
+  const [cloudFolders, setCloudFolders] = useState<CloudShowFolder[]>([]);
+  const [cloudShows, setCloudShows] = useState<CloudShowDocument[]>([]);
+  const [cloudFolderId, setCloudFolderId] = useState('');
+  const [cloudFolderName, setCloudFolderName] = useState('');
+  const [cloudStatus, setCloudStatus] = useState<'offline' | 'loading' | 'synced' | 'error'>('offline');
+  const [cloudError, setCloudError] = useState('');
+  const [cloudBusy, setCloudBusy] = useState(false);
   const [liveBank, setLiveBank] = useState<LiveBank>('fixtures');
   const [liveProgrammerOpen, setLiveProgrammerOpen] = useState(false);
   const [livePaletteFamily, setLivePaletteFamily] = useState<LivePaletteFamily>('groups');
@@ -679,12 +739,61 @@ export default function App() {
   const [artNetTelemetry, setArtNetTelemetry] = useState({ framesSent: 0, lastError: "" });
   const [directStatus, setDirectStatus] = useState<LumaVizDirectStatus>({ listening: false, port: 9460, clients: 0, framesSent: 0 });
   const [lumaVizPreview, setLumaVizPreview] = useState<{ dataUrl: string; timestamp: number; view?: string } | null>(null);
+  const transportEngineRef = useRef<TransportEngine | null>(null);
+  if (!transportEngineRef.current) transportEngineRef.current = new TransportEngine({ bpm: 120 });
+
+  const connectionManagerRef = useRef<ConnectionManager | null>(null);
+  if (!connectionManagerRef.current) {
+    const manager = new ConnectionManager();
+    manager.upsert({ id:'studio', kind:'studio', name:'LumaStudio', status:'off', capabilities:['transport','show-control','recording'] });
+    manager.upsert({ id:'midi', kind:'midi', name:'MIDI / DAW', status:'off', capabilities:['clock','transport','controls'] });
+    manager.upsert({ id:'ableton', kind:'ableton', name:'Ableton Live', status:'off', capabilities:['transport','tempo','song-position'] });
+    manager.upsert({ id:'lumalive', kind:'lumalive', name:'LumaLive', status:'off', capabilities:['transport','song-recall','performance'] });
+    manager.upsert({ id:'propresenter', kind:'propresenter', name:'ProPresenter', status:'off', capabilities:['cue-trigger','transport','media'] });
+    manager.upsert({ id:'tracks', kind:'media', name:'Local Tracks', status:'off', capabilities:['transport','audio','recording'] });
+    connectionManagerRef.current = manager;
+  }
+  const [sharedTransport, setSharedTransport] = useState(() => transportEngineRef.current!.snapshot());
+  const [connectionRecords, setConnectionRecords] = useState<ConnectionRecord[]>(() => connectionManagerRef.current!.snapshot());
+  const refreshConnectionRecords = () => setConnectionRecords(connectionManagerRef.current!.snapshot());
+  const [lumaLiveConnection, setLumaLiveConnection] = useState<LumaLiveConnection | null>(loadLumaLiveConnection);
+  const [lumaLiveEndpoint, setLumaLiveEndpoint] = useState<LumaLiveEndpoint | null>(null);
+  const [lumaLivePairCode, setLumaLivePairCode] = useState('');
+  const [lumaLiveState, setLumaLiveState] = useState<LumaLiveState | null>(null);
+  const [lumaLiveBusy, setLumaLiveBusy] = useState(false);
+  const [lumaLiveError, setLumaLiveError] = useState('');
+  const lumaLiveLastPositionRef = useRef(0);
+  const [proPresenterUrl, setProPresenterUrl] = useState(loadProPresenterUrl);
+  const [proPresenterStatus, setProPresenterStatus] = useState<ProPresenterStatus | null>(null);
+  const [proPresenterWatching, setProPresenterWatching] = useState(false);
+  const [proPresenterBusy, setProPresenterBusy] = useState(false);
+  const [proPresenterError, setProPresenterError] = useState('');
+  const proPresenterTransportObservationRef = useRef<ProPresenterTransportObservation | null>(null);
+
   const [studioBridgeStatus, setStudioBridgeStatus] = useState<StudioBridgeStatus>({ listening: false, port: 47777, connectedClients: 0 });
   useEffect(() => {
     const refresh = () => {
       void invoke<StudioBridgeStatus>('studio_bridge_status')
-        .then(setStudioBridgeStatus)
-        .catch((error) => setStudioBridgeStatus((current) => ({ ...current, lastError: String(error) })));
+        .then((status) => {
+          setStudioBridgeStatus(status);
+          connectionManagerRef.current!.upsert({
+            id:'studio',
+            kind:'studio',
+            name:'LumaStudio',
+            status: status.lastError ? 'error' : status.connectedClients > 0 ? 'connected' : status.listening ? 'connecting' : 'off',
+            capabilities:['transport','show-control','recording'],
+            lastSeenAt: status.connectedClients > 0 ? Date.now() : null,
+            lastError: status.lastError ?? '',
+            detail: status.connectedClients > 0 ? `${status.connectedClients} client${status.connectedClients === 1 ? '' : 's'} · ws://127.0.0.1:${status.port}` : `Listening on ${status.port}`
+          });
+          refreshConnectionRecords();
+        })
+        .catch((error) => {
+          const message=String(error);
+          setStudioBridgeStatus((current) => ({ ...current, lastError: message }));
+          connectionManagerRef.current!.fail('studio',message);
+          refreshConnectionRecords();
+        });
     };
     refresh();
     const timer = window.setInterval(refresh, STATUS_POLL_MS);
@@ -779,8 +888,20 @@ export default function App() {
   }, [patch, showFile.name, showLibrary, directStatus.clients, activeLocation]);
 
   const [remoteRelayConfig, setRemoteRelayConfig] = useState<RemoteRelayConfig>(loadRemoteRelayConfig);
+  const [cloudAccount, setCloudAccount] = useState<CloudAccount | null>(null);
+  const [cloudLoginEmail, setCloudLoginEmail] = useState(() => loadRemoteRelayConfig().email);
+  const [cloudLoginPassword, setCloudLoginPassword] = useState('');
+  const [cloudAccountBusy, setCloudAccountBusy] = useState(false);
+  const [cloudSongDocuments, setCloudSongDocuments] = useState<CloudSongDocument[]>([]);
+  const [cloudRecordingLabels, setCloudRecordingLabels] = useState<CloudRecordingLabel[]>([]);
+  const cloudLibraryUnsubscribeRef = useRef<(() => void) | null>(null);
   const [remoteRelayStatus, setRemoteRelayStatus] = useState<RemoteRelayStatus>('disconnected');
   const [remoteRelayError, setRemoteRelayError] = useState('');
+  const [pairingSession, setPairingSession] = useState<ControllerPairingSession | null>(null);
+  const [pairingNow, setPairingNow] = useState(Date.now());
+  const [pairingBusy, setPairingBusy] = useState(false);
+  const [pairedControllers, setPairedControllers] = useState<PairedController[]>([]);
+  const [pairedControllersError, setPairedControllersError] = useState('');
   const remoteRelayRef = useRef<RemoteRelay | null>(null);
   const remoteCommandHandlerRef = useRef<((envelope: RelayCommandEnvelope) => void) | null>(null);
   const remoteSnapshotHandlerRef = useRef<(() => void) | null>(null);
@@ -788,8 +909,76 @@ export default function App() {
   const remoteFlashLeaseRef = useRef<Map<string, number>>(new Map());
   const remoteEffectLeaseRef = useRef<Map<string, number>>(new Map());
   if (!remoteRelayRef.current) remoteRelayRef.current = new RemoteRelay();
+  const pairingSecondsRemaining = pairingSession
+    ? Math.max(0, Math.ceil((new Date(pairingSession.expiresAt).getTime() - pairingNow) / 1000))
+    : 0;
+  useEffect(() => {
+    if (!pairingSession) return;
+    setPairingNow(Date.now());
+    const timer = window.setInterval(() => setPairingNow(Date.now()), 1000);
+    const devicesTimer = window.setInterval(() => { void refreshPairedControllerList(); }, 3000);
+    return () => {
+      window.clearInterval(timer);
+      window.clearInterval(devicesTimer);
+    };
+  }, [pairingSession]);
+  useEffect(() => {
+    let active = true;
+    void currentCloudAccount(remoteRelayConfig).then(async (account) => {
+      if (!active || !account) return;
+      const nextConfig: RemoteRelayConfig = {
+        ...remoteRelayConfig,
+        email: account.email,
+        roomCode: remoteRelayConfig.roomCode || (crypto.randomUUID().replace(/-/g, '') + crypto.randomUUID().replace(/-/g, '')),
+        password: '',
+      };
+      await registerCloudDesktop(nextConfig).catch(() => {});
+      if (!active) return;
+      setCloudAccount(account);
+      setCloudLoginEmail(account.email);
+      setRemoteRelayConfig(nextConfig);
+    }).catch(() => {});
+    return () => { active = false; };
+  }, []);
+
+  useEffect(() => {
+    if (!cloudAccount) return;
+    let disposed = false;
+    void refreshCloudAccountLibrary();
+    void watchCloudLibrary(remoteRelayConfig, () => { if (!disposed) void refreshCloudAccountLibrary(); })
+      .then((unsubscribe) => {
+        if (disposed) unsubscribe();
+        else {
+          cloudLibraryUnsubscribeRef.current?.();
+          cloudLibraryUnsubscribeRef.current = unsubscribe;
+        }
+      })
+      .catch((error) => setCloudError(error instanceof Error ? error.message : String(error)));
+    return () => {
+      disposed = true;
+      cloudLibraryUnsubscribeRef.current?.();
+      cloudLibraryUnsubscribeRef.current = null;
+    };
+  }, [cloudAccount?.userId, remoteRelayConfig.url, remoteRelayConfig.publishableKey]);
+
+  useEffect(() => {
+    if (remoteRelayStatus !== 'connected') return;
+    void refreshCloudLibrary();
+    void refreshPairedControllerList();
+    void refreshCloudAccountLibrary();
+  }, [remoteRelayStatus]);
+  useEffect(() => {
+    if (!cloudAccount || remoteRelayStatus !== 'disconnected' || !remoteRelayConfig.roomCode) return;
+    void connectRemoteRelay();
+  }, [cloudAccount?.userId, remoteRelayConfig.roomCode]);
   const [message, setMessage] = useState('Control station ready. Connect DMX when you want physical output.');
-  const [appVersion, setAppVersion] = useState('0.2.7');
+  const [appVersion, setAppVersion] = useState(packageMeta.version);
+  useEffect(() => {
+    if (!cloudAccount) return;
+    void registerCloudDesktop(remoteRelayConfig, appVersion).catch(() => {});
+    const timer = window.setInterval(() => { void touchCloudDesktop(remoteRelayConfig).catch(() => {}); }, 60_000);
+    return () => window.clearInterval(timer);
+  }, [cloudAccount?.userId, remoteRelayConfig.url, remoteRelayConfig.publishableKey, appVersion]);
   const [updateStatus, setUpdateStatus] = useState<UpdateStatus>('idle');
   const [updateInfo, setUpdateInfo] = useState<UpdateMetadata | null>(null);
   const [updateError, setUpdateError] = useState('');
@@ -797,6 +986,11 @@ export default function App() {
   const [devices, setDevices] = useState<UdmxDeviceInfo[]>([]);
   const [selectedDevice, setSelectedDevice] = useState('');
   const [dmxStatus, setDmxStatus] = useState<DmxStatus>({ connected: false, blackout: false, usb_writes: 0, channels_sent: 0 });
+  // The runtime is the authoritative programmed blackout state. Hardware status
+  // is still polled separately, but a delayed USB status refresh must not make
+  // editor/Visualizer previews latch black.
+  const [runtimeBlackout, setRuntimeBlackout] = useState(false);
+  const blackoutActive = runtimeBlackout || dmxStatus.blackout;
   const dmxConnectedRef = useRef(false);
   const [busy, setBusy] = useState(false);
 
@@ -909,6 +1103,242 @@ export default function App() {
   const externalClockUiTicksRef = useRef(0);
   const externalLightingOffsetRef = useRef(0);
 
+  function applySharedTransport(update: TransportUpdate, now = performance.now()) {
+    const result = transportEngineRef.current!.apply(update, now);
+    if (!result.accepted) return result;
+    const state = result.state;
+    setSharedTransport(state);
+    externalSongPositionMsRef.current = state.positionMs;
+    externalTransportRunningRef.current = state.playing;
+    setExternalSongPositionMs(state.positionMs);
+    setExternalTransportRunning(state.playing);
+    if (update.bpm != null && !tempoLockedRef.current) {
+      if (update.source === 'midi') {
+        setMidiBpm(state.bpm);
+        midiBpmRef.current = state.bpm;
+        setTempoSource('midi');
+        tempoSourceRef.current = 'midi';
+      } else {
+        setEffectBpm(state.bpm);
+        effectBpmRef.current = state.bpm;
+      }
+    }
+    return result;
+  }
+
+  function releaseSharedTransport(source: TransportSource, positionMs = externalSongPositionMsRef.current) {
+    return applySharedTransport({
+      source,
+      playing:false,
+      positionMs,
+      release:true
+    });
+  }
+
+  async function detectLumaLive() {
+    setLumaLiveBusy(true);
+    setLumaLiveError('');
+    try {
+      const endpoint=await scanLumaLive();
+      setLumaLiveEndpoint(endpoint);
+      if(endpoint){
+        connectionManagerRef.current!.upsert({
+          id:'lumalive',kind:'lumalive',name:'LumaLive',status:lumaLiveConnection?'connected':'connecting',
+          capabilities:['transport','song-recall','performance'],lastSeenAt:Date.now(),
+          detail:`v${endpoint.version} · ${endpoint.baseUrl}`
+        });
+        refreshConnectionRecords();
+        setMessage(lumaLiveConnection?'LumaLive detected. Checking paired transport…':'LumaLive detected. Enter its six-digit pairing code.');
+      }else{
+        connectionManagerRef.current!.disconnect('lumalive','LumaLive not detected on this computer');
+        connectionManagerRef.current!.disconnect('ableton','Waiting for LumaLive');
+        refreshConnectionRecords();
+        setMessage('LumaLive was not found on this computer. Open LumaLive, then scan again.');
+      }
+    } catch(error) {
+      const message=error instanceof Error?error.message:String(error);
+      setLumaLiveError(message);
+      connectionManagerRef.current!.fail('lumalive',message);
+      refreshConnectionRecords();
+    } finally {
+      setLumaLiveBusy(false);
+    }
+  }
+
+  async function pairDetectedLumaLive() {
+    if(!lumaLiveEndpoint) return setLumaLiveError('Scan for LumaLive first.');
+    setLumaLiveBusy(true);
+    setLumaLiveError('');
+    try {
+      const paired=await pairLumaLive(
+        lumaLiveEndpoint.baseUrl,
+        lumaLivePairCode,
+        `LumaRig · ${desktopDeviceId().replace(/-/g,'').slice(-4).toUpperCase()}`
+      );
+      const connection={baseUrl:paired.baseUrl,token:paired.token,version:lumaLiveEndpoint.version};
+      saveLumaLiveConnection(connection);
+      setLumaLiveConnection(connection);
+      setLumaLivePairCode('');
+      connectionManagerRef.current!.upsert({
+        id:'lumalive',kind:'lumalive',name:'LumaLive',status:'connected',
+        capabilities:['transport','song-recall','performance'],lastSeenAt:Date.now(),
+        detail:`Paired · v${lumaLiveEndpoint.version}`
+      });
+      refreshConnectionRecords();
+      setMessage('LumaLive paired. Ableton-backed transport can now drive LumaRig.');
+    } catch(error) {
+      const message=error instanceof Error?error.message:String(error);
+      setLumaLiveError(message);
+      connectionManagerRef.current!.fail('lumalive',message);
+      refreshConnectionRecords();
+    } finally {
+      setLumaLiveBusy(false);
+    }
+  }
+
+  function forgetLumaLive() {
+    saveLumaLiveConnection(null);
+    setLumaLiveConnection(null);
+    setLumaLiveState(null);
+    setLumaLiveError('');
+    releaseSharedTransport('lumalive');
+    connectionManagerRef.current!.disconnect('lumalive','Pairing removed');
+    connectionManagerRef.current!.disconnect('ableton','LumaLive pairing removed');
+    refreshConnectionRecords();
+    setMessage('LumaLive pairing removed from this LumaRig computer.');
+  }
+
+  async function controlLumaLive(type:'start_playback'|'stop_playback') {
+    if(!lumaLiveConnection) return setLumaLiveError('Pair LumaLive first.');
+    try {
+      await sendLumaLiveCommand(lumaLiveConnection,type);
+      setMessage(type==='start_playback'?'LumaLive / Ableton playback started.':'LumaLive / Ableton playback stopped.');
+    } catch(error) {
+      const message=error instanceof Error?error.message:String(error);
+      setLumaLiveError(message);
+      connectionManagerRef.current!.fail('lumalive',message,true);
+      refreshConnectionRecords();
+    }
+  }
+
+  async function detectProPresenter() {
+    setProPresenterBusy(true);
+    setProPresenterError('');
+    try {
+      const clean=proPresenterUrl.trim().replace(/\/$/,'');
+      const status=await readProPresenterStatus(clean);
+      saveProPresenterUrl(clean);
+      setProPresenterUrl(clean);
+      setProPresenterStatus(status);
+      setProPresenterWatching(true);
+      const summary=proPresenterSummary(status);
+      connectionManagerRef.current!.upsert({
+        id:'propresenter',kind:'propresenter',name:'ProPresenter',status:'connected',
+        capabilities:['cue-trigger','transport','media'],lastSeenAt:Date.now(),lastError:'',
+        detail:summary.presentation || summary.current || clean
+      });
+      refreshConnectionRecords();
+      setMessage('ProPresenter API connected. Slide and presentation transport controls are available.');
+    } catch(error) {
+      const message=error instanceof Error?error.message:String(error);
+      setProPresenterError(message);
+      setProPresenterWatching(false);
+      setProPresenterStatus(null);
+      connectionManagerRef.current!.fail('propresenter',message);
+      refreshConnectionRecords();
+    } finally {
+      setProPresenterBusy(false);
+    }
+  }
+
+  function syncProPresenterTransport(status: ProPresenterStatus, forcedPlaying?: boolean) {
+    const positionMs = proPresenterTransportMs(status);
+    if (positionMs == null) return;
+
+    const observation = observeProPresenterTransport(
+      proPresenterTransportObservationRef.current,
+      positionMs,
+      Date.now()
+    );
+    proPresenterTransportObservationRef.current = observation;
+
+    if (forcedPlaying === true || observation.movingTicks >= 2) {
+      applySharedTransport({
+        source:'propresenter',
+        playing:true,
+        positionMs,
+        bpm:effectBpmRef.current,
+        claim:true
+      });
+      return;
+    }
+
+    if (
+      forcedPlaying === false
+      || (observation.stillTicks >= 2 && transportEngineRef.current!.snapshot().source === 'propresenter')
+    ) {
+      releaseSharedTransport('propresenter', positionMs);
+    }
+  }
+
+  async function controlProPresenter(operation:'next'|'previous'|'retrigger'|'play'|'pause'|'timeline-play'|'timeline-pause'|'timeline-rewind') {
+    setProPresenterError('');
+    try {
+      await sendProPresenterCommand(proPresenterUrl,operation);
+      const status=await readProPresenterStatus(proPresenterUrl);
+      setProPresenterStatus(status);
+      if(operation==='play'||operation==='timeline-play') syncProPresenterTransport(status,true);
+      else if(operation==='pause'||operation==='timeline-pause'||operation==='timeline-rewind') syncProPresenterTransport(status,false);
+      else syncProPresenterTransport(status);
+      const summary=proPresenterSummary(status);
+      connectionManagerRef.current!.heartbeat('propresenter',summary.presentation || summary.current || operation);
+      refreshConnectionRecords();
+      setMessage(`ProPresenter · ${operation.replace(/-/g,' ')}.`);
+    } catch(error) {
+      const message=error instanceof Error?error.message:String(error);
+      setProPresenterError(message);
+      connectionManagerRef.current!.fail('propresenter',message,true);
+      refreshConnectionRecords();
+    }
+  }
+
+  useEffect(() => {
+    if(!proPresenterWatching)return;
+    let cancelled=false;
+    const poll=async()=>{
+      try{
+        const status=await readProPresenterStatus(proPresenterUrl);
+        if(cancelled)return;
+        setProPresenterStatus(status);
+        syncProPresenterTransport(status);
+        const summary=proPresenterSummary(status);
+        connectionManagerRef.current!.upsert({
+          id:'propresenter',kind:'propresenter',name:'ProPresenter',status:'connected',
+          capabilities:['cue-trigger','transport','media'],lastSeenAt:Date.now(),lastError:'',
+          detail:summary.presentation || summary.current || proPresenterUrl
+        });
+        refreshConnectionRecords();
+      }catch(error){
+        if(cancelled)return;
+        const message=error instanceof Error?error.message:String(error);
+        setProPresenterError(message);
+        proPresenterTransportObservationRef.current=null;
+        if(transportEngineRef.current!.snapshot().source==='propresenter') releaseSharedTransport('propresenter');
+        connectionManagerRef.current!.fail('propresenter',message,true);
+        refreshConnectionRecords();
+      }
+    };
+    void poll();
+    const timer=window.setInterval(()=>void poll(),750);
+    return()=>{
+      cancelled=true;
+      window.clearInterval(timer);
+      proPresenterTransportObservationRef.current=null;
+      if(transportEngineRef.current!.snapshot().source==='propresenter') releaseSharedTransport('propresenter');
+    };
+  },[proPresenterWatching,proPresenterUrl]);
+
+
   const [newProfileId, setNewProfileId] = useState(FIXTURE_LIBRARY[0].id);
   const [newModeId, setNewModeId] = useState(FIXTURE_LIBRARY[0].modes[0].id);
   const [newFixtureName, setNewFixtureName] = useState('');
@@ -930,6 +1360,18 @@ export default function App() {
   });
   const [stageVideoInputs, setStageVideoInputs] = useState<StageVideoInputOption[]>([]);
   const [stageVideoInputError, setStageVideoInputError] = useState('');
+  const [stageVideoInputPermissionBlocked, setStageVideoInputPermissionBlocked] = useState(false);
+  const [showPreflightItems, setShowPreflightItems] = useState<ShowPreflightItem[]>([]);
+  const [showPreflightBusy, setShowPreflightBusy] = useState(false);
+  const [screenImageAssets, setScreenImageAssets] = useState<MediaAsset[]>([]);
+  useEffect(() => {
+    let active = true;
+    void readMediaLibrary().then((library) => {
+      if (!active) return;
+      setScreenImageAssets(library.assets.filter((asset) => asset.kind === 'image' && !asset.missing));
+    }).catch(() => {});
+    return () => { active = false; };
+  }, []);
   const [stageMonitorOpen,setStageMonitorOpen]=useState(false);
   const [midiMapOpen,setMidiMapOpen]=useState(false);
   const [timelineShowId,setTimelineShowId]=useState('');
@@ -999,6 +1441,65 @@ export default function App() {
   const activeRecordingPlayback = showFile.recordings?.find((recording) => recording.id === playingRecordingId) ?? null;
   const externalTrack = showFile.externalTrack ?? DEFAULT_EXTERNAL_TRACK_SYNC;
   const externalTrackRecording = showFile.recordings?.find((recording) => recording.id === externalTrack.recordingId) ?? null;
+  useEffect(() => {
+    if (!lumaLiveConnection) return;
+    let cancelled=false;
+    const poll=async()=>{
+      try{
+        const state=await readLumaLiveState(lumaLiveConnection);
+        if(cancelled)return;
+        const positionMs=lumaLivePositionMs(state);
+        const previousPosition=lumaLiveLastPositionRef.current;
+        const previousPlaying=externalTransportRunningRef.current;
+        lumaLiveLastPositionRef.current=positionMs;
+        setLumaLiveState(state);
+        connectionManagerRef.current!.upsert({
+          id:'lumalive',kind:'lumalive',name:'LumaLive',status:'connected',
+          capabilities:['transport','song-recall','performance'],lastSeenAt:Date.now(),lastError:'',
+          detail:[state.currentSongTitle,state.currentSectionName].filter(Boolean).join(' · ') || `v${lumaLiveConnection.version || 'connected'}`
+        });
+        connectionManagerRef.current!.upsert({
+          id:'ableton',kind:'ableton',name:'Ableton Live',status:state.bridgeConnected?'connected':'degraded',
+          capabilities:['transport','tempo','song-position'],lastSeenAt:state.bridgeConnected?Date.now():null,
+          lastError:state.bridgeConnected?'':'LumaLive is running but its Ableton adapter is offline.',
+          detail:state.bridgeConnected?`${state.tempo.toFixed(1)} BPM · ${state.playing?'Playing':'Stopped'}`:'Open Ableton with the Luma Live Max adapter'
+        });
+        refreshConnectionRecords();
+
+        const result=applySharedTransport({
+          source:'lumalive',
+          playing:state.playing,
+          positionMs,
+          bpm:state.tempo,
+          claim:state.playing,
+          release:!state.playing
+        });
+        if(!result.accepted)return;
+
+        if(externalTrack.armed && externalTrackRecording){
+          const lightingPositionMs=applyLightingOffset(positionMs,externalTrack.lightingOffsetMs);
+          const jumped=Math.abs(positionMs-previousPosition)>500;
+          const wrongTake=playingRecordingIdRef.current!==externalTrackRecording.id;
+          if(state.playing && (!previousPlaying || jumped || wrongTake)){
+            playShowRecording(externalTrackRecording,{external:true,positionMs:lightingPositionMs});
+          }else if(!state.playing && recordingPlaybackExternalRef.current){
+            stopRecordedShowPlayback(false);
+          }
+        }
+      }catch(error){
+        if(cancelled)return;
+        const message=error instanceof Error?error.message:String(error);
+        setLumaLiveError(message);
+        connectionManagerRef.current!.fail('lumalive',message,true);
+        connectionManagerRef.current!.disconnect('ableton','LumaLive state unavailable');
+        refreshConnectionRecords();
+      }
+    };
+    void poll();
+    const timer=window.setInterval(()=>void poll(),250);
+    return()=>{cancelled=true;window.clearInterval(timer);};
+  }, [lumaLiveConnection?.baseUrl,lumaLiveConnection?.token,externalTrack.armed,externalTrack.recordingId,externalTrack.lightingOffsetMs,externalTrackRecording?.id]);
+
   const selectedInfo = devices.find((device) => device.device_key === selectedDevice);
   const newProfile = findProfile(newProfileId) ?? FIXTURE_LIBRARY[0];
   const stageFixture = patch.find((fixture) => fixture.id === stageFixtureId) ?? patch[0];
@@ -1022,7 +1523,7 @@ export default function App() {
   const selectedStagePosition = selectedStageElement
     ? stageElementPosition(selectedStageElement, stageSettings.dimensions)
     : { x: 0, y: 0, z: 0 };
-  const stageSnapshot=useMemo(()=>({patch,output:outputUniverse,dimensions:stageSettings.dimensions,elements:stageElements,blackout:dmxStatus.blackout}),[patch,outputUniverse,stageSettings.dimensions,stageElements,dmxStatus.blackout]);
+  const stageSnapshot=useMemo(()=>({patch,output:outputUniverse,dimensions:stageSettings.dimensions,elements:stageElements,blackout:runtimeBlackout}),[patch,outputUniverse,stageSettings.dimensions,stageElements,runtimeBlackout]);
   useStagePublisher(stageSnapshot);
   const midiControls = useMemo(() => [...buildControlRegistry(patch),...FX_RECIPES.map(recipe=>({id:'recipe:'+recipe.id,label:recipe.name,group:'FX recipes',type:'button' as const,commandPath:'effect.start',supportsPressRelease:false}))], [patch]);
   const midiControlGroups = useMemo(() => {
@@ -1270,6 +1771,7 @@ export default function App() {
     setUniverse(result.baseFrame);
     outputUniverseRef.current = result.frame;
     setOutputUniverse(result.frame);
+    setRuntimeBlackout(runtimeRef.current?.snapshot.blackout ?? false);
     try { await outputRouterRef.current?.route(result.universe, result.frame); }
     catch (error) { setMessage(`Output update failed: ${String(error)}`); }
     directSequenceRef.current += 1;
@@ -1915,6 +2417,260 @@ export default function App() {
     if (activeCueId === id) setActiveCueId(null);
   }
 
+  function cloudProgramFromDocument(document: CloudSongDocument): SongProgram | null {
+    if (!isSongProgram(document.program)) return null;
+    let program = structuredClone(document.program);
+    const sourceSong = program.show.songs?.[0];
+    if (!sourceSong) return null;
+    if (sourceSong.name !== document.title) {
+      program.show = renameSong(program.show, sourceSong.id, document.title);
+    }
+    program.id = document.songId;
+    program.savedAt = document.updatedAt;
+    program.revision = Math.max(program.revision, document.revision);
+    program.show = {
+      ...program.show,
+      name: document.title,
+      songs: songsForShow(program.show).map((song, index) => index === 0 ? {
+        ...song,
+        libraryId: document.songId,
+        name: document.title,
+        bpm: document.bpm,
+        musicalKey: document.musicalKey,
+        artist: document.artist,
+        arrangement: document.arrangement,
+        notes: document.notes,
+      } : song),
+      timeline: program.show.timeline ? { ...program.show.timeline, bpm: document.bpm } : program.show.timeline,
+    };
+    return isSongProgram(program) ? program : null;
+  }
+
+  async function refreshCloudAccountLibrary() {
+    if (!cloudAccount) return;
+    try {
+      const [songs, labels] = await Promise.all([
+        fetchCloudSongLibrary(remoteRelayConfig),
+        fetchCloudRecordingLabels(remoteRelayConfig),
+      ]);
+      setCloudSongDocuments(songs);
+      setCloudRecordingLabels(labels);
+      for (const document of songs) {
+        const program = cloudProgramFromDocument(document);
+        if (!program) continue;
+        const saved = await upsertSongProgram(program);
+        setSongLibrary(saved.programs);
+      }
+      setShowFile((current) => {
+        let nextShow = current;
+        for (const document of songs) {
+          const matching = songsForShow(nextShow).find((song) => (song.libraryId || song.id) === document.songId);
+          if (!matching) continue;
+          if (matching.name !== document.title) {
+            try { nextShow = renameSong(nextShow, matching.id, document.title); } catch { /* keep current title if a Show name collision exists */ }
+          }
+          nextShow = {
+            ...nextShow,
+            songs: songsForShow(nextShow).map((song) => (song.libraryId || song.id) === document.songId ? {
+              ...song,
+              bpm: document.bpm,
+              musicalKey: document.musicalKey,
+              artist: document.artist,
+              arrangement: document.arrangement,
+              notes: document.notes,
+            } : song),
+            timelineShows: nextShow.timelineShows?.map((timeline) => timeline.name === document.title
+              ? { ...timeline, timeline: { ...timeline.timeline, bpm: document.bpm } }
+              : timeline),
+          };
+        }
+        return nextShow;
+      });
+      if (labels.length) {
+        const names = new Map(labels.map((item) => [item.takeId, item.label]));
+        setShowFile((current) => ({
+          ...current,
+          recordings: current.recordings?.map((recording) => names.has(recording.id) ? { ...recording, name: names.get(recording.id)! } : recording),
+        }));
+      }
+    } catch (error) {
+      setCloudError(error instanceof Error ? error.message : String(error));
+    }
+  }
+
+  async function syncSongProgramToCloud(program: SongProgram) {
+    if (!cloudAccount) return;
+    const song = program.show.songs?.[0];
+    if (!song) return;
+    const known = cloudSongDocuments.find((item) => item.songId === program.id);
+    const result = await saveCloudSong(remoteRelayConfig, {
+      songId: program.id,
+      title: song.name,
+      artist: song.artist || '',
+      bpm: song.bpm,
+      musicalKey: song.musicalKey || '',
+      arrangement: song.arrangement || (program.show.creatorSections ?? []).map((section) => section.name),
+      notes: song.notes || '',
+      program,
+      expectedRevision: known?.revision ?? 0,
+      deviceId: desktopDeviceId(),
+    });
+    if (result.conflict) {
+      await refreshCloudAccountLibrary();
+      throw new Error('This Song changed in the online library. LumaRig pulled the latest cloud version instead of overwriting it.');
+    }
+    await refreshCloudAccountLibrary();
+  }
+
+  async function signInLumaCloud() {
+    if (cloudAccountBusy) return;
+    setCloudAccountBusy(true);
+    setCloudError('');
+    try {
+      const account = await signInCloudAccount(remoteRelayConfig, cloudLoginEmail, cloudLoginPassword);
+      const roomCode = remoteRelayConfig.roomCode || (crypto.randomUUID().replace(/-/g, '') + crypto.randomUUID().replace(/-/g, ''));
+      const nextConfig: RemoteRelayConfig = { ...remoteRelayConfig, email: account.email, password: '', roomCode };
+      await registerCloudDesktop(nextConfig, appVersion);
+      setCloudAccount(account);
+      setCloudLoginEmail(account.email);
+      setCloudLoginPassword('');
+      setRemoteRelayConfig(nextConfig);
+      setMessage('LumaRig Cloud signed in. Your library and controller pairing are available on this computer.');
+    } catch (error) {
+      setCloudError(error instanceof Error ? error.message : String(error));
+    } finally {
+      setCloudAccountBusy(false);
+    }
+  }
+
+  async function signOutLumaCloud() {
+    setCloudAccountBusy(true);
+    try {
+      await disconnectRemoteRelay();
+      await signOutCloudAccount(remoteRelayConfig);
+      cloudLibraryUnsubscribeRef.current?.();
+      cloudLibraryUnsubscribeRef.current = null;
+      setCloudAccount(null);
+      setCloudSongDocuments([]);
+      setCloudRecordingLabels([]);
+      setRemoteRelayConfig((current) => ({ ...current, email: '', password: '' }));
+      setMessage('Signed out of LumaRig Cloud. Local Shows, Songs, and DMX continue to work.');
+    } catch (error) {
+      setCloudError(error instanceof Error ? error.message : String(error));
+    } finally {
+      setCloudAccountBusy(false);
+    }
+  }
+  async function refreshCloudLibrary() {
+    setCloudStatus('loading');
+    setCloudError('');
+    try {
+      const library = await fetchCloudShowLibrary(remoteRelayConfig);
+      setCloudFolders(library.folders);
+      setCloudShows(library.shows);
+      setCloudFolderId((current) => current && !library.folders.some((folder) => folder.id === current) ? '' : current);
+      setCloudStatus('synced');
+    } catch (error) {
+      setCloudStatus('error');
+      setCloudError(error instanceof Error ? error.message : String(error));
+    }
+  }
+
+  async function createCloudFolderFromInput() {
+    if (!cloudFolderName.trim() || cloudBusy) return;
+    setCloudBusy(true);
+    setCloudError('');
+    try {
+      const folder = await createCloudShowFolder(remoteRelayConfig, cloudFolderName.trim());
+      setCloudFolderName('');
+      setCloudFolders((current) => [...current, folder].sort((a, b) => a.name.localeCompare(b.name)));
+      setCloudFolderId(folder.id);
+      setCloudStatus('synced');
+    } catch (error) {
+      setCloudStatus('error');
+      setCloudError(error instanceof Error ? error.message : String(error));
+    } finally {
+      setCloudBusy(false);
+    }
+  }
+
+  async function syncShowSnapshotToCloud(snapshot: ShowProjectSnapshot) {
+    const known = cloudShows.find((item) => item.showId === snapshot.id);
+    const folderId = cloudFolderId || snapshot.cloudFolderId || null;
+    const media = songsForShow(snapshot.show)
+      .filter((song): song is SongRecord & { mediaId: string } => Boolean(song.mediaId))
+      .filter((song, index, list) => list.findIndex((candidate) => candidate.mediaId === song.mediaId) === index);
+    for (let index = 0; index < media.length; index += 1) {
+      const song = media[index];
+      const blob = await readSongMedia(song.mediaId);
+      if (!blob) throw new Error(`Media for "${song.name}" is missing on this computer. Reattach it before cloud sync.`);
+      setMessage(`Cloud syncing media ${index + 1}/${media.length} · ${song.mediaName || song.name}`);
+      await uploadCloudShowMedia(remoteRelayConfig, snapshot.id, song.mediaId, blob);
+    }
+    const result = await saveCloudShow(remoteRelayConfig, {
+      showId: snapshot.id,
+      name: snapshot.name,
+      status: snapshot.status,
+      snapshot: { ...snapshot, cloudFolderId: folderId },
+      folderId,
+      expectedRevision: known?.revision ?? snapshot.cloudRevision ?? 0,
+      deviceId: desktopDeviceId()
+    });
+    if (result.conflict) {
+      await refreshCloudLibrary();
+      throw new Error(`Cloud copy changed on another computer (R${result.revision}). Local save is safe. Load the cloud copy or save again after reviewing it.`);
+    }
+
+    const clouded: ShowProjectSnapshot = {
+      ...snapshot,
+      cloudRevision: result.revision,
+      cloudFolderId: folderId
+    };
+    const projects = [clouded, ...showLibrary.filter((item) => item.id !== clouded.id)].slice(0, 40);
+    await saveAppProgramState(showFileRef.current, { workspace: { ...currentWorkspaceCheckpoint(), projects } });
+    setShowLibrary(projects);
+    try { writeCompatibilityStorage(SHOW_LIBRARY_STORAGE_KEY, JSON.stringify(projects)); } catch { /* IndexedDB is authoritative. */ }
+    await refreshCloudLibrary();
+    return result;
+  }
+
+  async function importCloudShow(document: CloudShowDocument) {
+    if (!isShowProjectSnapshot(document.snapshot)) {
+      setCloudError(`${document.name} has an invalid cloud snapshot and was not loaded.`);
+      return;
+    }
+    const snapshot: ShowProjectSnapshot = {
+      ...structuredClone(document.snapshot),
+      savedAt: document.updatedAt,
+      cloudRevision: document.revision,
+      cloudFolderId: document.folderId,
+      lastEditor: document.lastEditor === 'lumaviz' ? 'lumaviz' : 'lumarig'
+    };
+    const projects = [snapshot, ...showLibrary.filter((item) => item.id !== snapshot.id)].slice(0, 40);
+    try {
+      const media = songsForShow(snapshot.show)
+        .filter((song): song is SongRecord & { mediaId: string } => Boolean(song.mediaId))
+        .filter((song, index, list) => list.findIndex((candidate) => candidate.mediaId === song.mediaId) === index);
+      for (let index = 0; index < media.length; index += 1) {
+        const song = media[index];
+        setMessage(`Downloading cloud media ${index + 1}/${media.length} · ${song.mediaName || song.name}`);
+        const blob = await downloadCloudShowMedia(remoteRelayConfig, snapshot.id, song.mediaId);
+        const file = blob instanceof File
+          ? blob
+          : new File([blob], song.mediaName || `${song.mediaId}.media`, { type: blob.type || 'application/octet-stream' });
+        await storeSongMedia(song.mediaId, file);
+      }
+      await saveAppProgramState(showFileRef.current, { workspace: { ...currentWorkspaceCheckpoint(), projects } });
+      setShowLibrary(projects);
+      try { writeCompatibilityStorage(SHOW_LIBRARY_STORAGE_KEY, JSON.stringify(projects)); } catch { /* IndexedDB is authoritative. */ }
+      setCloudFolderId(document.folderId || '');
+      await loadShowProject(snapshot);
+      setMessage(`${document.name} downloaded from Cloud Shows and stored locally.`);
+    } catch (error) {
+      setCloudError(error instanceof Error ? error.message : String(error));
+    }
+  }
+
   async function saveShowProject(status: 'template' | 'draft' | 'show' = 'show') {
     if (!libraryReady) { setMessage('Song Library is not ready to save.'); return; }
     const cleanName = showFile.name.trim() || 'Untitled Show';
@@ -1927,6 +2683,8 @@ export default function App() {
       templateId: status === 'template' ? undefined : showLibrary.find((item) => item.status === 'template')?.id,
       revision: sharedShowRevisionRef.current,
       lastEditor: 'lumarig',
+      cloudRevision: existing?.cloudRevision,
+      cloudFolderId: existing?.cloudFolderId,
       show: sanitizeShow({ ...showFile, name: cleanName }),
       patch: patch.map((fixture, index) => migratePatchedFixture(fixture, index, patch.length, stageSettings.dimensions)),
       stageElements: stageElements.map((element) => migrateStageElement(element, stageSettings.dimensions)),
@@ -1937,9 +2695,33 @@ export default function App() {
     try {
       await saveAppProgramState(showFileRef.current, { workspace: { ...currentWorkspaceCheckpoint(), projects: nextLibrary } });
       try { writeCompatibilityStorage(SHOW_LIBRARY_STORAGE_KEY, JSON.stringify(nextLibrary)); } catch { /* Authoritative checkpoint already committed. */ }
-    } catch (error) { setSaveStatus('Save failed'); setMessage(`Show Save failed: ${String(error)}`); return; }
+    } catch (error) {
+      setSaveStatus('Save failed');
+      setMessage(`Show Save failed: ${String(error)}`);
+      return;
+    }
+
     setShowLibrary(nextLibrary);
-    setMessage(`${cleanName} saved to the show library as ${status === 'template' ? 'a template' : status === 'draft' ? 'a draft' : 'a service show'}.`);
+    const localMessage = `${cleanName} saved locally as ${status === 'template' ? 'a template' : status === 'draft' ? 'a draft' : 'a service show'}.`;
+    if (remoteRelayStatus !== 'connected') {
+      setMessage(`${localMessage} Cloud sync is offline.`);
+      return;
+    }
+
+    setCloudBusy(true);
+    try {
+      const result = await syncShowSnapshotToCloud(snapshot);
+      setCloudStatus('synced');
+      setCloudError('');
+      setMessage(`${localMessage} Cloud Shows synced at R${result.revision}.`);
+    } catch (error) {
+      const detail = error instanceof Error ? error.message : String(error);
+      setCloudStatus('error');
+      setCloudError(detail);
+      setMessage(`${localMessage} Cloud sync failed: ${detail}`);
+    } finally {
+      setCloudBusy(false);
+    }
   }
 
   async function checkpointShowChange(next: ShowFile, workspace = currentWorkspaceCheckpoint()): Promise<boolean> {
@@ -1975,6 +2757,7 @@ export default function App() {
     setStageElements(snapshot.stageElements.map((element) => migrateStageElement(element, snapshot.stageSettings.dimensions)));
     setStageSettings(snapshot.stageSettings);
     setSavedLooks(snapshot.looks);
+    setCloudFolderId(snapshot.cloudFolderId || '');
     setActiveCueId(null);
     setSelectedStageElementId(null);
     setMessage(`${snapshot.name} loaded from the show library.`);
@@ -1996,11 +2779,18 @@ export default function App() {
     setMessage('New Show started. Your songs are saved in Song Library and the previous Show is available in Recovery.');
   }
 
-  function deleteShowProject(id: string) {
+  async function deleteShowProject(id: string) {
     const item = showLibrary.find((entry) => entry.id === id);
-    if (!item) return;
-    setShowLibrary((current) => current.filter((entry) => entry.id !== id));
-    setMessage(`${item.name} removed from the show library.`);
+    if (!item || !libraryReady) return;
+    const projects = showLibrary.filter((entry) => entry.id !== id);
+    try {
+      await saveAppProgramState(showFileRef.current, { workspace: { ...currentWorkspaceCheckpoint(), projects } });
+      setShowLibrary(projects);
+      try { writeCompatibilityStorage(SHOW_LIBRARY_STORAGE_KEY, JSON.stringify(projects)); } catch { /* IndexedDB is authoritative. */ }
+      setMessage(`${item.name} removed from the local show library. Cloud copy is unchanged.`);
+    } catch (error) {
+      setMessage(`Could not remove ${item.name}: ${String(error)}`);
+    }
   }
 
   async function loadShowAudioFile(file: File) {
@@ -2032,6 +2822,9 @@ export default function App() {
     showTrackAudioRef.current?.pause();
     if(showTrackUrlRef.current) URL.revokeObjectURL(showTrackUrlRef.current);
     showTrackUrlRef.current=''; setShowTrackUrl(''); setShowTrackName('');setShowTrackDurationMs(0);setShowTrackPositionMs(0);stopTimeline();
+    releaseSharedTransport('tracks',0);
+    connectionManagerRef.current!.disconnect('tracks','No local track loaded');
+    refreshConnectionRecords();
   }
 
   function captureShowRecordingFrame(timeMs: number) {
@@ -2089,6 +2882,15 @@ export default function App() {
       return {...next,timeline:appendTimelineCapture(next.timeline??EMPTY_TIMELINE,clip)};
     });
     if(clip){activeTimelineClipRef.current=clip.id;setActiveTimelineClipId(clip.id);stopEffect(false);}
+    if (cloudAccount) {
+      const song = songsForShow(showFileRef.current).find((item) => item.id === activeSongId);
+      void saveCloudRecordingLabel(remoteRelayConfig, {
+        takeId: recording.id,
+        songId: song ? programId(showFileRef.current, song) : null,
+        showId: showFileRef.current.name,
+        label: recording.name,
+      }).then(() => refreshCloudAccountLibrary()).catch((error) => setCloudError(error instanceof Error ? error.message : String(error)));
+    }
 
     setMessage(`${recording.name}${origin?' recorded directly into Timeline':''} saved with ${recording.frames.length.toLocaleString()} lighting changes.`);
   }
@@ -2113,7 +2915,7 @@ export default function App() {
       const origin=timelineRecordingOrigin.current;
       audio.currentTime=(origin?.sourceStartMs??0)/1000;
       setShowTrackPositionMs(origin?.sourceStartMs??0);
-      if(!origin || (!origin.leadInMs && origin.sourceStartMs<origin.sourceEndMs)){if(origin)origin.audioStarted=true;void audio.play().catch(() => setMessage('Lighting is recording, but macOS did not start the track. Press Stop, then try Record again.'));}
+      if(!origin || (!origin.leadInMs && origin.sourceStartMs<origin.sourceEndMs)){if(origin)origin.audioStarted=true;void audio.play().catch(() => setMessage('Lighting is recording, but the desktop audio engine did not start the track. Press Stop, then try Record again.'));}
     }
     const tick = (now: number) => {
       if (!showRecordingActiveRef.current) return;
@@ -2192,7 +2994,7 @@ export default function App() {
     const hasMatchingTrack = !external && Boolean(showTrackUrlRef.current && showTrackName === recording.trackName && audio);
     if (hasMatchingTrack && audio) {
       audio.currentTime = startPosition / 1000;
-      void audio.play().catch(() => setMessage('The lighting take is playing, but macOS did not start the audio track.'));
+      void audio.play().catch(() => setMessage('The lighting take is playing, but the desktop audio engine did not start the audio track.'));
     }
     const tick = (now: number) => {
       if (playingRecordingIdRef.current !== recording.id) return;
@@ -2230,12 +3032,16 @@ export default function App() {
     if(showRecordingActiveRef.current){if(timelineRecordingOrigin.current){timelinePlayingRef.current=false;setTimelinePlaying(false);updateTimelineVideoFrame(timelinePositionRef.current*timelineRecordingOrigin.current.barMs);}recordingPausedRef.current=true;recordingPausedAt.current=performance.now();setRecordingPaused(true);showTrackAudioRef.current?.pause();return;}
     if(playingRecordingIdRef.current){pausedTakeRef.current={id:playingRecordingIdRef.current,position:showTrackPositionMs};stopRecordedShowPlayback(false);}
     showTrackAudioRef.current?.pause();
+    releaseSharedTransport('tracks',showTrackPositionMs);
   }
   function playRecorderTransport() {
     if(showRecordingActiveRef.current){
       if(recordingPausedRef.current){if(timelineRecordingOrigin.current){timelinePlayingRef.current=true;setTimelinePlaying(true);}showRecordingStartedRef.current+=performance.now()-recordingPausedAt.current;recordingPausedRef.current=false;setRecordingPaused(false);if(showTrackUrlRef.current)void showTrackAudioRef.current?.play().catch(error=>setMessage(String(error)));}
       return;
     }
+    const position=pausedTakeRef.current?.position ?? showTrackPositionMs;
+    const authority=applySharedTransport({source:'tracks',playing:true,positionMs:position,bpm:masterTempoBpm,claim:true});
+    if(!authority.accepted){setMessage(`Tracks playback is waiting for ${authority.state.source} transport authority.`);return;}
     const take=showFile.recordings?.find(t=>t.id===selectedRecordingId);
     if(take){playShowRecording(take,{positionMs:pausedTakeRef.current?.id===take.id?pausedTakeRef.current.position:showTrackPositionMs});pausedTakeRef.current=null;}
     else if(showTrackUrlRef.current)void showTrackAudioRef.current?.play().catch(error=>setMessage(String(error)));
@@ -2244,18 +3050,27 @@ export default function App() {
     if(showRecordingActiveRef.current)return;
     const take=showFile.recordings?.find(t=>t.id===selectedRecordingId);
     const next=Math.max(0,Math.min(take?.durationMs ?? showTrackDurationMs,position));
-    const wasPlaying=Boolean(playingRecordingIdRef.current);
+    const wasPlaying=Boolean(playingRecordingIdRef.current) || Boolean(showTrackAudioRef.current && !showTrackAudioRef.current.paused);
+    const authority=applySharedTransport({source:'tracks',positionMs:next,bpm:masterTempoBpm,claim:wasPlaying});
+    if(!authority.accepted){setMessage(`Track seek ignored while ${authority.state.source} owns transport.`);return;}
     stopRecordedShowPlayback(false);showTrackAudioRef.current?.pause();
     if(showTrackAudioRef.current && showTrackAudioRef.current.readyState>=1)showTrackAudioRef.current.currentTime=next/1000;
     setShowTrackPositionMs(next);
     timelinePositionRef.current=next*masterTempoBpm/60000/editingTimeline.beatsPerBar;setTimelinePositionBar(timelinePositionRef.current);
     if(take){prepareRecordingAt(take,next);pausedTakeRef.current={id:take.id,position:next};if(wasPlaying)playShowRecording(take,{positionMs:next});}
+    if(!wasPlaying) releaseSharedTransport('tracks',next);
   }
   function toggleShowTrackPreview() {
     const audio = showTrackAudioRef.current;
     if (!audio || !showTrackUrlRef.current || showRecordingActive || playingRecordingId) return;
-    if (audio.paused) void audio.play();
-    else audio.pause();
+    if (audio.paused) {
+      const result=applySharedTransport({source:'tracks',playing:true,positionMs:audio.currentTime*1000,bpm:masterTempoBpm,claim:true});
+      if(!result.accepted){setMessage(`Track preview is waiting for ${result.state.source} transport authority.`);return;}
+      void audio.play().catch(error=>setMessage(String(error)));
+    } else {
+      audio.pause();
+      releaseSharedTransport('tracks',audio.currentTime*1000);
+    }
   }
 
   function deleteShowRecording(recording: ShowRecording) {
@@ -2412,8 +3227,10 @@ export default function App() {
   }
 
   async function toggleBlackout() {
-    if (dmxStatus.blackout && settings.confirmBlackoutRelease && !window.confirm('Release blackout and restore programmed output?')) return;
-    await setBlackoutState(!dmxStatus.blackout, 'ui');
+    // If runtime and native USB status ever disagree, a press resolves toward
+    // RELEASE instead of being able to accidentally latch a second blackout.
+    if (blackoutActive && settings.confirmBlackoutRelease && !window.confirm('Release blackout and restore programmed output?')) return;
+    await setBlackoutState(!blackoutActive, 'ui');
   }
 
   async function dispatchStudioBridgeCommand(id: string, command: StudioBridgeCommand) {
@@ -2512,11 +3329,15 @@ export default function App() {
       stopRecordingPlayback: () => stopRecordedShowPlayback(false),
       setBlackout: (enabled) => setBlackoutState(enabled, 'remote'),
       syncTransport: (playing, positionMs, bpm) => {
-        setExternalSongPositionMs(positionMs);
-        externalSongPositionMsRef.current = positionMs;
-        setExternalTransportRunning(playing);
-        externalTransportRunningRef.current = playing;
-        if (!tempoLockedRef.current) { setEffectBpm(bpm); effectBpmRef.current = bpm; }
+        const result=applySharedTransport({
+          source:'studio',
+          playing,
+          positionMs,
+          bpm,
+          claim:playing,
+          release:!playing
+        });
+        if(!result.accepted) throw new Error(`Transport authority is currently held by ${result.state.source}.`);
       }
     });
     return dispatcher.dispatch(id, command);
@@ -2839,19 +3660,80 @@ export default function App() {
   }
 
   async function connectMidi() {
+    connectionManagerRef.current!.upsert({
+      id:'midi',kind:'midi',name:'MIDI / DAW',status:'connecting',
+      capabilities:['clock','transport','controls'],detail:'Opening selected MIDI input'
+    });
+    refreshConnectionRecords();
     try {
       await invoke('connect_midi', { inputId: Number(selectedMidiInput) });
-      setMidiStatus(await invoke<MidiStatus>('midi_status'));
+      const status=await invoke<MidiStatus>('midi_status');
+      setMidiStatus(status);
+      connectionManagerRef.current!.upsert({
+        id:'midi',kind:'midi',name:status.input_name || 'MIDI / DAW',status:'connected',
+        capabilities:['clock','transport','controls'],lastSeenAt:Date.now(),detail:status.last_event || 'Waiting for MIDI'
+      });
+      refreshConnectionRecords();
       setMessage('MIDI connected. Notes, CC, clock, and transport are being monitored.');
-    } catch (error) { setMessage(`MIDI connection failed: ${String(error)}`); }
+    } catch (error) {
+      connectionManagerRef.current!.fail('midi',String(error));
+      refreshConnectionRecords();
+      setMessage(`MIDI connection failed: ${String(error)}`);
+    }
   }
 
   async function disconnectMidi() {
     try {
       await invoke('disconnect_midi');
-      setMidiStatus(await invoke<MidiStatus>('midi_status'));
+      const status=await invoke<MidiStatus>('midi_status');
+      setMidiStatus(status);
+      connectionManagerRef.current!.disconnect('midi','Disconnected by operator');
+      refreshConnectionRecords();
+      releaseSharedTransport('midi');
       setMessage('MIDI disconnected.');
-    } catch (error) { setMessage(`MIDI disconnect failed: ${String(error)}`); }
+    } catch (error) {
+      connectionManagerRef.current!.fail('midi',String(error));
+      refreshConnectionRecords();
+      setMessage(`MIDI disconnect failed: ${String(error)}`);
+    }
+  }
+
+  async function refreshPairedControllerList() {
+    setPairedControllersError('');
+    try {
+      setPairedControllers(await listPairedControllers(remoteRelayConfig));
+    } catch (error) {
+      setPairedControllersError(error instanceof Error ? error.message : String(error));
+    }
+  }
+
+  async function startControllerPairing() {
+    if (remoteRelayStatus !== 'connected') {
+      setRemoteRelayError('Connect Secure Cloud Relay before pairing a controller.');
+      return;
+    }
+    setPairingBusy(true);
+    setRemoteRelayError('');
+    try {
+      const session = await createControllerPairing(remoteRelayConfig, REMOTE_APP_URL);
+      setPairingSession(session);
+      setPairingNow(Date.now());
+      setMessage('Controller pairing opened for two minutes. Scan the QR or enter the six-digit code on the iPad controller.');
+    } catch (error) {
+      setRemoteRelayError(error instanceof Error ? error.message : String(error));
+    } finally {
+      setPairingBusy(false);
+    }
+  }
+
+  async function revokeControllerPairing(deviceId: string) {
+    try {
+      await revokePairedController(remoteRelayConfig, deviceId);
+      await refreshPairedControllerList();
+      setMessage('Controller access revoked. Its next relay authorization will be denied.');
+    } catch (error) {
+      setPairedControllersError(error instanceof Error ? error.message : String(error));
+    }
   }
 
   async function connectRemoteRelay() {
@@ -2866,7 +3748,9 @@ export default function App() {
         },
         () => remoteSnapshotHandlerRef.current?.()
       );
-      setMessage('Remote relay connected. Paired web controllers now use the same ShowRuntime command path.');
+      setMessage('Remote relay connected. Cloud Shows and paired controllers are available.');
+      void refreshCloudLibrary();
+      void refreshPairedControllerList();
     } catch (error) {
       setRemoteRelayStatus('error');
       setRemoteRelayError(String(error));
@@ -2879,7 +3763,9 @@ export default function App() {
     clearAllRemoteFlashLeases(true);
     await remoteRelayRef.current?.disconnect();
     setRemoteRelayStatus('disconnected');
-    setMessage('Remote relay disconnected. Local lighting output continues unchanged.');
+    setPairingSession(null);
+    setCloudStatus('offline');
+    setMessage('Remote relay disconnected. Local lighting output and local Show saves continue unchanged.');
   }
 
   function beginMidiAssignment(target = newMidiTarget) {
@@ -2987,50 +3873,64 @@ export default function App() {
       }
       if (externalTrack.armed && externalTransportRunningRef.current) {
         const transportBpm = midiBpmRef.current ?? externalTrack.bpm;
-        externalSongPositionMsRef.current += 60000 / Math.max(20, transportBpm) / 24;
-        externalClockUiTicksRef.current += 1;
-        if (externalClockUiTicksRef.current % 6 === 0) {
-          setExternalSongPositionMs(externalSongPositionMsRef.current);
+        const result=transportEngineRef.current!.advance('midi',60000/Math.max(20,transportBpm)/24,transportBpm,now);
+        if(result.accepted){
+          externalSongPositionMsRef.current=result.state.positionMs;
+          externalClockUiTicksRef.current += 1;
+          if (externalClockUiTicksRef.current % 6 === 0) {
+            setExternalSongPositionMs(result.state.positionMs);
+            setSharedTransport(result.state);
+          }
         }
       }
       return;
     }
     if (event.kind === 'song_position' && externalTrack.armed) {
       const positionMs = midiSongPositionToMs(event.song_position ?? 0, midiBpmRef.current ?? externalTrack.bpm);
-      const lightingPositionMs = applyLightingOffset(positionMs, externalTrack.lightingOffsetMs);
-      externalSongPositionMsRef.current = positionMs;
-      setExternalSongPositionMs(positionMs);
+      const result=applySharedTransport({
+        source:'midi',
+        positionMs,
+        bpm:midiBpmRef.current ?? externalTrack.bpm,
+        claim:externalTransportRunningRef.current
+      });
+      if(!result.accepted)return;
+      const lightingPositionMs = applyLightingOffset(result.state.positionMs, externalTrack.lightingOffsetMs);
       setShowTrackPositionMs(lightingPositionMs);
-      if (externalTransportRunningRef.current && externalTrackRecording) {
+      if (result.state.playing && externalTrackRecording) {
         playShowRecording(externalTrackRecording, { external: true, positionMs: lightingPositionMs });
       }
-      setMessage(`External song position: ${formatShowTime(positionMs)}.`);
+      setMessage(`External song position: ${formatShowTime(result.state.positionMs)}.`);
       return;
     }
     if ((event.kind === 'start' || event.kind === 'continue') && externalTrack.armed) {
       const dawPositionMs = event.kind === 'start' ? 0 : externalSongPositionMsRef.current;
-      const startAt = applyLightingOffset(dawPositionMs, externalTrack.lightingOffsetMs);
       if (event.kind === 'start') {
-        externalSongPositionMsRef.current = 0;
-        setExternalSongPositionMs(0);
         midiClockTimesRef.current = [];
         midiBpmRef.current = null;
         setMidiBpm(null);
       }
+      const result=applySharedTransport({
+        source:'midi',
+        playing:true,
+        positionMs:dawPositionMs,
+        bpm:midiBpmRef.current ?? externalTrack.bpm,
+        claim:true
+      });
+      if(!result.accepted){
+        setMessage(`MIDI transport ignored while ${result.state.source} owns transport.`);
+        return;
+      }
       externalClockUiTicksRef.current = 0;
-      externalTransportRunningRef.current = true;
-      setExternalTransportRunning(true);
-      if (!tempoLockedRef.current) { setTempoSource('midi'); tempoSourceRef.current = 'midi'; }
+      const startAt = applyLightingOffset(result.state.positionMs, externalTrack.lightingOffsetMs);
       if (externalTrackRecording) playShowRecording(externalTrackRecording, { external: true, positionMs: startAt });
       else setMessage('External transport started, but no recorded lighting take is assigned.');
       return;
     }
     if (event.kind === 'stop' && externalTrack.armed) {
-      externalTransportRunningRef.current = false;
-      setExternalTransportRunning(false);
-      setExternalSongPositionMs(externalSongPositionMsRef.current);
+      const result=releaseSharedTransport('midi');
+      if(!result.accepted)return;
       if (recordingPlaybackExternalRef.current) stopRecordedShowPlayback(false);
-      setMessage(`${externalTrack.songName || 'External song'} stopped at ${formatShowTime(externalSongPositionMsRef.current)}.`);
+      setMessage(`${externalTrack.songName || 'External song'} stopped at ${formatShowTime(result.state.positionMs)}.`);
       return;
     }
     if (event.kind === 'note_off' && event.number != null && event.channel != null) {
@@ -3079,16 +3979,36 @@ export default function App() {
   };
 
   useEffect(() => {
-    if (!midiStatus.connected) return;
+    if (!midiStatus.connected) {
+      connectionManagerRef.current!.disconnect('midi');
+      refreshConnectionRecords();
+      return;
+    }
     const interval = window.setInterval(async () => {
       try {
         const events = await invoke<MidiEvent[]>('drain_midi_events');
         events.forEach((event) => midiActionRef.current(event));
-        setMidiStatus(await invoke<MidiStatus>('midi_status'));
-      } catch { /* connection may be rebuilding */ }
+        const status=await invoke<MidiStatus>('midi_status');
+        setMidiStatus(status);
+        if(status.connected){
+          connectionManagerRef.current!.upsert({
+            id:'midi',kind:'midi',name:status.input_name || 'MIDI / DAW',status:'connected',
+            capabilities:['clock','transport','controls'],
+            lastSeenAt:status.messages_received>0?Date.now():connectionManagerRef.current!.get('midi')?.lastSeenAt ?? null,
+            lastError:status.last_error ?? '',
+            detail:status.last_event || (midiClockSeen?'Clock received':'Waiting for MIDI')
+          });
+        }else{
+          connectionManagerRef.current!.disconnect('midi','Native MIDI input closed');
+        }
+        refreshConnectionRecords();
+      } catch (error) {
+        connectionManagerRef.current!.fail('midi',String(error),true);
+        refreshConnectionRecords();
+      }
     }, MIDI_POLL_MS);
     return () => window.clearInterval(interval);
-  }, [midiStatus.connected]);
+  }, [midiStatus.connected, midiClockSeen]);
 
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
@@ -3312,12 +4232,75 @@ export default function App() {
   }
 
   function routeTimelineVideo(screenId:string) {
-    setStageElements(current=>current.map(element=>element.id===screenId?{...element,mediaSource:{kind:'timeline',sourceName:'Timeline video',fit:'contain'}}:element.mediaSource?.kind==='timeline'?{...element,mediaSource:{kind:'none'}}:element));
+    setStageElements(current=>current.map(element=>{
+      if(element.id===screenId){
+        const previous=element.mediaSource?.kind!=='none' ? element.mediaSource : undefined;
+        return {...element,mediaSource:{
+          kind:'timeline',
+          sourceName:'Timeline video',
+          fit:previous?.fit ?? 'contain',
+          scale:previous?.scale ?? 1,
+          offsetX:previous?.offsetX ?? 0,
+          offsetY:previous?.offsetY ?? 0
+        }};
+      }
+      return element.mediaSource?.kind==='timeline'?{...element,mediaSource:{kind:'none'}}:element;
+    }));
     setMessage(screenId?'Timeline video routed to the selected display.':'Timeline display routing cleared.');
   }
   async function importScreenVideo(screenId:string,file:File) {
     if(!/\.mp4$/i.test(file.name)){setMessage('Choose an MP4 video file.');return;}
     await loadShowAudioFile(file);routeTimelineVideo(screenId);
+  }
+  async function refreshScreenImageAssets() {
+    const library = await readMediaLibrary();
+    setScreenImageAssets(library.assets.filter((asset) => asset.kind === 'image' && !asset.missing));
+  }
+
+  async function importScreenImage(screenId:string,file:File) {
+    if(!file.type.startsWith('image/') && !/\.(png|jpe?g|webp|gif|bmp|tiff?)$/i.test(file.name)) {
+      throw Error('Choose a still image file.');
+    }
+    const mediaId=crypto.randomUUID();
+    const asset=await persistManagedMedia(mediaId,file,file.name,null,'image');
+    if(!asset) throw Error('Still-image screen assets require the installed LumaRig desktop app.');
+    setScreenImageAssets(current=>[asset,...current.filter(item=>item.id!==asset.id)]);
+    setStageElements(current=>current.map(element=>{
+      if(element.id!==screenId || element.type!=='led-screen')return element;
+      const previous=element.mediaSource?.kind!=='none' ? element.mediaSource : undefined;
+      return {...element,mediaSource:{
+        kind:'image',
+        mediaId:asset.id,
+        sourceName:asset.name,
+        fit:previous?.fit ?? 'contain',
+        scale:previous?.scale ?? 1,
+        offsetX:previous?.offsetX ?? 0,
+        offsetY:previous?.offsetY ?? 0
+      }};
+    }));
+    setMessage(`${asset.name} added to the shared Media Library and routed to this screen.`);
+  }
+
+  function setScreenSourceKind(screenId:string,kind:'none'|'timeline'|'ndi'|'image'|'color'|'test-pattern') {
+    setStageElements(current=>current.map(element=>{
+      if(element.id!==screenId || element.type!=='led-screen')return element;
+      const previous=element.mediaSource?.kind!=='none' ? element.mediaSource : undefined;
+      const framing={
+        fit:previous?.fit ?? 'contain',
+        scale:previous?.scale ?? 1,
+        offsetX:previous?.offsetX ?? 0,
+        offsetY:previous?.offsetY ?? 0
+      };
+      if(kind==='timeline')return {...element,mediaSource:{kind:'timeline',sourceName:'Timeline video',...framing}};
+      if(kind==='ndi')return {...element,mediaSource:{kind:'ndi',sourceName:'ProPresenter',...framing}};
+      if(kind==='image'){
+        const asset=screenImageAssets[0];
+        return {...element,mediaSource:{kind:'image',mediaId:asset?.id ?? '',sourceName:asset?.name ?? 'Still image',...framing}};
+      }
+      if(kind==='color')return {...element,mediaSource:{kind:'color',color:element.color || '#000000'}};
+      if(kind==='test-pattern')return {...element,mediaSource:{kind:'test-pattern',pattern:'bars'}};
+      return {...element,mediaSource:{kind:'none'}};
+    }));
   }
   function loadStagePreset(presetId: StagePresetId) {
     const preset = instantiateStagePreset(presetId);
@@ -3331,25 +4314,146 @@ export default function App() {
     setMessage(`${preset.name} loaded as a separate stage scene.`);
   }
 
+  async function runShowPreflight() {
+    if (showPreflightBusy) return;
+    setShowPreflightBusy(true);
+    try {
+      const mediaIds = collectMediaIds(showFileRef.current);
+      const library = await readMediaLibrary().catch(() => ({ version: 1, folders: [], assets: [] as MediaAsset[] }));
+      const missingMediaNames: string[] = [];
+      for (const mediaId of mediaIds) {
+        const asset = library.assets.find((candidate) => candidate.id === mediaId);
+        if (asset) {
+          if (asset.missing) missingMediaNames.push(asset.name);
+          continue;
+        }
+        const legacy = await readSongMedia(mediaId).catch(() => undefined);
+        if (!legacy) missingMediaNames.push(mediaNameForId(showFileRef.current, mediaId) ?? mediaId);
+      }
+
+      let displayCount = 1;
+      if ('__TAURI_INTERNALS__' in window) {
+        const displays = await invoke<Array<{ name:string;width:number;height:number;x:number;y:number;primary:boolean }>>('display_outputs').catch(() => []);
+        if (displays.length) displayCount = displays.length;
+      }
+
+      const assignedVideoSources = stageElements.flatMap((element) =>
+        element.type === 'led-screen'
+        && element.mediaSource?.kind === 'ndi'
+        && element.mediaSource.deviceId
+          ? [element.mediaSource]
+          : []
+      );
+      const assignedVideoInputs = assignedVideoSources.length;
+
+      let currentVideoInputs = stageVideoInputs;
+      let permissionBlocked = stageVideoInputPermissionBlocked;
+      if (assignedVideoInputs && !permissionBlocked) {
+        try {
+          const scan = await requestStageVideoInputs();
+          currentVideoInputs = scan.inputs;
+          permissionBlocked = scan.permission === 'limited' && Boolean(scan.warning?.toLowerCase().includes('permission'));
+          setStageVideoInputs(scan.inputs);
+          setStageVideoInputPermissionBlocked(permissionBlocked);
+          setStageVideoInputError(scan.warning ?? '');
+        } catch (error) {
+          permissionBlocked = error instanceof StageVideoInputError && error.code === 'permission-denied';
+          setStageVideoInputPermissionBlocked(permissionBlocked);
+          setStageVideoInputError(error instanceof Error ? error.message : String(error));
+        }
+      }
+
+      const missingVideoInputNames = permissionBlocked ? [] : assignedVideoSources
+        .filter((source) => {
+          const resolvedDeviceId = resolveStageVideoInputDevice(source, currentVideoInputs);
+          return !resolvedDeviceId || !currentVideoInputs.some((input) => input.deviceId === resolvedDeviceId);
+        })
+        .map((source) => source.sourceName?.trim() || source.deviceId || 'Unnamed video input');
+
+      const timelineClipCount = (showFileRef.current.timeline?.clips.length ?? 0)
+        + (showFileRef.current.timelineShows ?? []).reduce((sum, item) => sum + item.timeline.clips.length, 0);
+
+      setShowPreflightItems(buildShowPreflight({
+        dmxConnected: dmxStatus.connected,
+        dmxError: dmxStatus.last_error || '',
+        blackout: blackoutActive,
+        fixtureCount: patchRef.current.length,
+        cueCount: showFileRef.current.cues.length,
+        songCount: songsForShow(showFileRef.current).length,
+        timelineClipCount,
+        missingMediaNames: [...new Set(missingMediaNames)],
+        displayCount,
+        assignedVideoInputs,
+        videoInputCount: currentVideoInputs.length,
+        missingVideoInputNames: [...new Set(missingVideoInputNames)],
+        videoPermissionBlocked: permissionBlocked,
+        visualizerError: directStatus.lastError || '',
+      }));
+    } catch (error) {
+      setShowPreflightItems([{
+        id: 'preflight-error',
+        label: 'Preflight',
+        level: 'fail',
+        detail: error instanceof Error ? error.message : String(error),
+      }]);
+    } finally {
+      setShowPreflightBusy(false);
+    }
+  }
+
   async function scanStageVideoInputs() {
     setStageVideoInputError('');
+    setStageVideoInputPermissionBlocked(false);
     try {
-      const inputs = await requestStageVideoInputs();
-      setStageVideoInputs(inputs);
-      setMessage(inputs.length ? `${inputs.length} video input${inputs.length === 1 ? '' : 's'} available for visualizer screens.` : 'No video inputs were found.');
+      const result = await requestStageVideoInputs();
+      setStageVideoInputs(result.inputs);
+      const limited = result.permission === 'limited';
+      setStageVideoInputPermissionBlocked(limited);
+      setStageVideoInputError(result.warning ?? '');
+      if (result.inputs.length) {
+        setMessage(limited
+          ? `${result.inputs.length} video input${result.inputs.length === 1 ? '' : 's'} found, but LumaRig still needs camera permission for names/live preview.`
+          : `${result.inputs.length} video input${result.inputs.length === 1 ? '' : 's'} available for visualizer screens.`);
+      } else {
+        setMessage('No video inputs were found. Start NDI Webcam Input / Virtual Input, then scan again.');
+      }
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
+      setStageVideoInputPermissionBlocked(error instanceof StageVideoInputError && error.code === 'permission-denied');
       setStageVideoInputError(message);
       setMessage(`Video input scan failed: ${message}`);
+    }
+  }
+
+  async function openVideoInputPrivacySettings() {
+    if (!('__TAURI_INTERNALS__' in window)) {
+      setMessage('Open your system camera/privacy settings and allow LumaRig to access video inputs.');
+      return;
+    }
+    try {
+      await invoke('open_video_input_privacy_settings');
+      setMessage('Camera privacy settings opened. Allow LumaRig, quit and reopen the app, then scan again.');
+    } catch (error) {
+      setMessage(`Could not open camera privacy settings: ${String(error)}`);
     }
   }
 
   function routeVideoInputToAllScreens(deviceId: string) {
     const input = stageVideoInputs.find((item) => item.deviceId === deviceId);
     if (!input) return;
-    setStageElements((current) => current.map((element) => element.type === 'led-screen'
-      ? { ...element, mediaSource: { kind: 'ndi', deviceId: input.deviceId, sourceName: input.label || 'ProPresenter', fit: element.mediaSource?.kind === 'ndi' ? element.mediaSource.fit ?? 'contain' : 'contain' } }
-      : element));
+    setStageElements((current) => current.map((element) => {
+      if(element.type!=='led-screen')return element;
+      const previous=element.mediaSource?.kind!=='none' ? element.mediaSource : undefined;
+      return { ...element, mediaSource: {
+        kind: 'ndi',
+        deviceId: input.deviceId,
+        sourceName: input.label || 'ProPresenter',
+        fit: previous?.fit ?? 'contain',
+        scale: previous?.scale ?? 1,
+        offsetX: previous?.offsetX ?? 0,
+        offsetY: previous?.offsetY ?? 0
+      } };
+    }));
     setMessage(`${input.label || 'Video input'} routed to every visualizer screen.`);
   }
 
@@ -3367,6 +4471,13 @@ export default function App() {
     setStageElements((current) => current.map((element) => element.id === id
       ? migrateStageElement(clampStageElement({ ...element, ...updates }), stageSettings.dimensions)
       : element));
+  }
+
+  function updateScreenFraming(id:string, changes:Partial<{fit:'contain'|'cover';scale:number;offsetX:number;offsetY:number}>) {
+    setStageElements(current=>current.map(element=>{
+      if(element.id!==id || element.type!=='led-screen' || !element.mediaSource || element.mediaSource.kind==='none')return element;
+      return {...element,mediaSource:{...element.mediaSource,...changes}};
+    }));
   }
 
   function updateStageElementPosition(id: string, axis: 'x' | 'y' | 'z', value: number) {
@@ -3711,18 +4822,52 @@ export default function App() {
     };
     effectAnimationRef.current=requestAnimationFrame(tick);setMessage(`${name} · stacked FX running.`);
   }
+  function takeCreatorPlaybackAuthority() {
+    // Timeline uses a higher-priority playback layer. Clear it before editor
+    // previews so an empty Timeline span cannot mask Show Creator output.
+    window.dispatchEvent(new Event('lumarig-stop-timeline'));
+    stopTimeline();
+    takeEditingPlaybackAuthority();
+  }
   function selectCreatorSection(id: string) {
     setActiveSectionId(id);
     const cue=showFile.cues.find(item=>item.sourceSectionId===id);
-    if (cue) { adoptCueContext(cue); renderTimelineFrame(timelinePositionRef.current * 60000 / masterTempoBpm * editingTimeline.beatsPerBar); }
+    if (cue) {
+      setActiveCueId(cue.id);
+      selectCueTargets(cue);
+    }
   }
   function previewCreatorSection(section: ShowSection) {
+    takeCreatorPlaybackAuthority();
     setActiveSectionId(section.id);
-    try {const cue=buildSectionCues([section],patchRef.current,showFile.groups ?? [])[0];fadeCueToUniverse(cue,applyUniverseUpdates(universeRef.current,cue.changes ?? []));}
+    try {
+      const cue=buildSectionCues([section],patchRef.current,showFile.groups ?? [])[0];
+      fadeCueToUniverse(cue,applyUniverseUpdates(universeRef.current,cue.changes ?? []));
+    }
     catch(error){setMessage(String(error));}
+  }
+  function changeShowMode(next: ShowMode) {
+    if (next !== 'timeline') {
+      window.dispatchEvent(new Event('lumarig-stop-timeline'));
+      stopTimeline();
+    }
+    setShowMode(next);
+  }
+  function openTimelineStepEditor(cueId:string) {
+    const cue=showFileRef.current.cues.find(item=>item.id===cueId);
+    const section=cue?.sourceSectionId ? showFileRef.current.creatorSections?.find(item=>item.id===cue.sourceSectionId) : undefined;
+    if(!section){setMessage('This Timeline clip is not linked to a Show Creator section.');return;}
+    const stepLayer=section.layers.find(layer=>layer.stepEditor&&layer.customEffect);
+    if(!stepLayer){setMessage('This section has no Step Editor layer yet.');return;}
+    const song=songsForShow(showFileRef.current).find(item=>item.name===section.song);
+    if(song)setActiveSongId(song.id);
+    setActiveSectionId(section.id);
+    changeShowMode('creator');
+    setMessage(`Step Editor opened for ${section.song} · ${section.name}.`);
   }
   const songBank = songsForShow(showFile);
   const creatorSong = songBank.find(song => song.id === activeSongId);
+  const mediaUseCounts = useMemo(() => countMediaIds({ working: showFile, songLibrary, showLibrary, showRecovery }), [showFile, songLibrary, showLibrary, showRecovery]);
   useEffect(() => {
     try { writeCompatibilityStorage('lumarig-active-song:' + showFile.name, activeSongId); } catch { /* Working show still autosaves. */ }
   }, [activeSongId, showFile.name]);
@@ -3745,8 +4890,16 @@ export default function App() {
     if (!libraryReady) return;
     setSaveStatus('Saving…');
     try {
-      const saved = await saveAppProgramState(showFileRef.current, { forceId: programId(showFileRef.current, song), workspace: currentWorkspaceCheckpoint() });
-      setSongLibrary(saved.programs); setSaveStatus('Saved'); setMessage(`${song.name} saved to Song Library.`);
+      const id = programId(showFileRef.current, song);
+      const saved = await saveAppProgramState(showFileRef.current, { forceId: id, workspace: currentWorkspaceCheckpoint() });
+      setSongLibrary(saved.programs); setSaveStatus('Saved');
+      const program = saved.programs.find((item) => item.id === id);
+      if (program && cloudAccount) {
+        await syncSongProgramToCloud(program);
+        setMessage(`${song.name} saved locally and synced to LumaRig Cloud.`);
+      } else {
+        setMessage(`${song.name} saved to Song Library.`);
+      }
     } catch (error) { setSaveStatus('Save failed'); setMessage(String(error)); }
   }
   function useLibrarySong(program: SongProgram) {
@@ -3786,13 +4939,256 @@ export default function App() {
     const url = URL.createObjectURL(file);
     showTrackUrlRef.current = url;
     setShowTrackUrl(url); setShowTrackName(name); setShowTrackDurationMs(0); setShowTrackPositionMs(0);
+    connectionManagerRef.current!.upsert({
+      id:'tracks',kind:'media',name:'Local Tracks',status:'connected',
+      capabilities:['transport','audio','recording'],lastSeenAt:Date.now(),lastError:'',detail:name
+    });
+    refreshConnectionRecords();
   }
   async function attachBankMedia(song: SongRecord, file: File) {
     if (!file.type.startsWith('audio/') && file.type !== 'video/mp4' && !/\.(wav|mp3|m4a|aiff?|flac|ogg|mp4)$/i.test(file.name)) throw Error('Choose an audio file or MP4.');
     const mediaId = crypto.randomUUID();
     await storeSongMedia(mediaId, file);
-    setShowFile(current => ({ ...current, songs: songsForShow(current).map(s => s.id === song.id ? { ...s, mediaId, mediaName: file.name } : s), timelineShows: current.timelineShows?.map(t => t.name === song.name ? { ...t, timeline: { ...t.timeline, audioName: file.name } } : t) }));
-    setMessage(`${file.name} saved and linked to ${song.name}.`);
+    setShowFile(current => ({ ...current, songs: songsForShow(current).map(s => s.id === song.id ? { ...s, mediaId, mediaName: file.name, tempoAnalysis: undefined } : s), timelineShows: current.timelineShows?.map(t => t.name === song.name ? { ...t, timeline: { ...t.timeline, audioName: file.name } } : t) }));
+    setMessage(`${file.name} saved and linked to ${song.name}. Tempo analysis is running.`);
+    if(file.type.startsWith('audio/') || !/\.mp4$/i.test(file.name)){
+      void waveformForBlob(file).then(analyzeTempo).then(analysis=>{
+        setShowFile(current=>({...current,songs:songsForShow(current).map(s=>s.id===song.id?{...s,tempoAnalysis:analysis}:s)}));
+        setMessage(`${song.name}: detected ${analysis.bpm} BPM · ${Math.round(analysis.confidence*100)}% confidence.`);
+      }).catch(()=>setMessage(`${file.name} linked. Tempo could not be detected automatically; manual BPM still works.`));
+    }
+  }
+
+  async function analyzeBankSongTempo(song: SongRecord) {
+    if(!song.mediaId)throw Error('Link audio before analyzing tempo.');
+    const media=await readSongMedia(song.mediaId);
+    if(!media)throw Error('Relink the missing media file before analyzing tempo.');
+    const analysis=analyzeTempo(await waveformForBlob(media));
+    setShowFile(current=>({...current,songs:songsForShow(current).map(item=>item.id===song.id?{...item,tempoAnalysis:analysis}:item)}));
+    setMessage(`${song.name}: ${analysis.bpm} BPM detected · ${Math.round(analysis.confidence*100)}% confidence.`);
+  }
+
+  function applyAnalyzedTempo(song:SongRecord,bpm:number){
+    const next=Math.max(20,Math.min(300,bpm));
+    setShowFile(current=>({
+      ...current,
+      songs:songsForShow(current).map(item=>item.id===song.id?{...item,bpm:next,tempoLocked:true}:item),
+      creatorSections:current.creatorSections?.map(section=>section.song===song.name?{...section,bpm:next}:section),
+      timelineShows:current.timelineShows?.map(item=>item.name===song.name?{...item,timeline:{...item.timeline,bpm:next}}:item)
+    }));
+    if(song.id===activeSongId){
+      setEffectBpm(next);effectBpmRef.current=next;setTempoLocked(true);tempoLockedRef.current=true;
+    }
+    setMessage(`${song.name} set to ${next} BPM and locked.`);
+  }
+
+  function correctActiveSongDownbeat(downbeatMs:number){
+    if(!creatorSong?.tempoAnalysis){setMessage('Analyze the Song tempo before correcting its downbeat.');return;}
+    const analysis=correctedDownbeat(creatorSong.tempoAnalysis,downbeatMs);
+    setShowFile(current=>({...current,songs:songsForShow(current).map(song=>song.id===creatorSong.id?{...song,tempoAnalysis:analysis}:song)}));
+    setMessage(`${creatorSong.name} downbeat corrected to ${(analysis.downbeatMs/1000).toFixed(2)}s.`);
+  }
+  function applyMediaAssetName(asset: MediaAsset) {
+    setShowFile((current) => {
+      const previousNames = new Set(
+        songsForShow(current)
+          .filter((song) => song.mediaId === asset.id && song.mediaName)
+          .map((song) => song.mediaName!)
+      );
+      const updateTimeline = (timeline: typeof current.timeline) => timeline ? {
+        ...timeline,
+        audioName: timeline.audioName && previousNames.has(timeline.audioName) ? asset.name : timeline.audioName,
+        videoClips: timeline.videoClips?.map((clip) => clip.mediaId === asset.id ? { ...clip, name: asset.name } : clip),
+      } : timeline;
+      return {
+        ...current,
+        songs: songsForShow(current).map((song) => song.mediaId === asset.id ? { ...song, mediaName: asset.name } : song),
+        timeline: updateTimeline(current.timeline),
+        timelineShows: current.timelineShows?.map((item) => ({
+          ...item,
+          timeline: updateTimeline(item.timeline)!,
+        })),
+      };
+    });
+  }
+
+  async function attachLibraryAssetToActiveSong(asset: MediaAsset) {
+    const song = songsForShow(showFileRef.current).find((candidate) => candidate.id === activeSongId);
+    if (!song) throw Error('Select a Song in Song Bank before assigning media.');
+    if (asset.kind === 'image') throw Error('Still images belong to screen sources, not Song audio.');
+    setShowFile((current) => ({
+      ...current,
+      songs: songsForShow(current).map((candidate) => candidate.id === song.id ? { ...candidate, mediaId: asset.id, mediaName: asset.name } : candidate),
+      timelineShows: current.timelineShows?.map((item) => item.name === song.name ? { ...item, timeline: { ...item.timeline, audioName: asset.name } } : item),
+    }));
+    const media = await readSongMedia(asset.id);
+    if (!media) throw Error(`Relink missing media: ${asset.name}`);
+    activateMedia(media, asset.name);
+    setMessage(`${asset.name} linked to ${song.name} from Media Library.`);
+  }
+
+  function portableFileStem(name: string) {
+    return (name.trim() || 'LumaRig').replace(/[<>:\"/\\|?*\u0000-\u001f]/g, '_').replace(/\s+/g, ' ').slice(0, 120);
+  }
+
+  async function ensurePortableMedia(payload: unknown) {
+    const mediaIds = collectMediaIds(payload);
+    for (const mediaId of mediaIds) {
+      const nativeAsset = await readMediaAsset(mediaId);
+      if (nativeAsset?.missing) throw Error('Relink missing media before export: ' + nativeAsset.name);
+      if (nativeAsset) continue;
+      const legacy = await readSongMedia(mediaId);
+      if (!legacy) throw Error('Media used by this file is missing: ' + (mediaNameForId(payload, mediaId) ?? mediaId));
+      await persistManagedMedia(mediaId, legacy, mediaNameForId(payload, mediaId) ?? (mediaId + '.media'));
+    }
+    return mediaIds;
+  }
+
+  async function exportSongPackage(songOrProgram: SongRecord | SongProgram) {
+    try {
+      const program: SongProgram = 'show' in songOrProgram
+        ? structuredClone(songOrProgram)
+        : (() => {
+            const id = programId(showFileRef.current, songOrProgram);
+            const existing = songLibrary.find((item) => item.id === id);
+            return {
+              id,
+              savedAt: new Date().toISOString(),
+              revision: existing?.revision ?? 1,
+              show: extractSongProgram(showFileRef.current, songOrProgram),
+            };
+          })();
+      const name = program.show.name || program.show.songs?.[0]?.name || 'Song';
+      setMessage('Preparing ' + name + '.lumarigsong…');
+      const mediaIds = await ensurePortableMedia(program);
+      const path = await exportPortablePackage('lumarig-song', program, mediaIds, portableFileStem(name));
+      if (path) setMessage(name + '.lumarigsong saved · ' + mediaIds.length + ' media file' + (mediaIds.length === 1 ? '' : 's') + ' included.');
+    } catch (error) {
+      setMessage('Song export failed: ' + (error instanceof Error ? error.message : String(error)));
+    }
+  }
+
+  async function importSongPackageFile() {
+    let staged: Awaited<ReturnType<typeof importPortablePackage<SongProgram>>> = null;
+    try {
+      setMessage('Opening LumaRig Song file…');
+      staged = await importPortablePackage<SongProgram>('lumarig-song');
+      if (!staged) return;
+      if (!isSongProgram(staged.manifest.payload)) throw Error('This .lumarigsong file contains invalid Song programming.');
+      const committedMedia = await commitPortableBackupRestore(staged.restoreToken);
+      const imported = await importSongProgram(staged.manifest.payload);
+      setSongLibrary(imported.state.programs);
+      setShowRecovery(imported.state.recovery);
+      setMessage(imported.program.show.name + ' imported into Song Library' + (imported.conflictCopy ? ' as a separate copy' : '') + ' · ' + committedMedia + ' new media file' + (committedMedia === 1 ? '' : 's') + '.');
+    } catch (error) {
+      if (staged?.restoreToken) await cancelPortableBackupRestore(staged.restoreToken).catch(() => {});
+      setMessage('Song import failed: ' + (error instanceof Error ? error.message : String(error)));
+    }
+  }
+
+  function portableShowSnapshot(snapshot?: ShowProjectSnapshot): ShowProjectSnapshot {
+    if (snapshot) return { ...structuredClone(snapshot), cloudRevision: undefined, cloudFolderId: undefined, lastEditor: 'lumarig', show: sanitizeShow(snapshot.show) };
+    const cleanName = showFileRef.current.name.trim() || 'Untitled Show';
+    return {
+      id: 'show-' + Date.now().toString(36),
+      name: cleanName, savedAt: new Date().toISOString(), status: 'show',
+      revision: sharedShowRevisionRef.current, lastEditor: 'lumarig',
+      show: sanitizeShow({ ...showFileRef.current, name: cleanName }),
+      patch: patchRef.current.map((fixture, index) => migratePatchedFixture(fixture, index, patchRef.current.length, stageSettings.dimensions)),
+      stageElements: stageElements.map((element) => migrateStageElement(element, stageSettings.dimensions)),
+      stageSettings: { ...stageSettings, dimensions: { ...stageSettings.dimensions } },
+      looks: [...savedLooks],
+    };
+  }
+
+  async function exportShowPackage(snapshot?: ShowProjectSnapshot) {
+    try {
+      const portable = portableShowSnapshot(snapshot);
+      setMessage('Preparing ' + portable.name + '.lumarigshow…');
+      const mediaIds = await ensurePortableMedia(portable);
+      const path = await exportPortablePackage('lumarig-show', portable, mediaIds, portableFileStem(portable.name));
+      if (path) setMessage(portable.name + '.lumarigshow saved · ' + mediaIds.length + ' media file' + (mediaIds.length === 1 ? '' : 's') + ' included.');
+    } catch (error) {
+      setMessage('Show export failed: ' + (error instanceof Error ? error.message : String(error)));
+    }
+  }
+
+  async function importShowPackageFile() {
+    let staged: Awaited<ReturnType<typeof importPortablePackage<ShowProjectSnapshot>>> = null;
+    try {
+      setMessage('Opening LumaRig Show file…');
+      staged = await importPortablePackage<ShowProjectSnapshot>('lumarig-show');
+      if (!staged) return;
+      if (!isShowProjectSnapshot(staged.manifest.payload)) throw Error('This .lumarigshow file contains invalid Show programming.');
+      let imported = portableShowSnapshot(staged.manifest.payload);
+      const existing = showLibrary.find((item) => item.id === imported.id);
+      if (existing && JSON.stringify({ ...existing, savedAt: '', cloudRevision: undefined, cloudFolderId: undefined }) === JSON.stringify({ ...imported, savedAt: '', cloudRevision: undefined, cloudFolderId: undefined })) {
+        const committedMedia = await commitPortableBackupRestore(staged.restoreToken);
+        setMessage(existing.name + ' is already in Show Library · ' + committedMedia + ' missing media file' + (committedMedia === 1 ? '' : 's') + ' restored.');
+        return;
+      }
+      if (existing) {
+        const base = imported.name;
+        const used = new Set(showLibrary.map((item) => item.name.toLowerCase()));
+        let name = base + ' (Imported)', n = 2;
+        while (used.has(name.toLowerCase())) name = base + ' (Imported ' + n++ + ')';
+        imported = { ...imported, id: 'show-' + Date.now().toString(36) + '-' + crypto.randomUUID().slice(0, 8), name };
+      }
+      imported = { ...imported, savedAt: new Date().toISOString(), cloudRevision: undefined, cloudFolderId: undefined, lastEditor: 'lumarig' };
+      const committedMedia = await commitPortableBackupRestore(staged.restoreToken);
+      const projects = [imported, ...showLibrary.filter((item) => item.id !== imported.id)].slice(0, 40);
+      const saved = await saveAppProgramState(showFileRef.current, { seed: [imported.show], workspace: { ...currentWorkspaceCheckpoint(), projects } });
+      setShowLibrary(projects); setSongLibrary(saved.programs); setShowRecovery(saved.recovery);
+      try { writeCompatibilityStorage(SHOW_LIBRARY_STORAGE_KEY, JSON.stringify(projects)); } catch {}
+      setMessage(imported.name + ' imported into Show Library · ' + committedMedia + ' new media file' + (committedMedia === 1 ? '' : 's') + '.');
+    } catch (error) {
+      if (staged?.restoreToken) await cancelPortableBackupRestore(staged.restoreToken).catch(() => {});
+      setMessage('Show import failed: ' + (error instanceof Error ? error.message : String(error)));
+    }
+  }
+  async function exportLocalPortableBackup() {
+    if (!libraryReady) throw Error('Song Library is still opening.');
+    setMessage('Preparing portable backup…');
+    const saved = await saveAppProgramState(showFileRef.current, {
+      capture: 'all',
+      workspace: currentWorkspaceCheckpoint(),
+    });
+    const mediaIds = collectMediaIds(saved);
+    for (const mediaId of mediaIds) {
+      const nativeAsset = await readMediaAsset(mediaId);
+      if (nativeAsset?.missing) throw Error(`Relink missing media before backup: ${nativeAsset.name}`);
+      if (nativeAsset) continue;
+      const legacy = await readSongMedia(mediaId);
+      if (!legacy) throw Error(`Media used by this library is missing: ${mediaNameForId(saved, mediaId) ?? mediaId}`);
+      await persistManagedMedia(mediaId, legacy, mediaNameForId(saved, mediaId) ?? `${mediaId}.media`);
+    }
+    const path = await exportPortableBackup(saved, mediaIds, `${showFileRef.current.name || 'LumaRig'} Backup`);
+    if (path) setMessage(`Portable backup saved · ${mediaIds.length} media file${mediaIds.length === 1 ? '' : 's'} included.`);
+  }
+
+  async function restoreLocalPortableBackup() {
+    setMessage('Opening portable backup…');
+    const imported = await importPortableBackup();
+    if (!imported) return;
+    try {
+      const state = validateProgramState(imported.manifest.programState);
+      if (state.workspace && !isAppWorkspaceCheckpoint(state.workspace)) throw Error('Backup workspace is invalid. Existing work was not replaced.');
+      if (state.recovery.some((item) => item.workspace && !isAppWorkspaceCheckpoint(item.workspace))) throw Error('Backup recovery data is invalid. Existing work was not replaced.');
+
+      // Validate first, commit staged media second, replace the transactional
+      // program checkpoint last. An invalid backup never touches live assets.
+      const committedMedia = await commitPortableBackupRestore(imported.restoreToken);
+      try {
+        await replaceProgramState(state);
+      } catch (error) {
+        throw Error(`Backup media was restored, but the program checkpoint could not be replaced: ${String(error)}`);
+      }
+      setMessage(`Backup restored · ${committedMedia} new media file${committedMedia === 1 ? '' : 's'} committed. Reloading LumaRig…`);
+      window.location.reload();
+    } catch (error) {
+      await cancelPortableBackupRestore(imported.restoreToken).catch(() => {});
+      throw error;
+    }
   }
   async function selectBankSong(song: SongRecord, mode?: 'creator' | 'timeline') {
     window.dispatchEvent(new Event('lumarig-stop-timeline')); stopTimeline();
@@ -3832,7 +5228,16 @@ export default function App() {
       setShowFile(next);
       const saved = await saveAppProgramState(next, { ...(creatorSong ? { forceId: programId(next, creatorSong) } : { capture: 'all' as const }), workspace: currentWorkspaceCheckpoint() });
       setSongLibrary(saved.programs); setSaveStatus('Saved');
-      setMessage(`${targets.length} Song Program(s) rebuilt and saved with their sections, layers, timeline and media.`);
+      if (cloudAccount) {
+        for (const target of targets) {
+          const id = programId(next, target);
+          const program = saved.programs.find((item) => item.id === id);
+          if (program) await syncSongProgramToCloud(program);
+        }
+        setMessage(`${targets.length} Song Program(s) rebuilt, saved, and synced to LumaRig Cloud.`);
+      } else {
+        setMessage(`${targets.length} Song Program(s) rebuilt and saved with their sections, layers, timeline and media.`);
+      }
     } catch (error) { setSaveStatus('Save failed'); setMessage(String(error)); }
   }
   function buildCreatorSections() {
@@ -3865,7 +5270,24 @@ export default function App() {
     const active=activeVideoClip({...editingTimeline,bpm:masterTempoBpm},elapsedMs);
     videoOutputOverrideRef.current={url:active?videoAssetsRef.current.get(active.clip.mediaId)??'':'',name:active?.clip.name??'',position:active?.position??0,playing:timelinePlayingRef.current,sentAt:Date.now()};
   }
-  function changeTimelinePlaying(playing:boolean){timelinePlayingRef.current=playing;setTimelinePlaying(playing);updateTimelineVideoFrame(timelinePositionRef.current*60000/masterTempoBpm*editingTimeline.beatsPerBar);}
+  function changeTimelinePlaying(playing:boolean){
+    const positionMs=timelinePositionRef.current*60000/masterTempoBpm*editingTimeline.beatsPerBar;
+    const result=applySharedTransport({
+      source:'timeline',
+      playing,
+      positionMs,
+      bpm:masterTempoBpm,
+      claim:playing,
+      release:!playing
+    });
+    if(!result.accepted){
+      setMessage(`Timeline transport is waiting for ${result.state.source} authority to release.`);
+      return;
+    }
+    timelinePlayingRef.current=playing;
+    setTimelinePlaying(playing);
+    updateTimelineVideoFrame(positionMs);
+  }
   function addTimelineFx(recipeId:string,startBar:number,lane:number) {
     const recipe=fxLibrary(customEffects).find(r=>r.id===recipeId);if(!recipe)return;
     if(showFile.cues.length>=200||editingTimeline.clips.length>=1000){setMessage('Cue or timeline clip limit reached.');return;}
@@ -4382,6 +5804,8 @@ export default function App() {
   const inspectedFixture = patch.find((fixture) => fixture.selected) ?? stageFixture;
   const selectedCompatibleColors = compatibleColorFixtures(selectedFixtureTargets);
 
+  const showPreflightSummary = showPreflightItems.length ? preflightSummary(showPreflightItems) : null;
+
   return (
     <main className={`console-app workspace-${workspace} ${dmxStatus.blackout ? 'blackout-is-active' : ''}`}>
       {(libraryOpening || transitionBusy) && <div className="library-save-guard" role="alert" aria-busy="true">{libraryOpening ? 'Opening saved programming…' : 'Saving Show before switching…'}</div>}
@@ -4391,7 +5815,7 @@ export default function App() {
         <div className="console-header-status">
           <button className="tempo-pill" onClick={tapTempo}><TempoPulse bpm={masterTempoBpm} audioRef={showTrackAudioRef} running={Boolean(activeEffect || activeCustomEffectId || showRecordingActive || playingRecordingId || externalTransportRunning || timelinePlaying)} /><strong>{masterTempoBpm} BPM</strong><small>{tempoSource === 'midi' ? 'MIDI CLOCK' : 'TAP'}</small></button>
           <button aria-label="Connections" title="Connections and DMX status" className={`connection-pill ${dmxStatus.connected ? 'online' : ''}`} onClick={() => { setWorkspace('build'); setSetupView('settings'); }}><i /><span><strong>DMX</strong><small>{dmxStatus.connected ? 'CONNECTED' : 'VIRTUAL'}</small></span></button>
-          <button className={`console-blackout ${dmxStatus.blackout ? 'active' : ''}`} onClick={toggleBlackout}>{dmxStatus.blackout ? 'RELEASE BLACKOUT' : 'BLACKOUT'}</button>
+          <button className={`console-blackout ${blackoutActive ? 'active' : ''}`} onClick={toggleBlackout}>{blackoutActive ? 'RELEASE BLACKOUT' : 'BLACKOUT'}</button>
         </div>
       </header>
 
@@ -4402,8 +5826,15 @@ export default function App() {
         const source=mediaPosition(timelinePositionRef.current*60000/masterTempoBpm*editingTimeline.beatsPerBar,editingTimeline.audioOffsetBars*60000/masterTempoBpm*editingTimeline.beatsPerBar,bounds);
         const boundary=timelinePositionRef.current<editingTimeline.audioOffsetBars ? bounds.startMs : bounds.endMs;
         event.currentTarget.currentTime=(source ?? (Number.isFinite(boundary) ? boundary : bounds.startMs))/1000;
-      }} onTimeUpdate={(event) => setShowTrackPositionMs(event.currentTarget.currentTime * 1000)} onEnded={handleShowTrackEnded} />
-      {dmxStatus.blackout && <div className="blackout-banner"><strong>BLACKOUT ACTIVE</strong><span>Programmed fixture values are preserved.</span><button onClick={toggleBlackout}>Release Blackout</button></div>}
+      }} onTimeUpdate={(event) => {
+        const positionMs=event.currentTarget.currentTime*1000;
+        setShowTrackPositionMs(positionMs);
+        if(!event.currentTarget.paused && sharedTransport.source==='tracks'){
+          const result=transportEngineRef.current!.apply({source:'tracks',playing:true,positionMs,bpm:masterTempoBpm,claim:true});
+          if(result.accepted)setSharedTransport(result.state);
+        }
+      }} onEnded={()=>{releaseSharedTransport('tracks',showTrackDurationMs);handleShowTrackEnded();}} />
+      {blackoutActive && <div className="blackout-banner"><strong>BLACKOUT ACTIVE</strong><span>Programmed fixture values are preserved.</span><button onClick={toggleBlackout}>Release Blackout</button></div>}
       {showRecordingActive && <section className="console-recording-bar"><span className="recording-pulse" /><div><strong>{timelineRecordingOrigin.current ? timelineRecordingOrigin.current.overdub?'TIMELINE OVERDUB':'TIMELINE RECORD' : 'RECORDING SHOW'}</strong><small>{showTrackName || 'Lighting only'} · {formatShowTime(showRecordingElapsedMs)}</small></div><button onClick={recordingPaused?playRecorderTransport:pauseRecorderTransport}>{recordingPaused?'Resume recording':'Pause recording'}</button><button onClick={() => stopShowRecording(true)}>Stop + save</button><button onClick={() => stopShowRecording(false)}>Cancel</button></section>}
       {activeRecordingPlayback && <section className="console-recording-bar playback"><span className="playback-pulse" /><div><strong>{recordingPlaybackExternalRef.current ? 'EXTERNAL SYNC' : 'RECORDED SHOW'}</strong><small>{activeRecordingPlayback.name} · {formatShowTime(showTrackPositionMs)} / {formatShowTime(activeRecordingPlayback.durationMs)}</small></div><button onClick={() => stopRecordedShowPlayback()}>Stop</button></section>}
 
@@ -4460,10 +5891,30 @@ export default function App() {
             <section className="console-panel connection-console"><header><div><span>DMX OUTPUT</span><h2>Anyma uDMX</h2></div><b className={dmxStatus.connected ? 'healthy' : ''}>{dmxStatus.connected ? 'Connected' : 'Virtual only'}</b></header><label><span>USB Interface</span><select value={selectedDevice} onChange={(event) => setSelectedDevice(event.target.value)} disabled={dmxStatus.connected}><option value="">Select uDMX</option>{devices.map((device) => <option key={device.device_key} value={device.device_key}>{deviceLabel(device)}</option>)}</select></label><div className="settings-actions"><button onClick={scanDevices}>Scan USB</button>{dmxStatus.connected ? <button onClick={disconnectDmx}>Disconnect + zero</button> : <button className="console-primary" disabled={!selectedInfo?.likely_udmx || busy} onClick={connectDmx}>Connect uDMX</button>}<button onClick={zeroAll}>Zero all</button></div></section>
             <section className="console-panel connection-console"><header><div><span>GENERAL MIDI</span><h2>Controller / Network Session</h2></div><b className={midiStatus.connected ? 'healthy' : ''}>{midiStatus.connected ? 'Listening' : 'Offline'}</b></header><label><span>MIDI Input</span><select value={selectedMidiInput} disabled={midiStatus.connected} onChange={(event) => setSelectedMidiInput(event.target.value)}><option value="">Select input</option>{midiInputs.map((input) => <option key={input.id} value={input.id}>{input.name}</option>)}</select></label><div className="settings-actions"><button onClick={scanMidi}>Scan MIDI</button>{midiStatus.connected ? <button onClick={disconnectMidi}>Disconnect</button> : <button className="console-primary" disabled={!selectedMidiInput} onClick={connectMidi}>Connect MIDI</button>}</div><div className="midi-event-monitor"><i className={midiStatus.last_event ? 'active' : ''} /><span><strong>{midiStatus.last_event || 'Waiting for MIDI'}</strong><small>{midiStatus.messages_received} messages · {midiClockSeen ? 'Clock detected' : 'No clock'}</small></span></div></section>
             <section className="console-panel midi-mapping-console"><header><div><span>MIDI ASSIGNER</span><h2>Map controls</h2></div><b>{midiMappings.length} mappings</b></header><div className="midi-add-row"><select value={newMidiTarget} onChange={(event) => setNewMidiTarget(event.target.value)}>{midiControlGroups.map(([group, controls]) => <optgroup key={group} label={group}>{controls.map((control) => <option key={control.id} value={control.id}>{control.label}</option>)}</optgroup>)}</select><button className="console-primary" onClick={() => beginMidiAssignment()}>Add + Learn</button></div><div className="midi-map-list">{midiMappings.map((mapping) => { const control = midiControls.find((item) => item.id === mapping.target); const learning = midiLearnMappingId === mapping.id; return <div className={`midi-map-row ${learning ? 'is-learning' : ''}`} key={mapping.id}><strong>{control?.label ?? 'Unavailable'}</strong><span>{learning ? 'Move or press a control…' : midiBindingLabel(mapping)}</span><button onClick={() => setMidiLearnMappingId(learning ? null : mapping.id)}>{learning ? 'Cancel' : 'Learn'}</button><button onClick={() => removeMidiAssignment(mapping.id)}>Remove</button></div>; })}</div></section>
-            <section className="console-panel connection-console remote-relay-console"><header><div><span>REMOTE CONTROL · SEPARATE NETWORKS</span><h2>Secure Cloud Relay</h2></div><b className={remoteRelayStatus === 'connected' ? 'healthy' : ''}>{remoteRelayStatus}</b></header><p>Both this Mac and the Vercel controller connect outbound to one private Supabase Realtime channel. No router port forwarding is required.</p><label><span>Supabase Project URL</span><input value={remoteRelayConfig.url} placeholder="https://project.supabase.co" onChange={(event) => setRemoteRelayConfig((current) => ({ ...current, url: event.target.value }))} /></label><label><span>Publishable Key</span><input type="password" value={remoteRelayConfig.publishableKey} onChange={(event) => setRemoteRelayConfig((current) => ({ ...current, publishableKey: event.target.value }))} /></label><div className="inspector-pair"><label><span>Account Email</span><input type="email" value={remoteRelayConfig.email} onChange={(event) => setRemoteRelayConfig((current) => ({ ...current, email: event.target.value }))} /></label><label><span>Password · never stored</span><input type="password" value={remoteRelayConfig.password ?? ''} onChange={(event) => setRemoteRelayConfig((current) => ({ ...current, password: event.target.value }))} /></label></div><label><span>Room Code · use the same code on the remote</span><div className="relay-room-row"><input value={remoteRelayConfig.roomCode} onChange={(event) => setRemoteRelayConfig((current) => ({ ...current, roomCode: event.target.value }))} /><button onClick={() => setRemoteRelayConfig((current) => ({ ...current, roomCode: `${crypto.randomUUID().replace(/-/g, '')}${crypto.randomUUID().replace(/-/g, '')}` }))}>Generate</button></div></label>{remoteRelayError && <p className="relay-error">{remoteRelayError}</p>}<div className="settings-actions">{remoteRelayStatus === 'connected' ? <button onClick={disconnectRemoteRelay}>Disconnect relay</button> : <button className="console-primary" onClick={connectRemoteRelay}>Connect remote relay</button>}</div></section>
+            <section className="console-panel connection-console remote-relay-console">
+              <header><div><span>LUMARIG CLOUD · ACCOUNT</span><h2>Cloud + Remote</h2></div><b className={cloudAccount ? 'healthy' : ''}>{cloudAccount ? 'SIGNED IN' : 'SIGNED OUT'}</b></header>
+              {!cloudAccount ? <>
+                <p>Sign in once on this computer. LumaRig stores the Supabase session, syncs your online Song/Show library, and uses the same account for secure controller pairing.</p>
+                <div className="inspector-pair"><label><span>Email</span><input type="email" autoComplete="email" value={cloudLoginEmail} onChange={(event)=>setCloudLoginEmail(event.target.value)} /></label><label><span>Password · not stored</span><input type="password" autoComplete="current-password" value={cloudLoginPassword} onChange={(event)=>setCloudLoginPassword(event.target.value)} onKeyDown={(event)=>{if(event.key==='Enter')void signInLumaCloud();}} /></label></div>
+                {cloudError && <p className="relay-error">{cloudError}</p>}
+                <div className="settings-actions"><button className="console-primary" disabled={cloudAccountBusy || !cloudLoginEmail.trim() || !cloudLoginPassword} onClick={()=>void signInLumaCloud()}>{cloudAccountBusy ? 'Signing in…' : 'Sign in to LumaRig Cloud'}</button><button onClick={()=>window.open(REMOTE_APP_URL + '/account','lumarig-cloud','noopener,noreferrer')}>Open Online Library ↗</button></div>
+              </> : <>
+                <div className="cloud-account-card"><div><small>ACCOUNT</small><strong>{cloudAccount.email}</strong><span>{cloudSongDocuments.length} cloud songs · {cloudShows.length} cloud shows · {cloudRecordingLabels.length} take labels</span><code title={desktopDeviceId()}>DEVICE · {desktopDeviceId()}</code></div><div><button onClick={()=>window.open(REMOTE_APP_URL + '/account','lumarig-cloud','noopener,noreferrer')}>Online Library ↗</button><button className="danger-outline" disabled={cloudAccountBusy} onClick={()=>void signOutLumaCloud()}>Sign Out</button></div></div>
+                {cloudError && <p className="relay-error">{cloudError}</p>}
+                <div className="settings-actions"><button onClick={()=>void refreshCloudAccountLibrary()}>Sync Library Now</button>{remoteRelayStatus === 'connected' ? <button onClick={disconnectRemoteRelay}>Disconnect Remote</button> : <button className="console-primary" onClick={()=>void connectRemoteRelay()}>Connect Remote</button>}</div>
+                <details className="cloud-advanced-connection"><summary>Advanced Cloud Connection</summary><label><span>Supabase Project URL</span><input value={remoteRelayConfig.url} placeholder="https://project.supabase.co" onChange={(event) => setRemoteRelayConfig((current) => ({ ...current, url: event.target.value }))} /></label><label><span>Publishable Key</span><input type="password" value={remoteRelayConfig.publishableKey} onChange={(event) => setRemoteRelayConfig((current) => ({ ...current, publishableKey: event.target.value }))} /></label><label><span>Private Relay Room</span><div className="relay-room-row"><input value={remoteRelayConfig.roomCode} onChange={(event) => setRemoteRelayConfig((current) => ({ ...current, roomCode: event.target.value }))} /><button onClick={() => setRemoteRelayConfig((current) => ({ ...current, roomCode: crypto.randomUUID().replace(/-/g, '') + crypto.randomUUID().replace(/-/g, '') }))}>Regenerate</button></div></label></details>
+                {remoteRelayError && <p className="relay-error">{remoteRelayError}</p>}
+                {remoteRelayStatus === 'connected' && <div className="controller-pairing-panel">
+                  <header><div><small>CONTROLLER ACCESS</small><strong>Pair Controller</strong><span>Your LumaRig account is already authenticated. The QR and six-digit code only grant this iPad access to the private control relay.</span></div><button className="console-primary" disabled={pairingBusy} onClick={()=>void startControllerPairing()}>{pairingBusy ? 'Creating…' : pairingSession ? 'New Pairing Code' : 'Pair Controller'}</button></header>
+                  {pairingSession && pairingSecondsRemaining > 0 && <div className="pairing-session-card"><div className="pairing-qr"><QRCodeSVG value={pairingSession.pairingUrl} size={196} level="M" bgColor="#ffffff" fgColor="#090b10" /></div><div className="pairing-code-display"><small>MANUAL CODE</small><strong>{pairingSession.code}</strong><span>Expires in {Math.floor(pairingSecondsRemaining/60)}:{String(pairingSecondsRemaining%60).padStart(2,'0')}</span><button onClick={()=>void navigator.clipboard?.writeText(pairingSession.pairingUrl)}>Copy Pair Link</button></div></div>}
+                  {pairingSession && pairingSecondsRemaining === 0 && <div className="pairing-expired"><strong>Pairing code expired</strong><span>Generate a new code. Existing paired devices stay connected.</span></div>}
+                  <div className="paired-device-list"><div className="paired-device-heading"><span>PAIRED CONTROLLERS</span><button onClick={()=>void refreshPairedControllerList()}>Refresh</button></div>{pairedControllers.length ? pairedControllers.map((device)=><article key={device.id}><span><strong>{device.deviceName}</strong><small>{device.platform}{device.appVersion ? ' · v'+device.appVersion : ''} · last seen {new Date(device.lastSeenAt).toLocaleString()}</small><code>{device.clientDeviceId || device.deviceUserId}</code></span><button className="danger-button" onClick={()=>void revokeControllerPairing(device.id)}>Revoke</button></article>) : <p>No paired controllers yet.</p>}{pairedControllersError && <p className="relay-error">{pairedControllersError}</p>}</div>
+                </div>}
+              </>}
+            </section>
             <section className="console-panel connection-console studio-bridge-console"><header><div><span>STUDIO LINK · SHOW CONTROL</span><h2>LumaStudio</h2></div><b className={studioBridgeStatus.listening && !studioBridgeStatus.lastError ? 'healthy' : ''}>{studioBridgeStatus.lastError ? 'Error' : studioBridgeStatus.connectedClients > 0 ? 'Connected' : studioBridgeStatus.listening ? 'Ready' : 'Starting'}</b></header><p>Semantic show-control bridge for Studio transport, cue recall, recorded lighting, FX and blackout. Studio never sends raw DMX.</p><div className="artnet-health-grid"><div><span>ENDPOINT</span><strong>ws://127.0.0.1:{studioBridgeStatus.port}/studio</strong></div><div><span>CLIENTS</span><strong>{studioBridgeStatus.connectedClients}</strong></div><div><span>PROTOCOL</span><strong>studio-bridge-v1</strong></div><div><span>AUTHORITY</span><strong>LumaRig</strong></div></div>{studioBridgeStatus.lastError && <p className="artnet-error">Studio Bridge: {studioBridgeStatus.lastError}</p>}<small>The bridge starts automatically. If Studio closes, lighting continues locally in LumaRig.</small></section>
             <details className="console-panel legacy-visualizer-console"><summary>Legacy External Visualizer Bridges</summary><section className="connection-console visualizer-direct-console"><header><div><span>LEGACY LINK · SEMANTIC WEBSOCKET</span><h2>LumaRig Direct</h2></div><b className={directStatus.listening && !directStatus.lastError ? 'healthy' : ''}>{directStatus.clients > 0 ? 'Connected' : directStatus.listening ? 'Ready' : 'Error'}</b></header><p>Native semantic link for LumaViz. Sends resolved fixture identity, intensity, color, movement, beam and strobe without making LumaViz decode DMX.</p><div className="artnet-health-grid"><div><span>ENDPOINT</span><strong>ws://127.0.0.1:{directStatus.port}/lumaviz</strong></div><div><span>CLIENTS</span><strong>{directStatus.clients}</strong></div><div><span>FRAMES SENT</span><strong>{directStatus.framesSent.toLocaleString()}</strong></div><div><span>PROTOCOL</span><strong>fixture-frame-v1</strong></div></div>{directStatus.lastError && <p className="artnet-error">Direct: {directStatus.lastError}</p>}<small>LumaRig Direct starts automatically. Art-Net remains available below as the standard DMX-over-network fallback.</small></section>
-            <section className="console-panel connection-console visualizer-output-console"><header><div><span>VISUALIZER LINK · ART-NET</span><h2>LumaViz Connection</h2></div><b className={settings.visualizerArtNetEnabled && !artNetTelemetry.lastError ? 'healthy' : ''}>{artNetTelemetry.lastError ? 'Error' : settings.visualizerArtNetEnabled ? 'Live' : 'Off'}</b></header><p>LumaRig mirrors the final resolved DMX frame after cues, FX, manual overrides, group masters, and grand master. Physical DMX remains independent if the visualizer closes.</p><div className="artnet-health-grid"><div><span>TRANSPORT</span><strong>Art-Net / UDP 6454</strong></div><div><span>TARGET</span><strong>{settings.visualizerArtNetTarget || '127.0.0.1'}</strong></div><div><span>FRAMES SENT</span><strong>{artNetTelemetry.framesSent.toLocaleString()}</strong></div><div><span>STATUS</span><strong>{artNetTelemetry.lastError ? 'Send error' : settings.visualizerArtNetEnabled ? artNetTelemetry.framesSent > 0 ? 'Streaming' : 'Armed' : 'Stopped'}</strong></div></div>{artNetTelemetry.lastError && <p className="artnet-error">Art-Net: {artNetTelemetry.lastError}</p>}<label className="inspector-toggle"><span>Enable visualizer output</span><input type="checkbox" checked={settings.visualizerArtNetEnabled} onChange={(event) => setSettings((current) => ({ ...current, visualizerArtNetEnabled: event.target.checked }))} /></label><label><span>Target IPv4 address</span><input value={settings.visualizerArtNetTarget} placeholder="127.0.0.1" onChange={(event) => setSettings((current) => ({ ...current, visualizerArtNetTarget: event.target.value }))} /></label><small>Use 127.0.0.1 when LumaViz is on this computer. For another computer, use that machine's LAN IPv4. 255.255.255.255 broadcasts to the LAN.</small><div className="settings-actions"><button className="console-primary" onClick={() => setSettings((current) => ({ ...current, visualizerArtNetTarget: '127.0.0.1', visualizerArtNetEnabled: true }))}>Connect LumaViz · This Mac</button><button onClick={() => setSettings((current) => ({ ...current, visualizerArtNetTarget: '255.255.255.255', visualizerArtNetEnabled: true }))}>Broadcast LAN</button><button onClick={() => setSettings((current) => ({ ...current, visualizerArtNetEnabled: false }))}>Stop Link</button></div></section></details>
+            <section className="console-panel connection-console visualizer-output-console"><header><div><span>VISUALIZER LINK · ART-NET</span><h2>LumaViz Connection</h2></div><b className={settings.visualizerArtNetEnabled && !artNetTelemetry.lastError ? 'healthy' : ''}>{artNetTelemetry.lastError ? 'Error' : settings.visualizerArtNetEnabled ? 'Live' : 'Off'}</b></header><p>LumaRig mirrors the final resolved DMX frame after cues, FX, manual overrides, group masters, and grand master. Physical DMX remains independent if the visualizer closes.</p><div className="artnet-health-grid"><div><span>TRANSPORT</span><strong>Art-Net / UDP 6454</strong></div><div><span>TARGET</span><strong>{settings.visualizerArtNetTarget || '127.0.0.1'}</strong></div><div><span>FRAMES SENT</span><strong>{artNetTelemetry.framesSent.toLocaleString()}</strong></div><div><span>STATUS</span><strong>{artNetTelemetry.lastError ? 'Send error' : settings.visualizerArtNetEnabled ? artNetTelemetry.framesSent > 0 ? 'Streaming' : 'Armed' : 'Stopped'}</strong></div></div>{artNetTelemetry.lastError && <p className="artnet-error">Art-Net: {artNetTelemetry.lastError}</p>}<label className="inspector-toggle"><span>Enable visualizer output</span><input type="checkbox" checked={settings.visualizerArtNetEnabled} onChange={(event) => setSettings((current) => ({ ...current, visualizerArtNetEnabled: event.target.checked }))} /></label><label><span>Target IPv4 address</span><input value={settings.visualizerArtNetTarget} placeholder="127.0.0.1" onChange={(event) => setSettings((current) => ({ ...current, visualizerArtNetTarget: event.target.value }))} /></label><small>Use 127.0.0.1 when LumaViz is on this computer. For another computer, use that machine's LAN IPv4. 255.255.255.255 broadcasts to the LAN.</small><div className="settings-actions"><button className="console-primary" onClick={() => setSettings((current) => ({ ...current, visualizerArtNetTarget: '127.0.0.1', visualizerArtNetEnabled: true }))}>Connect LumaViz · This Computer</button><button onClick={() => setSettings((current) => ({ ...current, visualizerArtNetTarget: '255.255.255.255', visualizerArtNetEnabled: true }))}>Broadcast LAN</button><button onClick={() => setSettings((current) => ({ ...current, visualizerArtNetEnabled: false }))}>Stop Link</button></div></section></details>
             <section className="console-panel connection-console"><header><div><span>AUDIO REACTIVE · BETA</span><h2>Sound Input</h2></div><b>{audioArmed ? 'Armed' : audioEnabled ? 'Monitoring' : 'Off'}</b></header><div className="audio-meter"><span style={{ width: `${audioLevel * 100}%` }} /></div><label><span>Sensitivity · {settings.audioSensitivity}%</span><input type="range" min="1" max="100" value={settings.audioSensitivity} onChange={(event) => setSettings((current) => ({ ...current, audioSensitivity: Number(event.target.value) }))} /></label>{audioError && <p>{audioError}</p>}<div className="settings-actions">{audioEnabled ? <><button onClick={stopAudioInput}>Stop input</button><button className="console-primary" onClick={() => { audioBaseUniverseRef.current = [...universeRef.current]; setAudioArmed(!audioArmed); }}>{audioArmed ? 'Disarm lights' : 'Arm selected lights'}</button></> : <button className="console-primary" onClick={startAudioInput}>Enable input</button>}</div></section>
             <section className="console-panel software-update-console"><header><div><span>SOFTWARE UPDATE</span><h2>LumaRig</h2></div><b className={updateStatus === 'available' ? 'healthy' : ''}>v{appVersion}</b></header><div className="update-summary"><strong>{updateStatus === 'available' && updateInfo ? `Version ${updateInfo.version} available` : updateStatus === 'checking' ? 'Checking GitHub Releases…' : updateStatus === 'installing' ? 'Installing update…' : updateStatus === 'current' ? 'You are up to date' : updateStatus === 'error' ? 'Update check failed' : 'Automatic update checks enabled'}</strong><small>{updateStatus === 'available' ? 'The signed update is ready. Output will be zeroed and disconnected before the app restarts.' : 'Release builds check the public update feed shortly after launch.'}</small></div>{updateInfo?.notes && <p className="update-notes">{updateInfo.notes}</p>}{updateError && <p className="update-error">{updateError}</p>}<div className="settings-actions"><button disabled={updateStatus === 'checking' || updateStatus === 'installing'} onClick={() => void checkForUpdates(false)}>{updateStatus === 'checking' ? 'Checking…' : 'Check for Updates'}</button>{updateStatus === 'available' && updateInfo && <button className="console-primary" onClick={() => void installAvailableUpdate()}>{`Install v${updateInfo.version}`}</button>}</div></section>
             <section className="console-panel safety-settings"><header><div><span>PERFORMANCE SAFETY</span><h2>Guardrails</h2></div></header><label><span>Grand master limit</span><input type="range" min="10" max="100" value={settings.masterLimit} onChange={(event) => setSettings((current) => ({ ...current, masterLimit: Number(event.target.value) }))} /><b>{settings.masterLimit}%</b></label><label><span>Confirm blackout release</span><input type="checkbox" checked={settings.confirmBlackoutRelease} onChange={(event) => setSettings((current) => ({ ...current, confirmBlackoutRelease: event.target.checked }))} /></label></section>
@@ -4510,17 +5961,42 @@ export default function App() {
             <label><span>Color</span><input className="inspector-color" type="color" value={selectedStageElement.color} onChange={(event) => updateStageElement(selectedStageElement.id, { color: event.target.value })} /></label>
             {selectedStageElement.type === 'led-screen' && <section className="screen-source-inspector">
               <header><span>SCREEN SOURCE</span><strong>Media / Timeline / NDI</strong></header>
-              <label><span>Source</span><select value={selectedStageElement.mediaSource?.kind ?? 'none'} onChange={(event) => updateStageElement(selectedStageElement.id, { mediaSource: event.target.value === 'timeline' ? {kind:'timeline',sourceName:'Timeline video',fit:'contain'} : event.target.value === 'ndi' ? { kind: 'ndi', sourceName: 'ProPresenter', fit: 'contain' } : { kind: 'none' } })}><option value="none">Static color</option><option value="ndi">NDI / video input</option><option value="timeline">Timeline video</option></select></label>
+              <label><span>Source</span><select value={selectedStageElement.mediaSource?.kind ?? 'none'} onChange={(event)=>setScreenSourceKind(selectedStageElement.id,event.target.value as 'none'|'timeline'|'ndi'|'image'|'color'|'test-pattern')}>
+                <option value="none">Object / screen color</option>
+                <option value="color">Solid color source</option>
+                <option value="test-pattern">Test pattern</option>
+                <option value="image">Still image · Media Library</option>
+                <option value="ndi">NDI / video input</option>
+                <option value="timeline">Timeline video / MP4</option>
+              </select></label>
               <label>Import video to Timeline<input aria-label="Import screen video" type="file" accept="video/mp4,.mp4" onChange={e=>{const file=e.target.files?.[0];e.target.value='';if(file)void importScreenVideo(selectedStageElement.id,file).catch(error=>setMessage(String(error)));}} /></label>
+              {selectedStageElement.mediaSource?.kind==='color' && <label><span>Source Color</span><input className="inspector-color" type="color" value={selectedStageElement.mediaSource.color} onChange={event=>updateStageElement(selectedStageElement.id,{mediaSource:{...selectedStageElement.mediaSource!,kind:'color',color:event.target.value}})}/></label>}
+              {selectedStageElement.mediaSource?.kind==='test-pattern' && <label><span>Pattern</span><select value={selectedStageElement.mediaSource.pattern} onChange={event=>updateStageElement(selectedStageElement.id,{mediaSource:{...selectedStageElement.mediaSource!,kind:'test-pattern',pattern:event.target.value as 'bars'|'grid'|'checker'}})}><option value="bars">Color bars</option><option value="grid">Alignment grid</option><option value="checker">Checker</option></select></label>}
+              {selectedStageElement.mediaSource?.kind==='image' && <>
+                <label><span>Image Asset</span><select value={selectedStageElement.mediaSource.mediaId} onChange={event=>{const asset=screenImageAssets.find(item=>item.id===event.target.value);updateStageElement(selectedStageElement.id,{mediaSource:{...selectedStageElement.mediaSource!,kind:'image',mediaId:event.target.value,sourceName:asset?.name??'Still image'}})}}><option value="">Select Media Library image</option>{screenImageAssets.map(asset=><option key={asset.id} value={asset.id}>{asset.name}</option>)}</select></label>
+                <label className="file-button">Import Still Image<input aria-label="Import screen still image" type="file" accept="image/*,.png,.jpg,.jpeg,.webp,.gif,.bmp,.tif,.tiff" onChange={event=>{const file=event.target.files?.[0];event.target.value='';if(file)void importScreenImage(selectedStageElement.id,file).catch(error=>setMessage(String(error)));}}/></label>
+                <button onClick={()=>void refreshScreenImageAssets().catch(error=>setMessage(String(error)))}>Refresh Media Library Images</button>
+              </>}
               {selectedStageElement.mediaSource?.kind === 'ndi' && <>
                 <label><span>Input</span><select value={selectedStageElement.mediaSource.deviceId ?? ''} onChange={(event) => {
                   const input = stageVideoInputs.find((item) => item.deviceId === event.target.value);
                   updateStageElement(selectedStageElement.id, { mediaSource: { ...selectedStageElement.mediaSource!, kind: 'ndi', deviceId: event.target.value || undefined, sourceName: input?.label || 'ProPresenter' } });
                 }}><option value="">Select NDI / video input</option>{stageVideoInputs.map((input) => <option key={input.deviceId} value={input.deviceId}>{input.label}</option>)}</select></label>
-                <label><span>Fit</span><select value={selectedStageElement.mediaSource.fit ?? 'contain'} onChange={(event) => updateStageElement(selectedStageElement.id, { mediaSource: { ...selectedStageElement.mediaSource!, kind: 'ndi', fit: event.target.value as 'contain' | 'cover' } })}><option value="contain">Contain</option><option value="cover">Fill / crop</option></select></label>
                 <button onClick={() => void scanStageVideoInputs()}>Scan NDI / Video Inputs</button>
                 {stageVideoInputError && <small className="stage-source-error">{stageVideoInputError}</small>}
-                <small>Use ProPresenter NDI output through an NDI virtual video input. The selected feed is rendered on this screen in the stage view and pop-out monitor.</small>
+                {stageVideoInputPermissionBlocked && <button className="video-permission-action" onClick={() => void openVideoInputPrivacySettings()}>Open Camera Privacy Settings</button>}
+                <small>Use ProPresenter NDI through NDI Webcam Input or another virtual camera/video-input bridge. LumaRig scans operating-system video inputs here, not raw NDI network sources.</small>
+              </>}
+              {selectedStageElement.mediaSource && ['ndi','timeline','image'].includes(selectedStageElement.mediaSource.kind) && <>
+                <div className="screen-framing-pair">
+                  <label><span>Fit</span><select aria-label="Build screen video fit" value={'fit' in selectedStageElement.mediaSource ? selectedStageElement.mediaSource.fit ?? 'contain' : 'contain'} onChange={event=>updateScreenFraming(selectedStageElement.id,{fit:event.target.value as 'contain'|'cover'})}><option value="contain">Contain</option><option value="cover">Fill / crop</option></select></label>
+                  <label><span>Size · {Math.round((('scale' in selectedStageElement.mediaSource ? selectedStageElement.mediaSource.scale : 1) ?? 1)*100)}%</span><input aria-label="Build screen video size" type="range" min="25" max="300" step="1" value={(('scale' in selectedStageElement.mediaSource ? selectedStageElement.mediaSource.scale : 1) ?? 1)*100} onInput={event=>updateScreenFraming(selectedStageElement.id,{scale:Number((event.currentTarget as HTMLInputElement).value)/100})}/></label>
+                </div>
+                <div className="screen-framing-pair">
+                  <label><span>X · {Math.round((('offsetX' in selectedStageElement.mediaSource ? selectedStageElement.mediaSource.offsetX : 0) ?? 0)*100)}%</span><input aria-label="Build screen video horizontal position" type="range" min="-100" max="100" step="1" value={(('offsetX' in selectedStageElement.mediaSource ? selectedStageElement.mediaSource.offsetX : 0) ?? 0)*100} onInput={event=>updateScreenFraming(selectedStageElement.id,{offsetX:Number((event.currentTarget as HTMLInputElement).value)/100})}/></label>
+                  <label><span>Y · {Math.round((('offsetY' in selectedStageElement.mediaSource ? selectedStageElement.mediaSource.offsetY : 0) ?? 0)*100)}%</span><input aria-label="Build screen video vertical position" type="range" min="-100" max="100" step="1" value={(('offsetY' in selectedStageElement.mediaSource ? selectedStageElement.mediaSource.offsetY : 0) ?? 0)*100} onInput={event=>updateScreenFraming(selectedStageElement.id,{offsetY:Number((event.currentTarget as HTMLInputElement).value)/100})}/></label>
+                </div>
+                <button onClick={()=>updateScreenFraming(selectedStageElement.id,{fit:'contain',scale:1,offsetX:0,offsetY:0})}>Reset Screen Framing</button>
               </>}
             </section>}
             <button className="danger-button stage-delete-button" onClick={() => removeStageElement(selectedStageElement.id)}>Delete Stage Object</button>
@@ -4808,9 +6284,37 @@ export default function App() {
               </div>
               <label><span>Color</span><input className="inspector-color" type="color" value={selectedStageElement.color} onChange={(event) => updateStageElement(selectedStageElement.id, { color: event.target.value })}/></label>
               {selectedStageElement.type === 'led-screen' && <div className="visualizer-screen-route">
-                <label><span>Screen Source</span><select value={selectedStageElement.mediaSource?.kind ?? 'none'} onChange={(event) => updateStageElement(selectedStageElement.id, { mediaSource: event.target.value === 'timeline' ? {kind:'timeline',sourceName:'Timeline video',fit:'contain'} : event.target.value === 'ndi' ? { kind: 'ndi', sourceName: 'ProPresenter', fit: 'contain' } : { kind: 'none' } })}><option value="none">Static</option><option value="ndi">NDI / Video Input</option><option value="timeline">Timeline video</option></select></label>
+                <label><span>Screen Source</span><select value={selectedStageElement.mediaSource?.kind ?? 'none'} onChange={(event)=>setScreenSourceKind(selectedStageElement.id,event.target.value as 'none'|'timeline'|'ndi'|'image'|'color'|'test-pattern')}>
+                  <option value="none">Object / screen color</option>
+                  <option value="color">Solid color</option>
+                  <option value="test-pattern">Test pattern</option>
+                  <option value="image">Still image</option>
+                  <option value="ndi">NDI / Video Input</option>
+                  <option value="timeline">Timeline video / MP4</option>
+                </select></label>
                 <label>Import video to Timeline<input aria-label="Import screen video" type="file" accept="video/mp4,.mp4" onChange={e=>{const file=e.target.files?.[0];e.target.value='';if(file)void importScreenVideo(selectedStageElement.id,file).catch(error=>setMessage(String(error)));}} /></label>
-              {selectedStageElement.mediaSource?.kind === 'ndi' && <label><span>Input</span><select value={selectedStageElement.mediaSource.deviceId ?? ''} onChange={(event) => { const input=stageVideoInputs.find((item)=>item.deviceId===event.target.value); updateStageElement(selectedStageElement.id,{mediaSource:{kind:'ndi',deviceId:event.target.value||undefined,sourceName:input?.label||'ProPresenter',fit:selectedStageElement.mediaSource?.kind==='ndi'?selectedStageElement.mediaSource.fit??'contain':'contain'}}); }}><option value="">Select input</option>{stageVideoInputs.map((input)=><option key={input.deviceId} value={input.deviceId}>{input.label}</option>)}</select></label>}
+                {selectedStageElement.mediaSource?.kind==='color' && <label><span>Source Color</span><input type="color" value={selectedStageElement.mediaSource.color} onChange={event=>updateStageElement(selectedStageElement.id,{mediaSource:{...selectedStageElement.mediaSource!,kind:'color',color:event.target.value}})}/></label>}
+                {selectedStageElement.mediaSource?.kind==='test-pattern' && <label><span>Pattern</span><select value={selectedStageElement.mediaSource.pattern} onChange={event=>updateStageElement(selectedStageElement.id,{mediaSource:{...selectedStageElement.mediaSource!,kind:'test-pattern',pattern:event.target.value as 'bars'|'grid'|'checker'}})}><option value="bars">Color bars</option><option value="grid">Alignment grid</option><option value="checker">Checker</option></select></label>}
+                {selectedStageElement.mediaSource?.kind==='image' && <>
+                  <label><span>Image Asset</span><select value={selectedStageElement.mediaSource.mediaId} onChange={event=>{const asset=screenImageAssets.find(item=>item.id===event.target.value);updateStageElement(selectedStageElement.id,{mediaSource:{...selectedStageElement.mediaSource!,kind:'image',mediaId:event.target.value,sourceName:asset?.name??'Still image'}})}}><option value="">Select Media Library image</option>{screenImageAssets.map(asset=><option key={asset.id} value={asset.id}>{asset.name}</option>)}</select></label>
+                  <label className="file-button">Import Still Image<input aria-label="Import visualizer screen still image" type="file" accept="image/*,.png,.jpg,.jpeg,.webp,.gif,.bmp,.tif,.tiff" onChange={event=>{const file=event.target.files?.[0];event.target.value='';if(file)void importScreenImage(selectedStageElement.id,file).catch(error=>setMessage(String(error)));}}/></label>
+                </>}
+                {selectedStageElement.mediaSource?.kind === 'ndi' && <label><span>Input</span><select value={selectedStageElement.mediaSource.deviceId ?? ''} onChange={(event) => {
+                  const input=stageVideoInputs.find((item)=>item.deviceId===event.target.value);
+                  const source=selectedStageElement.mediaSource?.kind==='ndi' ? selectedStageElement.mediaSource : {kind:'ndi' as const};
+                  updateStageElement(selectedStageElement.id,{mediaSource:{...source,deviceId:event.target.value||undefined,sourceName:input?.label||'ProPresenter'}});
+                }}><option value="">Select input</option>{stageVideoInputs.map((input)=><option key={input.deviceId} value={input.deviceId}>{input.label}</option>)}</select></label>}
+                {selectedStageElement.mediaSource && ['ndi','timeline','image'].includes(selectedStageElement.mediaSource.kind) && <>
+                  <div className="screen-framing-pair">
+                    <label><span>Fit</span><select value={selectedStageElement.mediaSource.fit ?? 'contain'} onChange={event=>updateScreenFraming(selectedStageElement.id,{fit:event.target.value as 'contain'|'cover'})}><option value="contain">Contain</option><option value="cover">Cover</option></select></label>
+                    <label><span>Size · {Math.round((selectedStageElement.mediaSource.scale ?? 1)*100)}%</span><input aria-label="Screen video size" type="range" min="25" max="300" step="1" value={(selectedStageElement.mediaSource.scale ?? 1)*100} onChange={event=>updateScreenFraming(selectedStageElement.id,{scale:Number(event.target.value)/100})}/></label>
+                  </div>
+                  <div className="screen-framing-pair">
+                    <label><span>X · {Math.round((selectedStageElement.mediaSource.offsetX ?? 0)*100)}%</span><input aria-label="Screen video horizontal position" type="range" min="-100" max="100" step="1" value={(selectedStageElement.mediaSource.offsetX ?? 0)*100} onChange={event=>updateScreenFraming(selectedStageElement.id,{offsetX:Number(event.target.value)/100})}/></label>
+                    <label><span>Y · {Math.round((selectedStageElement.mediaSource.offsetY ?? 0)*100)}%</span><input aria-label="Screen video vertical position" type="range" min="-100" max="100" step="1" value={(selectedStageElement.mediaSource.offsetY ?? 0)*100} onChange={event=>updateScreenFraming(selectedStageElement.id,{offsetY:Number(event.target.value)/100})}/></label>
+                  </div>
+                  <button onClick={()=>updateScreenFraming(selectedStageElement.id,{fit:'contain',scale:1,offsetX:0,offsetY:0})}>Reset video framing</button>
+                </>}
               </div>}
               <div className="visualizer-object-actions"><button onClick={() => duplicateStageElement(selectedStageElement.id)}>Duplicate</button><button className="danger-button" onClick={() => removeStageElement(selectedStageElement.id)}>Delete</button></div>
             </section>}
@@ -4821,7 +6325,7 @@ export default function App() {
               <div>{(['Stage','Screens','Scenic','Audio','Band','People'] as const).map((category) => <details key={category}><summary>{category}</summary><div>{STAGE_WAREHOUSE.filter((item) => item.category === category).map((item) => <button key={item.id} onClick={() => addWarehouseStageElement(item.id)}>＋ {item.name}</button>)}</div></details>)}</div>
             </section>
 
-            <section className="visualizer-input-panel"><span>SCREEN INPUTS</span><strong>{stageVideoInputs.length ? `${stageVideoInputs.length} available` : 'Not scanned'}</strong><small>{stageElements.filter((element) => element.type === 'led-screen' && element.mediaSource?.kind === 'ndi' && element.mediaSource.deviceId).length} screens assigned to live inputs</small>{stageVideoInputError && <small className="stage-source-error">{stageVideoInputError}</small>}{stageVideoInputs.length > 0 && <div>{stageVideoInputs.map((input) => <button key={input.deviceId} onClick={() => routeVideoInputToAllScreens(input.deviceId)}><strong>{input.label}</strong><small>Route to all screens</small></button>)}</div>}</section>
+            <section className="visualizer-input-panel"><span>SCREEN INPUTS</span><strong>{stageVideoInputs.length ? `${stageVideoInputs.length} available` : 'Not scanned'}</strong><small>{stageElements.filter((element) => element.type === 'led-screen' && element.mediaSource?.kind === 'ndi' && element.mediaSource.deviceId).length} screens assigned to live inputs</small><div className="visualizer-input-actions"><button onClick={() => void scanStageVideoInputs()}>{stageVideoInputError ? 'Retry Video Input Scan' : 'Scan NDI Webcam / Video Inputs'}</button>{stageVideoInputPermissionBlocked && <button className="video-permission-action" onClick={() => void openVideoInputPrivacySettings()}>Open Camera Privacy Settings</button>}</div>{stageVideoInputError && <small className="stage-source-error">{stageVideoInputError}</small>}<small>For NDI, start NDI Webcam Input / Virtual Input first. LumaRig then sees that feed as a system video input.</small>{stageVideoInputs.length > 0 && <div>{stageVideoInputs.map((input) => <button key={input.deviceId} onClick={() => routeVideoInputToAllScreens(input.deviceId)}><strong>{input.label}</strong><small>Route to all screens</small></button>)}</div>}</section>
             <section className="visualizer-preset-picker"><span>VENUE PRESETS</span>{STAGE_PRESETS.map((preset) => <button key={preset.id} className={activeStagePresetId === preset.id ? 'active' : ''} onClick={() => loadStagePreset(preset.id)}><strong>{preset.name}</strong><small>{preset.description}</small></button>)}</section>
           </aside>}
         </div>
@@ -4829,14 +6333,15 @@ export default function App() {
 
       {workspace === 'show' && <section className="show-console console-workspace-wide show-console-v3">
         <nav className="workspace-subtabs show-subtabs">{([
-          ['songs','Song Bank'],['creator','Show Creator'],['cues','Cues'],['timeline','Timeline'],['tracks','Tracks'],['library','Show Library'],['sync','MIDI & Sync'],['recordings','Recordings']
-        ] as Array<[ShowMode,string]>).map(([id,label]) => <button key={id} aria-label={label} title={label} data-compact-label={{songs:'Songs',creator:'Creator',cues:'Cues',timeline:'Timeline',tracks:'Tracks',library:'Library',sync:'Sync',recordings:'Record'}[id]} className={showMode === id ? 'active' : ''} onClick={() => setShowMode(id)}>{label}</button>)}</nav>
+          ['songs','Song Bank'],['creator','Show Creator'],['cues','Cues'],['timeline','Timeline'],['tracks','Tracks'],['media','Media Library'],['library','Show Library'],['sync','MIDI & Sync'],['recordings','Recordings']
+        ] as Array<[ShowMode,string]>).map(([id,label]) => <button key={id} aria-label={label} title={label} data-compact-label={{songs:'Songs',creator:'Creator',cues:'Cues',timeline:'Timeline',tracks:'Tracks',media:'Media',library:'Library',sync:'Sync',recordings:'Record'}[id]} className={showMode === id ? 'active' : ''} onClick={() => changeShowMode(id)}>{label}</button>)}</nav>
 
-        {showMode === 'songs' && <SongBank library={songLibrary} ready={libraryReady} saveStatus={saveStatus} onSave={saveBankSong} onUse={useLibrarySong} show={showFile} activeId={activeSongId} onAdd={addBankSong} onSelect={selectBankSong} onRename={renameBankSong} onMedia={attachBankMedia}/>}
+        {showMode === 'songs' && <SongBank library={songLibrary} ready={libraryReady} saveStatus={saveStatus} onSave={saveBankSong} onUse={useLibrarySong} show={showFile} activeId={activeSongId} onAdd={addBankSong} onSelect={selectBankSong} onRename={renameBankSong} onMedia={attachBankMedia} onAnalyzeTempo={analyzeBankSongTempo} onApplyTempo={applyAnalyzedTempo} onOpenMediaLibrary={(song) => { setActiveSongId(song.id); changeShowMode('media'); }} onExport={(song)=>void exportSongPackage(song)} onImport={()=>void importSongPackageFile()}/>}
+                {showMode === 'media' && <MediaLibraryPanel activeSong={creatorSong ?? null} mediaUseCounts={mediaUseCounts} onAttachToActiveSong={attachLibraryAssetToActiveSong} onAssetChanged={applyMediaAssetName} onExportBackup={exportLocalPortableBackup} onRestoreBackup={restoreLocalPortableBackup}/>}
         {showMode === 'cues' && <ResizableWorkspace className={`show-cue-layout ${cueTimelineSong!==null ? 'cue-with-timeline' : ''}`} storageKey="lumarig.cue-columns.v1" leftLabel="Rundown" rightLabel="Cue Inspector" leftDefault={250} rightDefault={245} rightEnabled={cueTimelineSong===null} centerMinimum={400}>
           <SongCueLibrary cues={showFile.cues} sections={showFile.rundownSections??[]} activeId={activeCueId} timelineNames={(showFile.timelineShows??[]).map(item=>item.name)} onRun={runCue} onDelete={deleteCue} onCapture={captureCue} onMove={(id,direction)=>setShowFile(current=>({...current,cues:moveCue(current.cues,id,direction)}))} onMoveSong={(sectionId,name,direction)=>setShowFile(current=>({...current,cues:moveRundownItemCues(current.cues,sectionId,name,direction)}))} onSectionsChange={(rundownSections)=>setShowFile(current=>({...current,rundownSections}))} onTimeline={openSongTimeline} onImport={importTimelineShow}/>
 
-          {cueTimelineSong!==null ? <main className="cue-integrated-timeline"><header><strong>{cueTimelineSong}</strong><button onClick={()=>{releaseTimeline();setCueTimelineSong(null);}}>Close timeline</button></header><Suspense fallback={<p>Loading timeline…</p>}><ShowTimelineEditor onRecord={recordIntoTimeline} keepMediaOnRelease={()=>Boolean(timelineRecordingOrigin.current && showRecordingActiveRef.current)} onExportVideo={exportTimelineVideo} onImportVideoClip={importTimelineVideoClip} onPlayingChange={changeTimelinePlaying} fxRecipes={fxLibrary(customEffects)} screens={stageElements.filter(e=>e.type==='led-screen')} displayId={stageElements.find(e=>e.mediaSource?.kind==='timeline')?.id ?? ''} onDisplayChange={routeTimelineVideo} selectedClipId={activeTimelineClipId} positionBar={timelinePositionBar} onSelectClip={selectTimelineClip} onRelease={releaseTimeline} onReset={() => { commitUniverse(makeUniverse()); timelinePositionRef.current=0; setTimelinePositionBar(0); activeTimelineClipRef.current=''; setActiveTimelineClipId(''); setActiveCueId(null); setActiveSectionId(''); }} key={timelineShowId+cueTimelineSong} timeline={editingTimeline} cues={showFile.cues.filter(c => !timelineShowId || c.trackName === showFile.timelineShows?.find(t => t.id === timelineShowId)?.name)} initialBar={timelineStartBar} songFilter={cueTimelineSong} audioRef={showTrackAudioRef} audioUrl={editingTimeline.audioName===showTrackName?showTrackUrl:''} audioName={editingTimeline.audioName??''} audioDurationMs={editingTimeline.audioName===showTrackName?showTrackDurationMs:0} masterBpm={masterTempoBpm} onMasterBpmChange={setMasterTempo} tempoLocked={tempoLocked} onTempoLockChange={changeTempoLock} onLoadAudio={loadShowAudioFile} onChange={updateEditingTimeline} onAddFx={addTimelineFx} fxTargetName={selectedGroup?.name??'All patched fixtures'} onFrame={renderTimelineFrame} onStop={stopTimeline} onCreator={()=>setShowMode('creator')}/></Suspense></main> : <>          <main className="cue-preview-console"><header><span>{directStatus.clients > 0 ? 'LUMAVIZ LIVE PREVIEW' : 'STAGE / CUE PREVIEW'}</span><b>{activeCue?.name ?? 'Live output'}</b></header><div className={`show-viz-preview ${liveLumaVizPreview ? 'linked external-feed' : directStatus.clients > 0 ? 'linked' : ''}`}>{liveLumaVizPreview ? <img src={liveLumaVizPreview.dataUrl} alt={`LumaViz ${liveLumaVizPreview.view ?? 'live'} preview`} /> : renderStagePreview()}</div><div className="cue-preview-meta"><span>CURRENT<strong>{activeCue ? `${activeCue.number}. ${activeCue.name}` : 'Ready'}</strong></span><span>NEXT<strong>{nextCue ? `${nextCue.number}. ${nextCue.name}` : 'End of show'}</strong></span></div></main></>}
+          {cueTimelineSong!==null ? <main className="cue-integrated-timeline"><header><strong>{cueTimelineSong}</strong><button onClick={()=>{releaseTimeline();setCueTimelineSong(null);}}>Close timeline</button></header><Suspense fallback={<p>Loading timeline…</p>}><ShowTimelineEditor onRecord={recordIntoTimeline} keepMediaOnRelease={()=>Boolean(timelineRecordingOrigin.current && showRecordingActiveRef.current)} onExportVideo={exportTimelineVideo} onImportVideoClip={importTimelineVideoClip} onPlayingChange={changeTimelinePlaying} fxRecipes={fxLibrary(customEffects)} screens={stageElements.filter(e=>e.type==='led-screen')} displayId={stageElements.find(e=>e.mediaSource?.kind==='timeline')?.id ?? ''} onDisplayChange={routeTimelineVideo} selectedClipId={activeTimelineClipId} positionBar={timelinePositionBar} onSelectClip={selectTimelineClip} onRelease={releaseTimeline} onReset={() => { commitUniverse(makeUniverse()); timelinePositionRef.current=0; setTimelinePositionBar(0); activeTimelineClipRef.current=''; setActiveTimelineClipId(''); setActiveCueId(null); setActiveSectionId(''); }} key={timelineShowId+cueTimelineSong} timeline={editingTimeline} cues={showFile.cues.filter(c => !timelineShowId || c.trackName === showFile.timelineShows?.find(t => t.id === timelineShowId)?.name)} initialBar={timelineStartBar} songFilter={cueTimelineSong} audioRef={showTrackAudioRef} audioUrl={editingTimeline.audioName===showTrackName?showTrackUrl:''} audioName={editingTimeline.audioName??''} audioDurationMs={editingTimeline.audioName===showTrackName?showTrackDurationMs:0} masterBpm={masterTempoBpm} onMasterBpmChange={setMasterTempo} tempoLocked={tempoLocked} onTempoLockChange={changeTempoLock} tempoAnalysis={creatorSong?.tempoAnalysis} onDownbeatChange={correctActiveSongDownbeat} onOpenStepEditor={openTimelineStepEditor} onLoadAudio={loadShowAudioFile} onChange={updateEditingTimeline} onAddFx={addTimelineFx} fxTargetName={selectedGroup?.name??'All patched fixtures'} onFrame={renderTimelineFrame} onStop={stopTimeline} onCreator={()=>changeShowMode('creator')}/></Suspense></main> : <>          <main className="cue-preview-console"><header><span>{directStatus.clients > 0 ? 'LUMAVIZ LIVE PREVIEW' : 'STAGE / CUE PREVIEW'}</span><b>{activeCue?.name ?? 'Live output'}</b></header><div className={`show-viz-preview ${liveLumaVizPreview ? 'linked external-feed' : directStatus.clients > 0 ? 'linked' : ''}`}>{liveLumaVizPreview ? <img src={liveLumaVizPreview.dataUrl} alt={`LumaViz ${liveLumaVizPreview.view ?? 'live'} preview`} /> : renderStagePreview()}</div><div className="cue-preview-meta"><span>CURRENT<strong>{activeCue ? `${activeCue.number}. ${activeCue.name}` : 'Ready'}</strong></span><span>NEXT<strong>{nextCue ? `${nextCue.number}. ${nextCue.name}` : 'End of show'}</strong></span></div></main></>}
 
           <aside className="cue-inspector-console"><header><span>CUE INSPECTOR</span><strong>{activeCue?.name ?? 'New cue'}</strong></header>{activeCue ? <><label><span>Cue Name</span><input value={activeCue.name} onChange={(event)=>updateCueProperties(activeCue.id,{name:event.target.value})}/></label><label><span>Cue Color</span><input type="color" value={activeCue.color ?? '#55e98d'} onChange={(event)=>updateCueProperties(activeCue.id,{color:event.target.value})}/></label><label><span>Description</span><textarea value={activeCue.description ?? ''} onChange={(event)=>updateCueProperties(activeCue.id,{description:event.target.value})}/></label><div className="inspector-pair"><label><span>Fade In ms</span><input type="number" min="0" value={activeCue.fadeMs} onChange={(event)=>updateCueProperties(activeCue.id,{fadeMs:Number(event.target.value)})}/></label><label><span>Fade Out ms</span><input type="number" min="0" value={activeCue.fadeOutMs ?? activeCue.fadeMs} onChange={(event)=>updateCueProperties(activeCue.id,{fadeOutMs:Number(event.target.value)})}/></label></div><div className="inspector-pair"><label><span>Delay ms</span><input type="number" min="0" value={activeCue.delayMs ?? 0} onChange={(event)=>updateCueProperties(activeCue.id,{delayMs:Number(event.target.value)})}/></label><label><span>Follow ms</span><input type="number" min="0" value={activeCue.followMs ?? 0} onChange={(event)=>updateCueProperties(activeCue.id,{followMs:Number(event.target.value)})}/></label></div><section className="cue-timing-overrides"><header><span>ATTRIBUTE TIMING</span><small>Override only what needs different timing</small></header>{(['intensity','color','position','beam'] as CueTimingFamily[]).map((family)=>{const rule=cueTimingRule(activeCue,family);return <div className="cue-timing-row" key={family}><strong>{family.toUpperCase()}</strong><label><span>Fade ms</span><input type="number" min="0" max="60000" value={rule.fadeMs} onChange={(event)=>updateCueTiming(activeCue.id,family,{fadeMs:Number(event.target.value)})}/></label><label><span>Delay ms</span><input type="number" min="0" max="60000" value={rule.delayMs} onChange={(event)=>updateCueTiming(activeCue.id,family,{delayMs:Number(event.target.value)})}/></label><label><span>Curve</span><select value={rule.curve} onChange={(event)=>updateCueTiming(activeCue.id,family,{curve:event.target.value as CueTimingRule['curve']})}><option value="ease">Ease</option><option value="linear">Linear</option><option value="snap">Snap</option></select></label></div>})}</section><label><span>Linked Effect</span><select value={activeCue.linkedEffectId ?? ''} onChange={(event)=>updateCueProperties(activeCue.id,{linkedEffectId:event.target.value})}><option value="">None</option>{EFFECT_PRESETS.map((effect)=><option key={effect.id} value={effect.id}>{effect.name}</option>)}</select></label><label><span>Show Section</span><select aria-label="Cue show section" value={activeCue.rundownSectionId ?? ''} onChange={(event)=>updateCueProperties(activeCue.id,{rundownSectionId:event.target.value})}><option value="">Unfiled</option>{(showFile.rundownSections??[]).map(section=><option key={section.id} value={section.id}>{section.name}</option>)}</select></label><label><span>Item Type</span><select aria-label="Cue item type" value={activeCue.trackKind ?? 'song'} onChange={(event)=>updateCueProperties(activeCue.id,{trackKind:event.target.value as 'song'|'media'})}><option value="song">Song</option><option value="media">Media</option></select></label><label><span>Song / media item</span><input value={activeCue.trackName ?? ''} onChange={(event)=>updateCueProperties(activeCue.id,{trackName:event.target.value})}/></label><button className="console-primary" onClick={()=>updateCue(activeCue.id)}>Update Look From Output</button></> : <><label><span>New Cue Name</span><input value={cueName} placeholder={`Cue ${showFile.cues.length+1}`} onChange={(event)=>setCueName(event.target.value)}/></label><label><span>Fade In</span><select value={cueFadeMs} onChange={(event)=>setCueFadeMs(Number(event.target.value))}>{FADE_TIMES.map((time)=><option key={time} value={time}>{time===0?'Snap':`${time/1000}s`}</option>)}</select></label><button className="console-primary" onClick={captureCue}>Capture Current Look</button></>}<label><span>Show Notes</span><textarea value={showFile.notes ?? ''} placeholder="Set list, transitions, safety notes…" onChange={(event)=>setShowFile((current)=>({...current,notes:event.target.value}))}/></label></aside>
 
@@ -4849,21 +6354,62 @@ export default function App() {
           const next = typeof action === 'function' ? action(editing) : action;
           return {...current,creatorSections:creatorSong ? [...all.filter(section => section.song !== creatorSong.name), ...next.map(section => ({...section,song:creatorSong.name}))] : next};
         })} groups={showFile.groups ?? []} fixtures={patch} masterBpm={masterTempoBpm} onMasterBpmChange={setMasterTempo} tempoLocked={tempoLocked} onTempoLockChange={changeTempoLock} onBuild={buildCreatorSections} onPreview={previewCreatorSection} onStop={() => { stopFade(); stopEffect(); }} onTimeline={() => { if (creatorSong) void selectBankSong(creatorSong, 'timeline'); else setShowMode('timeline'); }} onEditFx={(effect) => { setFxEditor(effect); setWorkspace('create'); setProgramMode('fx'); }}/></Suspense>}
-        {showMode === 'timeline' && <div className="timeline-workspace"><label className="timeline-show-select">Timeline show <select aria-label="Timeline show" value={timelineShowId} onChange={e=>{window.dispatchEvent(new Event('lumarig-stop-timeline'));stopTimeline();const item=showFile.timelineShows?.find(t=>t.id===e.target.value);const song=songBank.find(s=>s.name===item?.name);if(song)void selectBankSong(song,'timeline');else{++mediaLoadToken.current;setActiveSongId('');setTimelineShowId(e.target.value);showTrackAudioRef.current?.pause();}}}><option value="">Current show</option>{(showFile.timelineShows??[]).map(item=><option key={item.id} value={item.id}>{item.name}</option>)}</select></label><Suspense fallback={<p>Loading Timeline…</p>}><ShowTimelineEditor onRecord={recordIntoTimeline} keepMediaOnRelease={()=>Boolean(timelineRecordingOrigin.current && showRecordingActiveRef.current)} onExportVideo={exportTimelineVideo} onImportVideoClip={importTimelineVideoClip} onPlayingChange={changeTimelinePlaying} fxRecipes={fxLibrary(customEffects)} screens={stageElements.filter(e=>e.type==='led-screen')} displayId={stageElements.find(e=>e.mediaSource?.kind==='timeline')?.id ?? ''} onDisplayChange={routeTimelineVideo} selectedClipId={activeTimelineClipId} positionBar={timelinePositionBar} onSelectClip={selectTimelineClip} onRelease={releaseTimeline} onReset={() => { commitUniverse(makeUniverse()); timelinePositionRef.current=0; setTimelinePositionBar(0); activeTimelineClipRef.current=''; setActiveTimelineClipId(''); setActiveCueId(null); setActiveSectionId(''); }} key={timelineShowId} timeline={editingTimeline} cues={showFile.cues.filter(c => !timelineShowId || c.trackName === showFile.timelineShows?.find(t => t.id === timelineShowId)?.name)} audioRef={showTrackAudioRef} audioUrl={editingTimeline.audioName===showTrackName?showTrackUrl:''} audioName={editingTimeline.audioName??''} audioDurationMs={editingTimeline.audioName===showTrackName?showTrackDurationMs:0} masterBpm={masterTempoBpm} onMasterBpmChange={setMasterTempo} tempoLocked={tempoLocked} onTempoLockChange={changeTempoLock} onLoadAudio={loadShowAudioFile} onChange={updateEditingTimeline} onAddFx={addTimelineFx} fxTargetName={selectedGroup?.name??'All patched fixtures'} onFrame={renderTimelineFrame} onStop={stopTimeline} onCreator={() => setShowMode('creator')}/></Suspense></div>}
+        {showMode === 'timeline' && <div className="timeline-workspace"><label className="timeline-show-select">Timeline show <select aria-label="Timeline show" value={timelineShowId} onChange={e=>{window.dispatchEvent(new Event('lumarig-stop-timeline'));stopTimeline();const item=showFile.timelineShows?.find(t=>t.id===e.target.value);const song=songBank.find(s=>s.name===item?.name);if(song)void selectBankSong(song,'timeline');else{++mediaLoadToken.current;setActiveSongId('');setTimelineShowId(e.target.value);showTrackAudioRef.current?.pause();}}}><option value="">Current show</option>{(showFile.timelineShows??[]).map(item=><option key={item.id} value={item.id}>{item.name}</option>)}</select></label><Suspense fallback={<p>Loading Timeline…</p>}><ShowTimelineEditor onRecord={recordIntoTimeline} keepMediaOnRelease={()=>Boolean(timelineRecordingOrigin.current && showRecordingActiveRef.current)} onExportVideo={exportTimelineVideo} onImportVideoClip={importTimelineVideoClip} onPlayingChange={changeTimelinePlaying} fxRecipes={fxLibrary(customEffects)} screens={stageElements.filter(e=>e.type==='led-screen')} displayId={stageElements.find(e=>e.mediaSource?.kind==='timeline')?.id ?? ''} onDisplayChange={routeTimelineVideo} selectedClipId={activeTimelineClipId} positionBar={timelinePositionBar} onSelectClip={selectTimelineClip} onRelease={releaseTimeline} onReset={() => { commitUniverse(makeUniverse()); timelinePositionRef.current=0; setTimelinePositionBar(0); activeTimelineClipRef.current=''; setActiveTimelineClipId(''); setActiveCueId(null); setActiveSectionId(''); }} key={timelineShowId} timeline={editingTimeline} cues={showFile.cues.filter(c => !timelineShowId || c.trackName === showFile.timelineShows?.find(t => t.id === timelineShowId)?.name)} audioRef={showTrackAudioRef} audioUrl={editingTimeline.audioName===showTrackName?showTrackUrl:''} audioName={editingTimeline.audioName??''} audioDurationMs={editingTimeline.audioName===showTrackName?showTrackDurationMs:0} masterBpm={masterTempoBpm} onMasterBpmChange={setMasterTempo} tempoLocked={tempoLocked} onTempoLockChange={changeTempoLock} tempoAnalysis={creatorSong?.tempoAnalysis} onDownbeatChange={correctActiveSongDownbeat} onOpenStepEditor={openTimelineStepEditor} onLoadAudio={loadShowAudioFile} onChange={updateEditingTimeline} onAddFx={addTimelineFx} fxTargetName={selectedGroup?.name??'All patched fixtures'} onFrame={renderTimelineFrame} onStop={stopTimeline} onCreator={() => changeShowMode('creator')}/></Suspense></div>}
 
         {showMode === 'tracks' && <div className="tracks-console tracks-console-v3">
-          <section className="console-panel track-source"><header><div><span>LOCAL AUDIO TRACK</span><h2>{showTrackName || 'No track loaded'}</h2></div><label className="file-button"><input type="file" accept="audio/*" onChange={loadShowTrack}/>{showTrackName?'Change Track':'Load Track'}</label></header><div className="track-timeline"><span>{formatShowTime(showTrackPositionMs)}</span><input type="range" min="0" max={Math.max(1,showTrackDurationMs)} value={Math.min(showTrackPositionMs,Math.max(1,showTrackDurationMs))} onChange={(event)=>{const next=Number(event.target.value);if(showTrackAudioRef.current)showTrackAudioRef.current.currentTime=next/1000;setShowTrackPositionMs(next);}}/><span>{formatShowTime(showTrackDurationMs)}</span></div><div className="track-actions"><button onClick={toggleShowTrackPreview}>Play / Pause</button><button onClick={()=>setShowMode('timeline')}>Open Timeline</button></div></section>
+          <section className="console-panel track-source"><header><div><span>LOCAL AUDIO TRACK</span><h2>{showTrackName || 'No track loaded'}</h2></div><label className="file-button"><input type="file" accept="audio/*" onChange={loadShowTrack}/>{showTrackName?'Change Track':'Load Track'}</label></header><div className="track-timeline"><span>{formatShowTime(showTrackPositionMs)}</span><input type="range" min="0" max={Math.max(1,showTrackDurationMs)} value={Math.min(showTrackPositionMs,Math.max(1,showTrackDurationMs))} onChange={(event)=>seekRecorderTransport(Number(event.target.value))}/><span>{formatShowTime(showTrackDurationMs)}</span></div><div className="track-actions"><button onClick={toggleShowTrackPreview}>Play / Pause</button><button onClick={()=>changeShowMode('timeline')}>Open Timeline</button></div></section>
           <section className="console-panel external-track-console"><header><div><span>STUDIO / DAW TRACK</span><h2>{externalTrack.songName || 'External Track'}</h2></div><b className={externalTransportRunning?'healthy':''}>{externalTransportRunning?'Following':externalTrack.armed?'Armed':'Off'}</b></header><label><span>Song Name</span><input value={externalTrack.songName} onChange={(event)=>updateExternalTrack({songName:event.target.value})}/></label><label><span>Lighting Take</span><select value={externalTrack.recordingId} onChange={(event)=>assignExternalRecording(event.target.value)}><option value="">Choose take</option>{showFile.recordings?.map((recording)=><option key={recording.id} value={recording.id}>{recording.name}</option>)}</select></label><div className="inspector-pair"><label><span>BPM</span><input type="number" value={externalTrack.bpm} onChange={(event)=>updateExternalTrack({bpm:Number(event.target.value)})}/></label><label><span>Advance ms</span><input type="number" value={externalTrack.lightingOffsetMs} onChange={(event)=>updateExternalTrack({lightingOffsetMs:Number(event.target.value)})}/></label></div><button className={externalTrack.armed?'danger-button':'console-primary'} onClick={toggleExternalTrackArm}>{externalTrack.armed?'Disarm External Sync':'Arm External Sync'}</button></section>
         </div>}
 
         {showMode === 'library' && <div className="show-library-console show-library-v3">
-          <header><div><span>SHOW LIBRARY</span><h2>{showFile.name}</h2><small>Templates define the rig. Drafts and service shows inherit that structure with cues, tracks, looks and show-specific changes.</small></div><div><button disabled={!libraryReady || transitionBusy} onClick={() => void newShowProject()}>＋ New Show</button><button onClick={()=>saveShowProject('template')}>Save Template</button><button onClick={()=>saveShowProject('draft')}>Save Draft</button><button className="console-primary" onClick={()=>saveShowProject('show')}>Save Service Show</button></div></header>
-          <div className="show-recovery"><span role="status">{saveStatus}</span>{showRecovery.length > 0 && <details><summary>Recovery · {showRecovery.length} previous Shows</summary>{showRecovery.map(item => <div key={item.id}><span>{item.show.name} · {new Date(item.savedAt).toLocaleString()}</span><button disabled={transitionBusy} onClick={() => void recoverShow(item)}>Restore Show</button></div>)}</details>}</div><div className="show-library-grid">{showLibrary.length?showLibrary.map((item)=><article key={item.id}><div><span className={item.status}>{item.status.toUpperCase()}</span><strong>{item.name}</strong><small>{new Date(item.savedAt).toLocaleString()} · R{item.revision ?? 1} · {item.lastEditor ?? 'lumarig'} · {item.show.cues.length} cues · {item.patch.length} fixtures</small></div><div><button onClick={()=>loadShowProject(item)}>Load</button><button className="danger-button" onClick={()=>deleteShowProject(item.id)}>Delete</button></div></article>):<div className="empty-show-library"><strong>No saved shows yet</strong><span>Save the current show or a draft. Your working Show and songs autosave together.</span></div>}</div>
+          <header><div><span>SHOW LIBRARY</span><h2>{showFile.name}</h2><small>Local saves are always written first. Export a portable Show file for another Mac/Windows computer, or sync it through LumaRig Cloud.</small></div><div><button disabled={!libraryReady || transitionBusy} onClick={() => void newShowProject()}>＋ New Show</button><button onClick={()=>void importShowPackageFile()}>Import .lumarigshow</button><button onClick={()=>void exportShowPackage()}>Export Current</button><button onClick={()=>void saveShowProject('template')}>Save Template</button><button onClick={()=>void saveShowProject('draft')}>Save Draft</button><button className="console-primary" onClick={()=>void saveShowProject('show')}>Save Service Show</button></div></header>
+          <div className="show-recovery"><span role="status">{saveStatus}</span>{showRecovery.length > 0 && <details><summary>Recovery · {showRecovery.length} previous Shows</summary>{showRecovery.map(item => <div key={item.id}><span>{item.show.name} · {new Date(item.savedAt).toLocaleString()}</span><button disabled={transitionBusy} onClick={() => void recoverShow(item)}>Restore Show</button></div>)}</details>}</div>
+          <section className="local-show-library-section">
+            <div className="library-section-heading"><div><small>THIS COMPUTER</small><strong>Local Library</strong></div><span>{showLibrary.length} saved</span></div>
+            <div className="show-library-grid">{showLibrary.length?showLibrary.map((item)=><article key={item.id}><div><span className={item.status}>{item.status.toUpperCase()}</span><strong>{item.name}</strong><small>{new Date(item.savedAt).toLocaleString()} · R{item.revision ?? 1} · {item.lastEditor ?? 'lumarig'} · {item.show.cues.length} cues · {item.patch.length} fixtures{item.cloudRevision ? ` · Cloud R${item.cloudRevision}` : ''}</small></div><div><button onClick={()=>void loadShowProject(item)}>Load</button><button onClick={()=>void exportShowPackage(item)}>Export</button><button className="danger-button" onClick={()=>void deleteShowProject(item.id)}>Delete Local</button></div></article>):<div className="empty-show-library"><strong>No saved shows yet</strong><span>Save the current show or a draft. Your working Show and songs autosave together.</span></div>}</div>
+          </section>
+          <section className="cloud-show-library-section">
+            <header className="cloud-library-header"><div><small>CLOUD SHOWS</small><strong>Available on every LumaRig computer</strong><span>Folders and version history live in Supabase. Local operation never depends on this connection.</span></div><b className={cloudStatus === 'synced' ? 'healthy' : cloudStatus === 'error' ? 'error' : ''}>{cloudStatus.toUpperCase()}</b></header>
+            <div className="cloud-library-toolbar">
+              <label><span>Folder</span><select value={cloudFolderId} onChange={(event)=>setCloudFolderId(event.target.value)}><option value="">Cloud Root</option>{cloudFolders.map((folder)=><option key={folder.id} value={folder.id}>{folder.name}</option>)}</select></label>
+              <label className="cloud-new-folder"><span>New folder</span><input value={cloudFolderName} placeholder="Weekend Services" onChange={(event)=>setCloudFolderName(event.target.value)} onKeyDown={(event)=>{if(event.key==='Enter')void createCloudFolderFromInput();}}/></label>
+              <button disabled={cloudBusy || !cloudFolderName.trim()} onClick={()=>void createCloudFolderFromInput()}>Create Folder</button>
+              <button disabled={cloudStatus === 'loading'} onClick={()=>void refreshCloudLibrary()}>{cloudStatus === 'loading' ? 'Refreshing…' : 'Refresh Cloud'}</button>
+            </div>
+            {cloudError && <p className="cloud-library-error">{cloudError}</p>}
+            <div className="show-library-grid cloud-show-grid">{cloudShows.filter((item)=>(item.folderId ?? '')===cloudFolderId).length ? cloudShows.filter((item)=>(item.folderId ?? '')===cloudFolderId).map((item)=><article key={item.showId}><div><span className={item.status}>{item.status.toUpperCase()}</span><strong>{item.name}</strong><small>{new Date(item.updatedAt).toLocaleString()} · Cloud R{item.revision} · {item.lastEditor}</small></div><div><button className="console-primary" onClick={()=>void importCloudShow(item)}>Download + Load</button></div></article>) : <div className="empty-show-library"><strong>No cloud shows in this folder</strong><span>Select a folder, refresh, or save the current Show while Cloud Relay is connected.</span></div>}</div>
+          </section>
         </div>}
 
         {showMode === 'sync' && <div className="show-sync-v3">
+          <section className="console-panel sync-status-card transport-engine-card"><header><div><span>TRANSPORT ENGINE</span><h2>Shared Playhead Authority</h2></div><b className={sharedTransport.playing?'healthy':''}>{sharedTransport.playing?'RUNNING':'READY'}</b></header><div className="sync-metrics"><span><small>OWNER</small><strong>{sharedTransport.source.toUpperCase()}</strong></span><span><small>POSITION</small><strong>{formatShowTime(sharedTransport.positionMs)}</strong></span><span><small>BPM</small><strong>{sharedTransport.bpm.toFixed(1)}</strong></span><span><small>REVISION</small><strong>R{sharedTransport.revision}</strong></span></div><p>One transport authority now arbitrates Timeline, Studio, MIDI, Ableton, LumaLive, Tracks, and ProPresenter. Local/Timeline control wins immediately; external sources cannot silently steal a live playhead lease.</p><button onClick={()=>{const result=transportEngineRef.current!.forceLocal({playing:false,positionMs:externalSongPositionMsRef.current,bpm:masterTempoBpm});setSharedTransport(result.state);setExternalTransportRunning(false);externalTransportRunningRef.current=false;setMessage('Transport authority returned to LumaRig.');}}>Take Local Authority</button></section>
+          <section className="console-panel sync-status-card connection-manager-card"><header><div><span>CONNECTION MANAGER</span><h2>Inputs + Integrations</h2></div><b>{connectionRecords.filter(item=>item.status==='connected').length} LIVE</b></header><div className="connection-registry-list">{connectionRecords.map(item=><article key={item.id} className={'connection-registry-item '+item.status}><span><strong>{item.name}</strong><small>{item.capabilities.join(' · ')}</small></span><span><b>{item.status.toUpperCase()}</b><small>{item.detail || item.lastError || 'Not connected'}</small></span></article>)}</div></section>
+          <section className="console-panel sync-status-card lumalive-sync-card">
+            <header><div><span>LUMALIVE · ABLETON</span><h2>Paired Transport</h2></div><b className={lumaLiveConnection && !lumaLiveError?'healthy':''}>{lumaLiveConnection ? lumaLiveError ? 'DEGRADED' : 'PAIRED' : lumaLiveEndpoint ? 'FOUND' : 'OFFLINE'}</b></header>
+            <div className="sync-metrics">
+              <span><small>LUMALIVE</small><strong>{lumaLiveState ? 'CONNECTED' : lumaLiveConnection ? 'CHECKING' : '—'}</strong></span>
+              <span><small>ABLETON</small><strong>{lumaLiveState?.bridgeConnected ? 'CONNECTED' : lumaLiveConnection ? 'OFFLINE' : '—'}</strong></span>
+              <span><small>BPM</small><strong>{lumaLiveState?.tempo?.toFixed(1) ?? '—'}</strong></span>
+              <span><small>POSITION</small><strong>{lumaLiveState ? formatShowTime(lumaLivePositionMs(lumaLiveState)) : '—'}</strong></span>
+            </div>
+            {lumaLiveState && <div className="lumalive-now"><strong>{lumaLiveState.currentSongTitle || 'Ableton transport'}</strong><span>{lumaLiveState.currentSectionName || (lumaLiveState.playing ? 'Playing' : 'Stopped')}</span></div>}
+            {!lumaLiveConnection && <>
+              <div className="settings-actions"><button disabled={lumaLiveBusy} onClick={()=>void detectLumaLive()}>{lumaLiveBusy?'Scanning…':'Detect LumaLive'}</button></div>
+              {lumaLiveEndpoint && <div className="lumalive-pair-row"><input inputMode="numeric" maxLength={6} value={lumaLivePairCode} placeholder="6-digit code" onChange={event=>setLumaLivePairCode(event.target.value.replace(/\D/g,'').slice(0,6))}/><button className="console-primary" disabled={lumaLiveBusy||lumaLivePairCode.length!==6} onClick={()=>void pairDetectedLumaLive()}>Pair</button></div>}
+            </>}
+            {lumaLiveConnection && <div className="settings-actions"><button className="console-primary" onClick={()=>void controlLumaLive('start_playback')}>Play Ableton</button><button onClick={()=>void controlLumaLive('stop_playback')}>Stop Ableton</button><button onClick={()=>void detectLumaLive()}>Rescan</button><button className="danger-outline" onClick={forgetLumaLive}>Forget Pairing</button></div>}
+            {lumaLiveError && <p className="artnet-error">{lumaLiveError}</p>}
+            <small>LumaLive remains the Ableton owner. LumaRig follows its authenticated transport instead of creating a second competing LiveAPI controller.</small>
+          </section>
           <section className="console-panel sync-status-card"><header><div><span>LUMASTUDIO</span><h2>Transport Authority</h2></div><b className={studioBridgeStatus.connectedClients>0?'healthy':''}>{studioBridgeStatus.connectedClients>0?'CONNECTED':studioBridgeStatus.listening?'READY':'OFFLINE'}</b></header><div className="sync-metrics"><span><small>PORT</small><strong>{studioBridgeStatus.port}</strong></span><span><small>CLIENTS</small><strong>{studioBridgeStatus.connectedClients}</strong></span><span><small>TRANSPORT</small><strong>{externalTransportRunning?'FOLLOWING':'LOCAL'}</strong></span><span><small>AUTHORITY</small><strong>RIG LIGHTING</strong></span></div><p>Studio controls transport and song position. LumaRig keeps authority over cue execution, FX and DMX output.</p></section>
           <section className="console-panel sync-status-card"><header><div><span>MIDI</span><h2>Clock + Transport</h2></div><b className={midiStatus.connected?'healthy':''}>{midiStatus.connected?'CONNECTED':'OFFLINE'}</b></header><div className="sync-metrics"><span><small>INPUT</small><strong>{midiStatus.input_name || '—'}</strong></span><span><small>CLOCK</small><strong>{midiClockSeen?'SEEN':'WAITING'}</strong></span><span><small>BPM</small><strong>{midiBpm || effectBpm}</strong></span><span><small>MESSAGES</small><strong>{midiStatus.messages_received}</strong></span></div><button onClick={()=>{setWorkspace('build');setSetupView('settings');}}>Open Connections</button></section>
+          <section className="console-panel sync-status-card propresenter-sync-card">
+            <header><div><span>PROPRESENTER</span><h2>API + Video Feed</h2></div><b className={proPresenterStatus&&!proPresenterError?'healthy':''}>{proPresenterStatus ? proPresenterError ? 'DEGRADED' : 'CONNECTED' : 'OFFLINE'}</b></header>
+            <div className="propresenter-connect-row"><input value={proPresenterUrl} onChange={event=>setProPresenterUrl(event.target.value)} placeholder="http://127.0.0.1:50001"/><button disabled={proPresenterBusy} onClick={()=>void detectProPresenter()}>{proPresenterBusy?'Checking…':'Connect API'}</button></div>
+            {proPresenterStatus && <><div className="sync-metrics"><span><small>PRESENTATION</small><strong>{proPresenterSummary(proPresenterStatus).presentation || 'Active'}</strong></span><span><small>SLIDE</small><strong>{proPresenterSummary(proPresenterStatus).current || '—'}</strong></span><span><small>POSITION</small><strong>{proPresenterTransportMs(proPresenterStatus) == null ? '—' : formatShowTime(proPresenterTransportMs(proPresenterStatus)!)}</strong></span><span><small>TRANSPORT</small><strong>{sharedTransport.source==='propresenter' ? sharedTransport.playing ? 'FOLLOWING' : 'PAUSED' : 'STANDBY'}</strong></span><span><small>VIDEO</small><strong>{stageVideoInputs.length?'INPUT READY':'SCAN INPUTS'}</strong></span><span><small>API</small><strong>LOCAL</strong></span></div><div className="settings-actions"><button onClick={()=>void controlProPresenter('previous')}>Previous</button><button className="console-primary" onClick={()=>void controlProPresenter('next')}>Next</button><button onClick={()=>void controlProPresenter('play')}>Play Media</button><button onClick={()=>void controlProPresenter('pause')}>Pause Media</button><button onClick={()=>void controlProPresenter('timeline-play')}>Play Timeline</button><button onClick={()=>void controlProPresenter('timeline-pause')}>Pause Timeline</button></div></>}
+            {proPresenterError && <p className="artnet-error">{proPresenterError}</p>}
+            <small>Control uses ProPresenter's local HTTP API. Visual content still reaches LumaRig screens through the NDI / virtual-video-input route.</small>
+          </section>
           <section className="console-panel sync-status-card"><header><div><span>LUMAVIZ</span><h2>Preview + Shared Show</h2></div><b className={directStatus.clients>0?'healthy':''}>{directStatus.clients>0?'CONNECTED':directStatus.listening?'READY':'OFFLINE'}</b></header><div className="sync-metrics"><span><small>DIRECT PORT</small><strong>{directStatus.port}</strong></span><span><small>CLIENTS</small><strong>{directStatus.clients}</strong></span><span><small>FRAMES</small><strong>{directStatus.framesSent}</strong></span><span><small>LOCATION</small><strong>{activeLocation?.name || '—'}</strong></span></div></section>
           <section className="console-panel external-track-console sync-track-card"><header><div><span>SYNC OFFSET</span><h2>{externalTrack.songName || 'Active Song'}</h2></div><b>{externalTrack.lightingOffsetMs} ms</b></header><label><span>Lighting Advance / Delay</span><input type="range" min="-5000" max="5000" step="10" value={externalTrack.lightingOffsetMs} onChange={(event)=>updateExternalTrack({lightingOffsetMs:Number(event.target.value)})}/></label><div className="inspector-pair"><label><span>BPM</span><input type="number" value={externalTrack.bpm} onChange={(event)=>updateExternalTrack({bpm:Number(event.target.value)})}/></label><label><span>Take</span><select value={externalTrack.recordingId} onChange={(event)=>assignExternalRecording(event.target.value)}><option value="">None</option>{showFile.recordings?.map((recording)=><option key={recording.id} value={recording.id}>{recording.name}</option>)}</select></label></div><button className={externalTrack.armed?'danger-button':'console-primary'} onClick={toggleExternalTrackArm}>{externalTrack.armed?'DISARM':'ARM SYNC'}</button></section>
         </div>}
@@ -4880,14 +6426,14 @@ export default function App() {
 
       {workspace === 'live' && <section className={`live-console live-console-v3 ${liveView === 'performance' ? 'controller-live-view' : ''}`}>
         {liveView !== 'performance' && <header className="live-command-bar">
-          <div className="live-show-state"><small>LIVE PERFORMANCE</small><strong>{showFile.name}</strong><span>{dmxStatus.blackout ? 'BLACKOUT ACTIVE' : liveEffectLabel ? `FX · ${liveEffectLabel}` : 'LOCAL CONTROL'}</span></div>
+          <div className="live-show-state"><small>LIVE PERFORMANCE</small><strong>{showFile.name}</strong><span>{blackoutActive ? 'BLACKOUT ACTIVE' : liveEffectLabel ? `FX · ${liveEffectLabel}` : 'LOCAL CONTROL'}</span></div>
           <div className="live-cue-deck">
             <button className="live-back" onClick={goPreviousCue}>BACK</button>
             <div className="live-cue-card current"><small>CURRENT</small><strong>{activeCue?.name ?? 'Ready'}</strong><span>{activeCue ? `Cue ${activeCue.number}` : 'No cue running'}</span></div>
             <button className="live-go-v3" onClick={goNextCue} disabled={!nextCue}><b>GO</b><small>{nextCue?.name ?? 'END'}</small></button>
             <div className="live-cue-card next"><small>NEXT</small><strong>{nextCue?.name ?? 'End of show'}</strong><span>{nextCue ? `Cue ${nextCue.number}` : '—'}</span></div>
           </div>
-          <button className={`live-blackout-v3 ${dmxStatus.blackout?'active':''}`} onClick={toggleBlackout}>{dmxStatus.blackout?'RELEASE':'BLACKOUT'}</button>
+          <button className={`live-blackout-v3 ${blackoutActive?'active':''}`} onClick={toggleBlackout}>{blackoutActive?'RELEASE':'BLACKOUT'}</button>
         </header>}
 
         <nav className="live-view-tabs">{([
@@ -4901,7 +6447,7 @@ export default function App() {
           currentCue={activeCue?.name ?? 'READY'}
           currentCueNumber={activeCue?.number}
           nextCue={nextCue?.name}
-          blackout={dmxStatus.blackout}
+          blackout={blackoutActive}
           outputHealthy={!dmxStatus.last_error}
           dmxConnected={dmxStatus.connected}
           master={globalMaster}
@@ -4979,7 +6525,7 @@ export default function App() {
         </div>}
 
         {liveView === 'masters' && <div className="live-detail-view live-masters-view">
-          <header><div><span>MASTER CONTROLS</span><h2>Output authority</h2></div><button className={`live-blackout-v3 ${dmxStatus.blackout?'active':''}`} onClick={toggleBlackout}>{dmxStatus.blackout?'RELEASE BLACKOUT':'BLACKOUT'}</button></header>
+          <header><div><span>MASTER CONTROLS</span><h2>Output authority</h2></div><button className={`live-blackout-v3 ${blackoutActive?'active':''}`} onClick={toggleBlackout}>{dmxStatus.blackout?'RELEASE BLACKOUT':'BLACKOUT'}</button></header>
           <div className="master-control-grid"><section><span>GRAND MASTER</span><strong>{globalMaster}%</strong><input type="range" min="0" max={settings.masterLimit} value={globalMaster} onChange={(event)=>applyGlobalMaster(Number(event.target.value))}/><div>{[0,10,25,50,75,100].map((value)=><button key={value} onClick={()=>applyGlobalMaster(value)}>{value}%</button>)}</div></section>{fixtureGroups.map((group)=><section key={group.id}><span>{group.name.toUpperCase()}</span><strong>{Math.round(groupMasters[group.id] ?? group.masterDefault)}%</strong><input type="range" min="0" max="100" value={Math.round(groupMasters[group.id] ?? group.masterDefault)} onChange={(event)=>applyGroupMaster(group,Number(event.target.value))}/><div><button onClick={()=>applyGroupMaster(group,0)}>0</button><button onClick={()=>applyGroupMaster(group,50)}>50</button><button onClick={()=>applyGroupMaster(group,100)}>FULL</button></div></section>)}</div>
         </div>}
 
@@ -4989,8 +6535,12 @@ export default function App() {
         </div>}
 
         {liveView === 'settings' && <div className="live-detail-view">
-          <header><div><span>LIVE SYSTEM STATUS</span><h2>Connections + safety</h2></div><button onClick={()=>{setWorkspace('build');setSetupView('settings');}}>OPEN CONNECTIONS</button></header>
-          <div className="live-settings-grid"><section className={dmxStatus.connected?'healthy':''}><span>DMX OUTPUT</span><strong>{dmxStatus.connected?'CONNECTED':'VIRTUAL OUTPUT'}</strong><small>{dmxStatus.device_name || 'No physical interface'}</small></section><section className={directStatus.clients>0?'healthy':''}><span>LUMAVIZ</span><strong>{directStatus.clients>0?'CONNECTED':'READY'}</strong><small>{directStatus.framesSent.toLocaleString()} frames sent</small></section><section className={studioBridgeStatus.connectedClients>0?'healthy':''}><span>LUMASTUDIO</span><strong>{studioBridgeStatus.connectedClients>0?'CONNECTED':'READY'}</strong><small>{studioBridgeStatus.connectedClients} client(s)</small></section><section className={midiStatus.connected?'healthy':''}><span>MIDI</span><strong>{midiStatus.connected?'CONNECTED':'OFFLINE'}</strong><small>{midiStatus.input_name || 'No input'}</small></section><section><span>MASTER LIMIT</span><strong>{settings.masterLimit}%</strong><small>Configured output ceiling</small></section><section className={dmxStatus.blackout?'danger':''}><span>BLACKOUT</span><strong>{dmxStatus.blackout?'ACTIVE':'CLEAR'}</strong><small>Output safety state</small></section></div>
+          <header><div><span>LIVE SYSTEM STATUS</span><h2>Connections + safety</h2></div><div><button className="console-primary" disabled={showPreflightBusy} onClick={()=>void runShowPreflight()}>{showPreflightBusy?'CHECKING…':'RUN SHOW PREFLIGHT'}</button><button onClick={()=>{setWorkspace('build');setSetupView('settings');}}>OPEN CONNECTIONS</button></div></header>
+          <div className="live-settings-grid"><section className={dmxStatus.connected?'healthy':''}><span>DMX OUTPUT</span><strong>{dmxStatus.connected?'CONNECTED':'VIRTUAL OUTPUT'}</strong><small>{dmxStatus.device_name || 'No physical interface'}</small></section><section className={directStatus.clients>0?'healthy':''}><span>LUMAVIZ</span><strong>{directStatus.clients>0?'CONNECTED':'READY'}</strong><small>{directStatus.framesSent.toLocaleString()} frames sent</small></section><section className={studioBridgeStatus.connectedClients>0?'healthy':''}><span>LUMASTUDIO</span><strong>{studioBridgeStatus.connectedClients>0?'CONNECTED':'READY'}</strong><small>{studioBridgeStatus.connectedClients} client(s)</small></section><section className={midiStatus.connected?'healthy':''}><span>MIDI</span><strong>{midiStatus.connected?'CONNECTED':'OFFLINE'}</strong><small>{midiStatus.input_name || 'No input'}</small></section><section><span>MASTER LIMIT</span><strong>{settings.masterLimit}%</strong><small>Configured output ceiling</small></section><section className={blackoutActive?'danger':''}><span>BLACKOUT</span><strong>{blackoutActive?'ACTIVE':'CLEAR'}</strong><small>Output safety state</small></section></div>
+          <section className={`show-preflight-panel ${showPreflightSummary?.level ?? 'idle'}`}>
+            <header><div><span>SHOW PREFLIGHT</span><strong>{showPreflightSummary?.label ?? 'NOT RUN'}</strong></div><small>{showPreflightItems.length ? 'Machine + show validation' : 'Run this after connecting your show hardware and media.'}</small></header>
+            {showPreflightItems.length ? <div className="show-preflight-list">{showPreflightItems.map((item)=><article key={item.id} className={item.level}><i/><span><strong>{item.label}</strong><small>{item.detail}</small></span><b>{item.level.toUpperCase()}</b></article>)}</div> : <div className="show-preflight-empty">Checks DMX, blackout, media, displays, assigned video inputs, Visualizer health, and supported Show size.</div>}
+          </section>
         </div>}
 
         <footer className="live-system-strip"><span className={dmxStatus.connected?'healthy':''}>● DMX {dmxStatus.connected?'ONLINE':'VIRTUAL'}</span><span className={directStatus.clients>0?'healthy':''}>● VIZ {directStatus.clients>0?'LINKED':'WAITING'}</span><span className={studioBridgeStatus.connectedClients>0?'healthy':''}>● STUDIO {studioBridgeStatus.connectedClients>0?'LINKED':'WAITING'}</span><span className={midiStatus.connected?'healthy':''}>● MIDI {midiStatus.connected?'ONLINE':'OFF'}</span><span>{liveEffectLabel?`FX ${liveEffectLabel.toUpperCase()}`:'FX IDLE'}</span><b>{formatShowTime(externalSongPositionMs || showTrackPositionMs)}</b></footer>

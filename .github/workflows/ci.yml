@@ -9,6 +9,10 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
 jobs:
   test:
     runs-on: macos-latest
@@ -33,6 +37,9 @@ jobs:
       - name: Install frontend dependencies
         run: npm ci
 
+      - name: Verify release version metadata
+        run: npm run check:version
+
       - name: Frontend tests
         run: npm test
 
@@ -42,9 +49,15 @@ jobs:
       - name: Native tests
         run: cargo test --manifest-path src-tauri/Cargo.toml
 
+      - name: Capture resolved Cargo lock
+        uses: actions/upload-artifact@v4
+        with:
+          name: resolved-cargo-lock
+          path: src-tauri/Cargo.lock
+
   browser:
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-node@v6
@@ -67,3 +80,37 @@ jobs:
           name: show-creator-browser-verification
           path: test-results
           if-no-files-found: ignore
+
+
+  windows-smoke:
+    name: Windows x64 smoke
+    runs-on: windows-latest
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v7
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: lts/*
+          cache: npm
+
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-pc-windows-msvc
+
+      - name: Install frontend dependencies
+        run: npm ci
+
+      - name: Verify release version metadata
+        run: npm run check:version
+
+      - name: Frontend tests
+        run: npm test
+
+      - name: Frontend production build
+        run: npm run build
+
+      - name: Native Windows compile check
+        run: cargo check --manifest-path src-tauri/Cargo.toml --target x86_64-pc-windows-msvc

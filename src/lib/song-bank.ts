@@ -1,6 +1,7 @@
 import { renumberCues, type ShowFile } from "./show";
 import { buildSectionCues, EMPTY_TIMELINE } from "./show-design";
 import type { PatchedFixture } from "./fixtures";
+import { nativeMediaLibraryAvailable, persistManagedMedia, readMediaAsset, readNativeMediaBlob } from "./media-library";
 
 import type { SongRecord } from "./song-record";
 export { isSongRecord, type SongRecord } from "./song-record";
@@ -195,6 +196,10 @@ export async function storeSongMedia(id: string, file: File): Promise<void> {
           tx.error ?? Error("Could not save media. Free disk space and retry."),
         );
     });
+    // The installed desktop keeps a native managed copy so media survives WebView
+    // cache eviction and can be included in portable backups. Browser preview keeps
+    // the IndexedDB path only.
+    if (nativeMediaLibraryAvailable()) await persistManagedMedia(id, file, file.name);
     // Analysis runs after the durable media write; unsupported codecs still import and play.
     void import('./media-waveform').then(({ waveformForBlob }) => waveformForBlob(file)).catch(() => {});
   } finally {
@@ -202,6 +207,13 @@ export async function storeSongMedia(id: string, file: File): Promise<void> {
   }
 }
 export async function readSongMedia(id: string): Promise<Blob | undefined> {
+  if (nativeMediaLibraryAvailable()) {
+    const asset = await readMediaAsset(id);
+    if (asset) {
+      if (asset.missing) return undefined;
+      return readNativeMediaBlob(id);
+    }
+  }
   const db = await mediaDatabase();
   try {
     return await new Promise<Blob | undefined>((resolve, reject) => {

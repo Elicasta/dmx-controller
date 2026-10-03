@@ -7,6 +7,8 @@ import './styles.css';
 import './operator-cleanup.css';
 import './song-bank.css';
 import './p0-refinement.css';
+import './media-library.css';
+import './cloud-account.css';
 
 ReactDOM.createRoot(document.getElementById('root')!).render(
   <React.StrictMode>

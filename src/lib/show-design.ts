@@ -705,6 +705,19 @@ export function isEffectRecipe(value: unknown): value is CustomEffect {
       (Array.isArray(e.lanes) &&
         e.lanes.length <= 16 &&
         e.lanes.every(lane))) &&
+    (e.stepTriggers === undefined ||
+      (Array.isArray(e.stepTriggers) &&
+        e.stepTriggers.length <= 64 &&
+        e.stepTriggers.every((trigger) =>
+          trigger &&
+          Number.isInteger(trigger.step) &&
+          finite(trigger.step,0,63) &&
+          typeof trigger.name === 'string' &&
+          trigger.name.length <= 180 &&
+          trigger.effect &&
+          trigger.effect.stepTriggers === undefined &&
+          isEffectRecipe(trigger.effect)
+        ))) &&
     (e.steps === undefined ||
       (Array.isArray(e.steps) &&
         e.steps.length <= 64 &&

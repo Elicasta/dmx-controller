@@ -1,6 +1,9 @@
 mod dmx;
 mod midi;
+mod media_library;
+mod lumalive;
 mod output;
+mod propresenter;
 mod studio_bridge;
 mod updates;
 mod video_export;
@@ -9,18 +12,89 @@ use dmx::{DmxEngine, DmxStatus};
 use midi::{MidiEngine, MidiEvent, MidiInputInfo, MidiStatus};
 use output::{artnet::ArtNetEngine, lumaviz_direct::LumaVizDirectEngine, udmx::UdmxDeviceInfo};
 use studio_bridge::{StudioBridge, StudioBridgeEnvelope, StudioBridgeResponse, StudioBridgeStatus};
-use tauri::{State, Manager};
+use tauri::{Manager, PhysicalPosition, State};
+use tauri::webview::{PermissionKind, PermissionResponse};
+
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct DisplayOutputInfo {
+    name: String,
+    width: u32,
+    height: u32,
+    x: i32,
+    y: i32,
+    primary: bool,
+}
+
+#[tauri::command]
+fn display_outputs(app: tauri::AppHandle) -> Result<Vec<DisplayOutputInfo>, String> {
+    let window = app
+        .get_webview_window("main")
+        .or_else(|| app.get_webview_window("stage-monitor"))
+        .or_else(|| app.get_webview_window("media-output"))
+        .ok_or("No LumaRig desktop window is available.")?;
+    let monitors = window.available_monitors().map_err(|error| error.to_string())?;
+    let primary = window.primary_monitor().map_err(|error| error.to_string())?;
+    Ok(monitors
+        .into_iter()
+        .map(|monitor| {
+            let position = monitor.position();
+            let size = monitor.size();
+            let is_primary = primary.as_ref().map(|candidate| {
+                let primary_position = candidate.position();
+                primary_position.x == position.x && primary_position.y == position.y
+            }).unwrap_or(false);
+            DisplayOutputInfo {
+                name: monitor.name().cloned().unwrap_or_else(|| "Display".to_string()),
+                width: size.width,
+                height: size.height,
+                x: position.x,
+                y: position.y,
+                primary: is_primary,
+            }
+        })
+        .collect())
+}
+
+fn move_output_to_secondary(window: &tauri::WebviewWindow) -> Result<bool, String> {
+    let monitors = window.available_monitors().map_err(|error| error.to_string())?;
+    if monitors.len() < 2 {
+        return Ok(false);
+    }
+
+    let primary = window.primary_monitor().map_err(|error| error.to_string())?;
+    let secondary = monitors.into_iter().find(|monitor| {
+        primary.as_ref().map(|primary| {
+            let left = monitor.position();
+            let right = primary.position();
+            left.x != right.x || left.y != right.y
+        }).unwrap_or(true)
+    });
+
+    let Some(monitor) = secondary else {
+        return Ok(false);
+    };
+    let position = monitor.position();
+    window
+        .set_fullscreen_on_monitor(PhysicalPosition::new(position.x as f64, position.y as f64))
+        .map_err(|error| error.to_string())?;
+    Ok(true)
+}
 
 #[tauri::command]
 fn open_media_output(app: tauri::AppHandle) -> Result<(), String> {
     if let Some(window) = app.get_webview_window("media-output") {
+        let _ = move_output_to_secondary(&window);
         return window.set_focus().map_err(|e| e.to_string());
     }
-    tauri::WebviewWindowBuilder::new(&app, "media-output", tauri::WebviewUrl::App("index.html?media-output=1".into()))
+    let window = tauri::WebviewWindowBuilder::new(&app, "media-output", tauri::WebviewUrl::App("index.html?media-output=1".into()))
         .title("LumaRig · Video Output")
         .inner_size(1280.0, 720.0)
         .min_inner_size(320.0, 180.0)
-        .build().map(|_| ()).map_err(|e| e.to_string())
+        .build()
+        .map_err(|e| e.to_string())?;
+    let _ = move_output_to_secondary(&window);
+    Ok(())
 }
 #[tauri::command]
 fn toggle_media_output_fullscreen(app: tauri::AppHandle) -> Result<(), String> {
@@ -29,15 +103,52 @@ fn toggle_media_output_fullscreen(app: tauri::AppHandle) -> Result<(), String> {
     window.set_fullscreen(!fullscreen).map_err(|e| e.to_string())
 }
 #[tauri::command]
+fn open_video_input_privacy_settings() -> Result<(), String> {
+    #[cfg(target_os = "macos")]
+    {
+        let status = std::process::Command::new("open")
+            .arg("x-apple.systempreferences:com.apple.preference.security?Privacy_Camera")
+            .status()
+            .map_err(|error| error.to_string())?;
+        return if status.success() { Ok(()) } else { Err("Could not open macOS Camera privacy settings.".into()) };
+    }
+
+    #[cfg(target_os = "windows")]
+    {
+        let status = std::process::Command::new("cmd")
+            .args(["/C", "start", "", "ms-settings:privacy-webcam"])
+            .status()
+            .map_err(|error| error.to_string())?;
+        return if status.success() { Ok(()) } else { Err("Could not open Windows Camera privacy settings.".into()) };
+    }
+
+    #[cfg(not(any(target_os = "macos", target_os = "windows")))]
+    {
+        Err("Open your system camera/privacy settings and allow LumaRig to access video inputs.".into())
+    }
+}
+
+#[tauri::command]
 fn open_stage_monitor(app: tauri::AppHandle) -> Result<(), String> {
     if let Some(window) = app.get_webview_window("stage-monitor") {
+        let _ = move_output_to_secondary(&window);
         return window.set_focus().map_err(|e| e.to_string());
     }
-    tauri::WebviewWindowBuilder::new(&app, "stage-monitor", tauri::WebviewUrl::App("index.html?stage-monitor=1".into()))
+    let window = tauri::WebviewWindowBuilder::new(&app, "stage-monitor", tauri::WebviewUrl::App("index.html?stage-monitor=1".into()))
         .title("LumaRig · Visualizer")
         .inner_size(1280.0, 800.0)
         .min_inner_size(720.0, 480.0)
-        .build().map(|_| ()).map_err(|e| e.to_string())
+        .build()
+        .map_err(|e| e.to_string())?;
+    let _ = move_output_to_secondary(&window);
+    Ok(())
+}
+
+#[tauri::command]
+fn toggle_stage_monitor_fullscreen(app: tauri::AppHandle) -> Result<(), String> {
+    let window = app.get_webview_window("stage-monitor").ok_or("Visualizer output is not open.")?;
+    let fullscreen = window.is_fullscreen().map_err(|e| e.to_string())?;
+    window.set_fullscreen(!fullscreen).map_err(|e| e.to_string())
 }
 
 
@@ -126,15 +237,54 @@ fn reply_studio_bridge(
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
+        .on_permission_request(|_, kind| match kind {
+            PermissionKind::Camera | PermissionKind::Microphone => PermissionResponse::Allow,
+            _ => PermissionResponse::Default,
+        })
         .plugin(tauri_plugin_updater::Builder::new().build())
+        .plugin(tauri_plugin_dialog::init())
         .manage(DmxEngine::new())
+        .manage(media_library::MediaLibraryState::default())
         .manage(ArtNetEngine::default())
         .manage(LumaVizDirectEngine::default())
         .manage(StudioBridge::new())
         .manage(MidiEngine::new())
         .manage(updates::UpdateState::default())
+        .setup(|app| {
+            if let Err(error) = media_library::restore_asset_scopes(app.handle()) {
+                eprintln!("media scope restore warning: {error}");
+            }
+            Ok(())
+        })
         .invoke_handler(tauri::generate_handler![
             open_stage_monitor,
+            toggle_stage_monitor_fullscreen,
+            display_outputs,
+            open_video_input_privacy_settings,
+            lumalive::scan_lumalive,
+            lumalive::pair_lumalive,
+            lumalive::lumalive_state,
+            lumalive::lumalive_command,
+            propresenter::propresenter_status,
+            propresenter::propresenter_command,
+            media_library::media_library_snapshot,
+            media_library::media_create_folder,
+            media_library::media_rename_folder,
+            media_library::media_delete_folder,
+            media_library::media_pick_import,
+            media_library::media_move_asset,
+            media_library::media_remove_asset,
+            media_library::media_relink_asset,
+            media_library::media_asset,
+            media_library::media_begin_managed_write,
+            media_library::media_append_managed_write,
+            media_library::media_finish_managed_write,
+            media_library::media_export_portable_backup,
+            media_library::media_import_portable_backup,
+            media_library::media_export_portable_package,
+            media_library::media_import_portable_package,
+            media_library::media_commit_portable_backup_restore,
+            media_library::media_cancel_portable_backup_restore,
             video_export::begin_video_export,
             video_export::append_video_export,
             video_export::finish_video_export,

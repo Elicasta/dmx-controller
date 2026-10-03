@@ -14,11 +14,17 @@ type Props = {
   onSelect: (song: SongRecord, mode: "creator" | "timeline") => void;
   onRename: (id: string, name: string) => void;
   onMedia: (song: SongRecord, file: File) => Promise<void>;
+  onAnalyzeTempo: (song: SongRecord) => Promise<void>;
+  onApplyTempo: (song: SongRecord, bpm: number) => void;
+  onOpenMediaLibrary: (song: SongRecord) => void;
+  onExport: (song: SongRecord | SongProgram) => void;
+  onImport: () => void;
 };
 export default function SongBank(p: Props) {
   const [query, setQuery] = useState(""),
     [name, setName] = useState(""),
     [busy, setBusy] = useState(""),
+    [tempoBusy, setTempoBusy] = useState(""),
     [error, setError] = useState("");
   const songs = songsForShow(p.show);
   async function attach(song: SongRecord, file?: File) {
@@ -41,10 +47,10 @@ export default function SongBank(p: Props) {
           <h2>Your songs, ready for the show.</h2>
           <p>
             Add a song, link its audio or MP4, then build sections and arrange
-            its timeline.
+            its timeline. File imports are copied into managed desktop storage.
           </p>
         </div>
-        <div><b>{songs.length} songs in this Show</b><p role="status">{p.saveStatus}</p></div>
+        <div><b>{songs.length} songs in this Show</b><p role="status">{p.saveStatus}</p><button type="button" onClick={p.onImport}>Import .lumarigsong</button></div>
       </header>
       <form
         onSubmit={(e) => {
@@ -79,7 +85,7 @@ export default function SongBank(p: Props) {
       <div className="song-bank-list">
         {songs
           .filter((s) =>
-            `${s.name} ${s.mediaName ?? ""}`
+            `${s.name} ${s.artist ?? ""} ${s.musicalKey ?? ""} ${s.arrangement?.join(' ') ?? ""} ${s.mediaName ?? ""}`
               .toLowerCase()
               .includes(query.toLowerCase()),
           )
@@ -108,12 +114,21 @@ export default function SongBank(p: Props) {
                     }}
                   />
                   <small>
-                    {song.bpm} BPM · {sections.length} sections · {cues.length}{" "}
+                    {song.bpm} BPM{song.musicalKey ? ` · ${song.musicalKey}` : ''}{song.artist ? ` · ${song.artist}` : ''} · {sections.length} sections · {cues.length}{" "}
                     cues
                   </small>
+                  {song.arrangement?.length ? <span className="song-arrangement">{song.arrangement.join(' → ')}</span> : null}
                   <span>
                     {song.mediaName || "Drop audio or MP4 here, or link media"}
                   </span>
+                  {song.tempoAnalysis ? <div className="song-tempo-analysis">
+                    <span><b>{song.tempoAnalysis.bpm} BPM detected</b><small>{Math.round(song.tempoAnalysis.confidence*100)}% confidence · downbeat {(song.tempoAnalysis.downbeatMs/1000).toFixed(2)}s{song.tempoAnalysis.manualDownbeat ? ' · corrected' : ''}</small></span>
+                    <div>
+                      <button disabled={tempoBusy===song.id} onClick={()=>p.onApplyTempo(song,song.tempoAnalysis!.bpm)}>Use {song.tempoAnalysis.bpm}</button>
+                      {song.tempoAnalysis.halfBpm && <button disabled={tempoBusy===song.id} onClick={()=>p.onApplyTempo(song,song.tempoAnalysis!.halfBpm!)}>½ · {song.tempoAnalysis.halfBpm}</button>}
+                      {song.tempoAnalysis.doubleBpm && <button disabled={tempoBusy===song.id} onClick={()=>p.onApplyTempo(song,song.tempoAnalysis!.doubleBpm!)}>2× · {song.tempoAnalysis.doubleBpm}</button>}
+                    </div>
+                  </div> : null}
                 </div>
                 <div className="song-bank-actions">
                   <label className="file-button">
@@ -134,6 +149,13 @@ export default function SongBank(p: Props) {
                       }}
                     />
                   </label>
+                  <button disabled={!song.mediaId || !!tempoBusy} onClick={()=>void (async()=>{
+                    if(tempoBusy)return;setTempoBusy(song.id);setError('');
+                    try{await p.onAnalyzeTempo(song)}catch(error){setError(error instanceof Error?error.message:String(error))}
+                    finally{setTempoBusy('')}
+                  })()}>{tempoBusy===song.id?'Analyzing…':song.tempoAnalysis?'Re-analyze Tempo':'Analyze Tempo'}</button>
+                  <button onClick={() => p.onOpenMediaLibrary(song)}>Media Library</button>
+                  <button onClick={() => p.onExport(song)}>Export Song</button>
                   <button disabled={!p.ready} onClick={() => void p.onSave(song)}>Save Song</button>
                   <button onClick={() => p.onSelect(song, "creator")}>
                     Build song
@@ -151,8 +173,8 @@ export default function SongBank(p: Props) {
         <div className="song-bank-list">
           {p.library.filter(item => item.show.name.toLowerCase().includes(query.toLowerCase())).map(item => (
             <article key={item.id}>
-              <div><strong>{item.show.name}</strong><small>{item.show.songs?.[0]?.bpm} BPM · {item.show.creatorSections?.length ?? 0} sections · {item.show.cues.length} cues · R{item.revision}</small><span>{item.show.songs?.[0]?.mediaName ?? 'No linked media'}</span></div>
-              <button disabled={!p.ready} onClick={() => p.onUse(item)}>Add to Show</button>
+              <div><strong>{item.show.name}</strong><small>{item.show.songs?.[0]?.bpm} BPM{item.show.songs?.[0]?.musicalKey ? ` · ${item.show.songs[0].musicalKey}` : ''}{item.show.songs?.[0]?.artist ? ` · ${item.show.songs[0].artist}` : ''} · {item.show.creatorSections?.length ?? 0} sections · {item.show.cues.length} cues · R{item.revision}</small>{item.show.songs?.[0]?.arrangement?.length ? <span className="song-arrangement">{item.show.songs[0].arrangement!.join(' → ')}</span> : <span>{item.show.songs?.[0]?.mediaName ?? 'No linked media'}</span>}</div>
+              <div className="song-bank-actions"><button onClick={() => p.onExport(item)}>Export Song</button><button disabled={!p.ready} onClick={() => p.onUse(item)}>Add to Show</button></div>
             </article>
           ))}
         </div>
@@ -162,8 +184,7 @@ export default function SongBank(p: Props) {
         <div className="song-bank-empty">
           <strong>Add your first song above.</strong>
           <p>
-            Media stays linked when you switch songs or reopen LumaRig on this
-            computer.
+            Media stays linked when you switch songs or reopen LumaRig. Use Media Library to reference files in place, relink missing files, or build a portable backup.
           </p>
         </div>
       )}

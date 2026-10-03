@@ -1,4 +1,5 @@
 import type { RealtimeChannel, SupabaseClient } from '@supabase/supabase-js';
+import { getLumaSupabaseClient } from './supabase-client';
 
 export type RemoteRelayConfig = {
   url: string;
@@ -7,6 +8,30 @@ export type RemoteRelayConfig = {
   password?: string;
   roomCode: string;
 };
+
+export const LUMARIG_CLOUD_URL = 'https://lmldxkukfksfswzbliuy.supabase.co';
+export const LUMARIG_CLOUD_PUBLISHABLE_KEY = 'sb_publishable_0t7OtaGP4O7zNxcYaGansw_2diBelTK';
+export const LEGACY_LUMARIG_CLOUD_URLS = ['https://jtvrrsyqvahslelpmtvv.supabase.co'] as const;
+
+function cleanRelayUrl(value: string) {
+  return value.trim().replace(/\/$/, '');
+}
+
+export function migrateRemoteRelayProject(config: RemoteRelayConfig) {
+  const url = cleanRelayUrl(config.url);
+  if (!LEGACY_LUMARIG_CLOUD_URLS.includes(url as typeof LEGACY_LUMARIG_CLOUD_URLS[number])) {
+    return { config: { ...config, url }, migrated: false };
+  }
+  return {
+    config: {
+      ...config,
+      url: LUMARIG_CLOUD_URL,
+      publishableKey: LUMARIG_CLOUD_PUBLISHABLE_KEY,
+      password: '',
+    },
+    migrated: true,
+  };
+}
 
 export type RemoteRelayStatus = 'disconnected' | 'connecting' | 'connected' | 'error';
 
@@ -50,15 +75,13 @@ export class RemoteRelay {
     await this.disconnect();
     this.setStatus('connecting', onStatus);
     const url = config.url.trim().replace(/\/$/, '');
-    const storageKey = `dmx-controller-relay-${new URL(url).hostname.replace(/[^a-z0-9]/gi, '-')}`;
-    const { createClient } = await import('@supabase/supabase-js');
-    const client = createClient(url, config.publishableKey.trim(), { auth: { persistSession: true, storageKey } });
+    const client = getLumaSupabaseClient(url, config.publishableKey);
     this.client = client;
 
     let session = (await client.auth.getSession()).data.session;
     const desiredEmail = config.email.trim().toLowerCase();
     if (!session || session.user.email?.toLowerCase() !== desiredEmail) {
-      if (!config.password) throw new Error('Enter the relay account password the first time this Mac connects.');
+      if (!config.password) throw new Error('Enter the relay account password the first time this computer connects.');
       const result = await client.auth.signInWithPassword({ email: desiredEmail, password: config.password });
       if (result.error) throw result.error;
       session = result.data.session;

@@ -23,6 +23,48 @@ describe('stage design helpers', () => {
     }
   });
 
+  it('validates persistent screen framing without accepting unsafe transforms', () => {
+    const screen = makeStageElement('led-screen', 0);
+    const framed = {
+      ...screen,
+      mediaSource: {
+        kind: 'timeline' as const,
+        sourceName: 'Timeline video',
+        fit: 'cover' as const,
+        scale: 1.5,
+        offsetX: .2,
+        offsetY: -.25
+      }
+    };
+    expect(isStageElement(framed)).toBe(true);
+    expect(isStageElement({ ...framed, mediaSource: { ...framed.mediaSource, scale: 4.1 } })).toBe(false);
+    expect(isStageElement({ ...framed, mediaSource: { ...framed.mediaSource, offsetY: -1.1 } })).toBe(false);
+  });
+
+  it('validates still image, color, and test-pattern screen sources', () => {
+    const screen = makeStageElement('led-screen', 0);
+    expect(isStageElement({
+      ...screen,
+      mediaSource: { kind: 'image', mediaId: 'asset-image-1', sourceName: 'Logo.png', fit: 'contain', scale: 1.2, offsetX: 0, offsetY: .1 }
+    })).toBe(true);
+    expect(isStageElement({
+      ...screen,
+      mediaSource: { kind: 'color', color: '#112233' }
+    })).toBe(true);
+    expect(isStageElement({
+      ...screen,
+      mediaSource: { kind: 'test-pattern', pattern: 'grid' }
+    })).toBe(true);
+    expect(isStageElement({
+      ...screen,
+      mediaSource: { kind: 'color', color: 'red' }
+    })).toBe(false);
+    expect(isStageElement({
+      ...screen,
+      mediaSource: { kind: 'test-pattern', pattern: 'unknown' }
+    })).toBe(false);
+  });
+
   it('creates independent warehouse instances', () => {
     const first = makeStageWarehouseElement('screen-16x9', 0);
     const second = makeStageWarehouseElement('screen-16x9', 1);

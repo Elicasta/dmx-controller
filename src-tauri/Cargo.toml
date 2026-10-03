@@ -1,7 +1,7 @@
 [package]
 name = "dmx-controller-mac-v1"
-version = "0.2.7"
-description = "Mac-first DMX controller with Anyma uDMX test output"
+version = "0.6.0"
+description = "Cross-platform LumaRig lighting controller and show engine"
 authors = ["EC Creative Studios"]
 edition = "2021"
 
@@ -10,14 +10,19 @@ name = "dmx_controller_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]
 
 [build-dependencies]
-tauri-build = { version = "2", features = [] }
+tauri-build = { version = "=2.7.0", features = [] }
 
 [dependencies]
-tauri = { version = "2", features = [] }
-tauri-plugin-updater = "2.11.0"
+tauri = { version = "=2.12.0", features = ["protocol-asset"] }
+tauri-plugin-updater = "=2.11.0"
+tauri-plugin-dialog = "=2.7.3"
+uuid = { version = "1", features = ["v4"] }
+zip = { version = "=2.4.2", default-features = false, features = ["deflate"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 tungstenite = "0.27"
 # Vendored libusb keeps the app independent from a Homebrew runtime dependency.
 rusb = { version = "0.9", features = ["vendored"] }
 midir = "0.10"
+
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
