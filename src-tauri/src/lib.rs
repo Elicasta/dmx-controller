@@ -144,6 +144,13 @@ fn open_stage_monitor(app: tauri::AppHandle) -> Result<(), String> {
     Ok(())
 }
 
+#[tauri::command]
+fn toggle_stage_monitor_fullscreen(app: tauri::AppHandle) -> Result<(), String> {
+    let window = app.get_webview_window("stage-monitor").ok_or("Visualizer output is not open.")?;
+    let fullscreen = window.is_fullscreen().map_err(|e| e.to_string())?;
+    window.set_fullscreen(!fullscreen).map_err(|e| e.to_string())
+}
+
 
 #[tauri::command]
 fn list_udmx_devices(engine: State<'_, DmxEngine>) -> Result<Vec<UdmxDeviceInfo>, String> {
@@ -251,6 +258,7 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             open_stage_monitor,
+            toggle_stage_monitor_fullscreen,
             display_outputs,
             open_video_input_privacy_settings,
             lumalive::scan_lumalive,
