@@ -72,10 +72,7 @@ jobs:
           test -n "$UPDATER_PRIVATE_KEY_PASSWORD" || (echo "Missing TAURI_SIGNING_PRIVATE_KEY_PASSWORD" && exit 1)
 
       - name: Set release version
-        run: npm version "${{ inputs.version }}" --no-git-tag-version --allow-same-version
-
-      - name: Sync native release version
-        run: npm run sync:release-version
+        run: npm run sync:release-version -- "${{ inputs.version }}"
 
       - name: Verify release version metadata
         run: npm run check:version
