@@ -1,8 +1,34 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { requestStageVideoInputs } from './StageMediaSurface';
+import { requestStageVideoInputs, resolveStageVideoInputDevice, StageVideoInputError, stageVideoReconnectDelay } from './StageMediaSurface';
 
 afterEach(() => {
   vi.unstubAllGlobals();
+});
+
+describe('NDI live recovery', () => {
+  it('follows the same named virtual input when its device id changes after restart', () => {
+    expect(resolveStageVideoInputDevice(
+      { kind: 'ndi', deviceId: 'old-device', sourceName: 'NDI Webcam Input' },
+      [{ deviceId: 'new-device', label: 'NDI Webcam Input' }],
+    )).toBe('new-device');
+  });
+
+  it('keeps the selected device id when it is still present', () => {
+    expect(resolveStageVideoInputDevice(
+      { kind: 'ndi', deviceId: 'selected', sourceName: 'NDI Webcam Input' },
+      [
+        { deviceId: 'selected', label: 'Camera A' },
+        { deviceId: 'other', label: 'NDI Webcam Input' },
+      ],
+    )).toBe('selected');
+  });
+
+  it('backs off transient failures but never loops on blocked permission', () => {
+    expect(stageVideoReconnectDelay(new DOMException('busy', 'NotReadableError'), 0)).toBe(500);
+    expect(stageVideoReconnectDelay(new DOMException('busy', 'NotReadableError'), 8)).toBe(4000);
+    expect(stageVideoReconnectDelay(new StageVideoInputError('permission-denied', 'blocked'), 0)).toBeNull();
+    expect(stageVideoReconnectDelay(new StageVideoInputError('unsupported', 'unsupported'), 0)).toBeNull();
+  });
 });
 
 describe('requestStageVideoInputs', () => {
