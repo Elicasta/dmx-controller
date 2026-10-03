@@ -114,7 +114,25 @@ export default function ShowTimelineEditor(props: Props) {
     const saved=Number(window.localStorage.getItem('lumarig.timeline-track-height.v1') || 80);
     return clamp(saved,44,140);
   });
+  const trackHeightDragRef=useRef<{pointerId:number;startY:number;startHeight:number}|null>(null);
   useEffect(()=>{window.localStorage.setItem('lumarig.timeline-track-height.v1',String(trackHeight));},[trackHeight]);
+  function beginTrackHeightDrag(e:PointerEvent<HTMLElement>){
+    if(e.button!==0)return;
+    e.preventDefault();
+    e.currentTarget.setPointerCapture(e.pointerId);
+    trackHeightDragRef.current={pointerId:e.pointerId,startY:e.clientY,startHeight:trackHeight};
+  }
+  function moveTrackHeightDrag(e:PointerEvent<HTMLElement>){
+    const drag=trackHeightDragRef.current;
+    if(!drag||drag.pointerId!==e.pointerId)return;
+    e.preventDefault();
+    setTrackHeight(clamp(drag.startHeight+(e.clientY-drag.startY),44,140));
+  }
+  function endTrackHeightDrag(e:PointerEvent<HTMLElement>){
+    if(trackHeightDragRef.current?.pointerId!==e.pointerId)return;
+    trackHeightDragRef.current=null;
+    if(e.currentTarget.hasPointerCapture(e.pointerId))e.currentTarget.releasePointerCapture(e.pointerId);
+  }
   const [snap, setSnap] = useState(1);
   const [followPlayhead, setFollowPlayhead] = useState(true);
   const followPlayheadRef = useRef(true);
@@ -656,6 +674,29 @@ export default function ShowTimelineEditor(props: Props) {
             }}
           />
         </label>
+      </div>
+      <div
+        className="timeline-track-height-drag"
+        role="separator"
+        aria-label="Resize Timeline tracks vertically"
+        aria-orientation="horizontal"
+        aria-valuemin={44}
+        aria-valuemax={140}
+        aria-valuenow={Math.round(trackHeight)}
+        tabIndex={0}
+        onPointerDown={beginTrackHeightDrag}
+        onPointerMove={moveTrackHeightDrag}
+        onPointerUp={endTrackHeightDrag}
+        onPointerCancel={endTrackHeightDrag}
+        onKeyDown={e=>{
+          if(e.key==='ArrowUp'||e.key==='ArrowDown'){
+            e.preventDefault();
+            setTrackHeight(value=>clamp(value+(e.key==='ArrowDown'?4:-4),44,140));
+          }else if(e.key==='Home'){e.preventDefault();setTrackHeight(44);}
+          else if(e.key==='End'){e.preventDefault();setTrackHeight(140);}
+        }}
+      >
+        <span>TRACK HEIGHT</span><i/><b>{Math.round(trackHeight)} px</b>
       </div>
       <ResizableWorkspace className="timeline-edit-layout" storageKey="lumarig.timeline-columns.v1" compactMode="stack" leftLabel="Cue / FX Library" rightEnabled={false} leftDefault={220} centerMinimum={480}>
         <aside className="timeline-cue-library">
