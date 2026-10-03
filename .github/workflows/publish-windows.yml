@@ -63,6 +63,12 @@ jobs:
       - name: Set release version
         run: npm version "${{ inputs.version }}" --no-git-tag-version --allow-same-version
 
+      - name: Sync native release version
+        run: npm run sync:release-version
+
+      - name: Verify release version metadata
+        run: npm run check:version
+
       - name: Inject updater public key
         shell: pwsh
         env:
