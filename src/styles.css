@@ -3352,7 +3352,9 @@ body,#root { min-width:0; width:100%; overflow:hidden; }
   scroll-margin-top:160px;
 }
 .show-bar-timeline[data-library-dragging="true"] .timeline-toolbar,
-.show-bar-timeline[data-library-dragging="true"] .timeline-toolbar *{
+.show-bar-timeline[data-library-dragging="true"] .timeline-toolbar *,
+.show-bar-timeline[data-library-dragging="true"] .timeline-inspector,
+.show-bar-timeline[data-library-dragging="true"] .timeline-inspector *{
   pointer-events:none!important;
 }
 @media(max-width:900px){
