@@ -27,7 +27,7 @@ const cargoMatch = packageSection.match(/^version\s*=\s*"([^"]+)"/m);
 if (!cargoMatch) throw new Error('Could not find [package] version in src-tauri/Cargo.toml.');
 
 const lock = readFileSync(cargoLockPath, 'utf8');
-const lockPattern = /(\[\[package\]\]\nname = "dmx-controller-mac-v1"\nversion = ")[^"]+(")/;
+const lockPattern = /(\[\[package\]\]\r?\nname = "dmx-controller-mac-v1"\r?\nversion = ")[^"]+(")/;
 const lockMatch = lock.match(lockPattern);
 if (!lockMatch) throw new Error('Could not find LumaRig package version in src-tauri/Cargo.lock.');
 
