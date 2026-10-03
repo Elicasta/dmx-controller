@@ -59,3 +59,52 @@ export function proPresenterSummary(status: ProPresenterStatus) {
     current: current.slice(0, 120),
   };
 }
+
+
+export function proPresenterTransportMs(status: ProPresenterStatus): number | null {
+  const value = status.presentationTransport;
+  if (typeof value !== 'number' || !Number.isFinite(value) || value < 0) return null;
+  return value * 1000;
+}
+
+export type ProPresenterTransportObservation = {
+  positionMs: number;
+  seenAt: number;
+  movingTicks: number;
+  stillTicks: number;
+};
+
+export function observeProPresenterTransport(
+  previous: ProPresenterTransportObservation | null,
+  positionMs: number,
+  seenAt: number,
+): ProPresenterTransportObservation {
+  if (!previous) {
+    return { positionMs, seenAt, movingTicks: 0, stillTicks: 0 };
+  }
+
+  const elapsed = Math.max(1, seenAt - previous.seenAt);
+  const delta = positionMs - previous.positionMs;
+  const movedForward = delta >= Math.max(40, elapsed * .08);
+  const jumped = Math.abs(delta) > Math.max(2000, elapsed * 3);
+
+  if (jumped) {
+    return { positionMs, seenAt, movingTicks: 0, stillTicks: 0 };
+  }
+
+  if (movedForward) {
+    return {
+      positionMs,
+      seenAt,
+      movingTicks: Math.min(8, previous.movingTicks + 1),
+      stillTicks: 0,
+    };
+  }
+
+  return {
+    positionMs,
+    seenAt,
+    movingTicks: 0,
+    stillTicks: Math.min(8, previous.stillTicks + 1),
+  };
+}
