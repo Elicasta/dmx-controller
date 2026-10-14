@@ -1172,3 +1172,33 @@ test('Select all, copy, paste and undo operate on Sections and fixture patch edi
   await page.getByRole('button',{name:'BUILD',exact:true}).click();await page.getByRole('button',{name:'Fixtures',exact:true}).click();await page.keyboard.press('Control+a');await page.keyboard.press('Control+c');await page.keyboard.press('Control+v');
   await expect.poll(()=>page.evaluate(()=>{const p=JSON.parse(localStorage.getItem('dmx-controller.patch.v1')??'[]');return (Array.isArray(p)?p:p.fixtures).length;})).toBe(8);await page.keyboard.press('Control+z');await expect.poll(()=>page.evaluate(()=>{const p=JSON.parse(localStorage.getItem('dmx-controller.patch.v1')??'[]');return (Array.isArray(p)?p:p.fixtures).length;})).toBe(4);
 });
+
+test('Super Scenes save, insert, rename and persist source-linked FX clips', async ({page})=>{
+  await seed(page);
+  await page.goto('/');
+  await page.getByRole('button',{name:'SHOW',exact:true}).click();
+  await page.getByRole('button',{name:'Show Creator',exact:true}).click();
+  await page.getByRole('button',{name:/Worship Song/}).click();
+  await page.getByRole('button',{name:'Build / Update 8 Sections',exact:true}).click();
+  await page.getByRole('button',{name:'Open Timeline ↗',exact:true}).click();
+  await expect(page.locator('.timeline-clip')).toHaveCount(8);
+  await page.getByLabel('Super Scene name').fill('Sunday Worship Lift');
+  await page.getByRole('button',{name:'Save composition'}).click();
+  await expect.poll(async()=>(await readShow(page)).superScenes?.length).toBe(1);
+  const saved=(await readShow(page)).superScenes[0];
+  expect(saved.clips).toHaveLength(8);
+  await page.getByLabel('Saved Super Scene').selectOption(saved.id);
+  await page.getByRole('button',{name:'Insert at playhead'}).click();
+  await expect(page.locator('.timeline-clip')).toHaveCount(16);
+  expect(new Set(((await readShow(page)).timelineShows?.[0]?.timeline?.clips??[]).map((c:any)=>c.id)).size).toBe(16);
+  await page.getByLabel('Super Scene name').fill('Sunday Worship Final');
+  await page.getByRole('button',{name:'Rename',exact:true}).click();
+  await expect.poll(async()=>(await readShow(page)).superScenes?.[0]?.name).toBe('Sunday Worship Final');
+  page.once('dialog',dialog=>void dialog.accept());
+  await page.getByRole('button',{name:'Delete',exact:true}).click();
+  await expect.poll(async()=>(await readShow(page)).superScenes?.length).toBe(0);
+  await page.reload();
+  await page.getByRole('button',{name:'SHOW',exact:true}).click();
+  await page.getByRole('button',{name:'Timeline',exact:true}).click();
+  await expect(page.locator('.timeline-clip')).toHaveCount(16);
+});
