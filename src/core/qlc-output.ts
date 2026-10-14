@@ -22,7 +22,7 @@ export class QlcOutputDriver implements OutputDriver {
   private error: string | undefined;
   private maxCommandsPerTick = 128;
 
-  constructor(private readonly send: QlcSender) {}
+  constructor(private readonly send: QlcSender, private readonly onFault: (error: Error) => void = () => {}) {}
 
   get active() { return this.enabled; }
 
@@ -30,7 +30,10 @@ export class QlcOutputDriver implements OutputDriver {
     this.disarm();
     this.error = undefined;
     this.enabled = true;
-    this.timer = setInterval(() => this.flush(), 25);
+    this.timer = setInterval(() => {
+      try { this.flush(); }
+      catch (error) { this.onFault(error instanceof Error ? error : new Error(String(error))); }
+    }, 25);
   }
 
   disarm(): void {
