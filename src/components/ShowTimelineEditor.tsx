@@ -1,8 +1,11 @@
 import { openMediaOutput } from "./MediaOutput";
+import type { SuperScene } from '../lib/super-scenes';
 import { waveformForBlob, displayPeaks, type Waveform } from '../lib/media-waveform';
 import { mediaWindow, mediaPosition, steppedBar } from '../lib/timeline-media';
 import ResizableWorkspace from './ResizableWorkspace';
 import TempoInput from './TempoInput';
+import { describeFx, filterFxCatalog, fxFamily, FX_FAMILIES, type FxFamily } from '../lib/fx-catalog';
+import './fx-browser.css';
 import {
   useEffect,
   useRef,
@@ -22,6 +25,11 @@ import {
   type TimelineTakeClip,
 } from "../lib/show-design";
 type Props = {
+  superScenes?: SuperScene[];
+  onSaveSuperScene?: (name:string)=>void;
+  onInsertSuperScene?: (sceneId:string, atBar:number, mode:'append'|'replace')=>void;
+  onDeleteSuperScene?: (sceneId:string)=>void;
+  onRenameSuperScene?: (sceneId:string,name:string)=>void;
   onRecord?: (bar:number,overdub:boolean)=>void;
   keepMediaOnRelease?: ()=>boolean;
   onImportVideoClip?: (file:File,startBar:number)=>void;
@@ -86,6 +94,9 @@ export default function ShowTimelineEditor(props: Props) {
   tempoLocked, onTempoLockChange,
   } = props;
   const [selectedLane,setSelectedLane]=useState(0);
+  const [superSceneName,setSuperSceneName]=useState('');
+  const [selectedSuperSceneId,setSelectedSuperSceneId]=useState('');
+  const activeSuperSceneId = props.superScenes?.some(scene=>scene.id===selectedSuperSceneId) ? selectedSuperSceneId : '';
   const recipes=props.fxRecipes ?? FX_RECIPES;
   const clipClipboard=useRef<Array<{kind:'cue'|'video'|'take';clip:TimelineClip|TimelineMediaClip|TimelineTakeClip}>>([]);
   const [selectedIds,setSelectedIds]=useState<Set<string>>(new Set());
@@ -93,6 +104,8 @@ export default function ShowTimelineEditor(props: Props) {
   const audioStarting = useRef(false);
   const playAttempt = useRef(0);
   const [libraryMode,setLibraryMode]=useState<"cues"|"fx"|"myfx">("cues");
+  const [fxQuery, setFxQuery] = useState('');
+  const [selectedFxFamily, setSelectedFxFamily] = useState<FxFamily>('All');
   const [localSelectedId, setLocalSelectedId] = useState("");
   const selectedId = props.selectedClipId ?? localSelectedId;
   useEffect(()=>{if(props.selectedClipId==='')setSelectedIds(new Set());},[props.selectedClipId]);
@@ -509,10 +522,10 @@ export default function ShowTimelineEditor(props: Props) {
       }}>
       <header className="creator-command">
         <div>
-          <span>BAR TIMELINE</span>
-          <h2>Arrange your show.</h2>
+          <span>SUPER SCENE / TIMELINE</span>
+          <h2>Compose your lighting.</h2>
           <p>
-            Drag cues into lanes. Stack lanes for color, motion and rhythm.
+            Drag linked cues and named effects into lanes. Stack color, movement and rhythm.
             Resize the right edge.
           </p>
         </div>
@@ -534,6 +547,19 @@ export default function ShowTimelineEditor(props: Props) {
           </button>
         </div>
       </header>
+      <section className="lumarig-super-scene-bar" aria-label="Reusable Super Scenes">
+        <div className="lumarig-super-scene-description"><strong>SUPER SCENES</strong><span>Save layered FX and cue arrangements. Insert them elsewhere with linked source cues.</span></div>
+        <input aria-label="Super Scene name" placeholder="Name this composition" value={superSceneName} onChange={e=>setSuperSceneName(e.target.value)} />
+        <button disabled={playing || !timeline.clips.length || !props.onSaveSuperScene} onClick={()=>props.onSaveSuperScene?.(superSceneName)}>Save composition</button>
+        <select aria-label="Saved Super Scene" value={props.superScenes?.some(s=>s.id===activeSuperSceneId)?activeSuperSceneId:''} onChange={e=>setSelectedSuperSceneId(e.target.value)}>
+          <option value="">Saved scenes ({props.superScenes?.length??0})</option>
+          {props.superScenes?.map(scene=><option key={scene.id} value={scene.id}>{scene.name} · {scene.clips.length} clips</option>)}
+        </select>
+        <button disabled={playing || !activeSuperSceneId || !props.onInsertSuperScene} onClick={()=>props.onInsertSuperScene?.(activeSuperSceneId,cursorRef.current,'append')}>Insert at playhead</button>
+        <button disabled={playing || !activeSuperSceneId || !props.onInsertSuperScene} onClick={()=>{if(window.confirm('Replace the lighting clips in this timeline? Audio and video will be preserved.'))props.onInsertSuperScene?.(activeSuperSceneId,0,'replace');}}>Replace lighting</button>
+        <button disabled={playing || !activeSuperSceneId || !superSceneName.trim() || !props.onRenameSuperScene} onClick={()=>props.onRenameSuperScene?.(activeSuperSceneId,superSceneName)}>Rename</button>
+        <button disabled={playing || !activeSuperSceneId || !props.onDeleteSuperScene} onClick={()=>{if(window.confirm('Delete saved Super Scene? Timeline clips already inserted are unaffected.'))props.onDeleteSuperScene?.(activeSuperSceneId);}}>Delete</button>
+      </section>
       <div className="timeline-toolbar">
         <button className="record-button" disabled={Boolean(props.keepMediaOnRelease?.())} onClick={()=>{pause();props.onRecord?.(cursorRef.current,false);}}>● Record</button>
         <button disabled={Boolean(props.keepMediaOnRelease?.())} onClick={()=>{pause();props.onRecord?.(cursorRef.current,true);}}>● Overdub</button>
@@ -625,12 +651,27 @@ export default function ShowTimelineEditor(props: Props) {
       </div>
       <ResizableWorkspace className="timeline-edit-layout" storageKey="lumarig.timeline-columns.v1" compactMode="stack" leftLabel="Cue / FX Library" rightEnabled={false} leftDefault={220} centerMinimum={480}>
         <aside className="timeline-cue-library">
-          <div className="timeline-library-tabs"><button aria-label="Cue library" aria-pressed={libraryMode==="cues"} onClick={()=>setLibraryMode("cues")}>Cues</button><button aria-pressed={libraryMode==="fx"} onClick={()=>setLibraryMode("fx")}>FX recipes</button><button aria-pressed={libraryMode==="myfx"} onClick={()=>setLibraryMode("myfx")}>My FX</button></div>
+          <div className="timeline-library-tabs"><button aria-label="Cue library" aria-pressed={libraryMode==="cues"} onClick={()=>setLibraryMode("cues")}>Cues</button><button aria-pressed={libraryMode==="fx"} onClick={()=>{setLibraryMode("fx");setSelectedFxFamily("All");}}>FX recipes</button><button aria-pressed={libraryMode==="myfx"} onClick={()=>{setLibraryMode("myfx");setSelectedFxFamily("All");}}>My FX</button></div>
           <header>
-            SHOW CUES <small>{cues.length}</small>
+            {libraryMode === 'cues' ? 'SHOW CUES' : libraryMode === 'myfx' ? 'SAVED FX' : 'FX LIBRARY'}
+            <small>{libraryMode === 'cues' ? cues.length : filterFxCatalog(recipes,{query:fxQuery,family:selectedFxFamily,savedOnly:libraryMode==='myfx'}).length}</small>
           </header>
-          <p>Drag to a lane or click to append.</p>
-          {libraryMode!=="cues" ? <><p>Target: {props.fxTargetName??"current group"} · FX {selectedLane+1}. Click to insert at the playhead or drag to a lane.</p>{recipes.filter(r=>libraryMode!=="myfx" || r.id.startsWith("custom:")).map(recipe=><button className="timeline-fx-recipe" key={recipe.id} draggable onDragStart={e=>{e.dataTransfer.setData("application/lumarig-fx",recipe.id);e.dataTransfer.effectAllowed="copy";}} onClick={()=>{checkpoint();props.onAddFx?.(recipe.id,cursorRef.current,selectedLane);}}><span>{recipe.name}<small>{recipe.category}</small></span></button>)}</> : cues.length ? (
+          {libraryMode !== 'cues' ? <>
+            <label className="lumarig-fx-search-label" htmlFor="lumarig-fx-search">Search effects</label>
+            <input id="lumarig-fx-search" className="lumarig-fx-search" type="search" value={fxQuery} placeholder="Name, motion, rhythm…" onChange={event=>setFxQuery(event.target.value)} />
+            <div className="lumarig-fx-families" role="group" aria-label="FX family filters">
+              {FX_FAMILIES.map(family=><button key={family} aria-pressed={selectedFxFamily===family} onClick={()=>setSelectedFxFamily(family)}>{family}</button>)}
+            </div>
+            <p className="lumarig-fx-target">Target: {props.fxTargetName ?? 'current group'} · Lane {selectedLane+1}. Click to insert at playhead or drag to lane.</p>
+            <div className="lumarig-fx-results">
+              {filterFxCatalog(recipes,{query:fxQuery,family:selectedFxFamily,savedOnly:libraryMode==='myfx'}).map(recipe=><button className="timeline-fx-recipe lumarig-fx-card" data-fx-family={fxFamily(recipe).toLowerCase()} key={recipe.id} draggable={Boolean(props.onAddFx)} onDragStart={e=>{e.dataTransfer.setData("application/lumarig-fx",recipe.id);e.dataTransfer.effectAllowed="copy";}} onClick={()=>{if(!props.onAddFx)return;checkpoint();props.onAddFx(recipe.id,cursorRef.current,selectedLane);}} disabled={!props.onAddFx} title={recipe.description}>
+                <span className="lumarig-fx-title"><strong>{recipe.name}</strong><small>{fxFamily(recipe)}</small></span>
+                <span className="lumarig-fx-description">{recipe.description}</span>
+                <span className="lumarig-fx-metadata">{describeFx(recipe)}</span>
+              </button>)}
+              {!filterFxCatalog(recipes,{query:fxQuery,family:selectedFxFamily,savedOnly:libraryMode==='myfx'}).length && <p className="lumarig-fx-empty">No effects found. Change the category or search.</p>}
+            </div>
+          </> : cues.length ? (
             cues.filter(c=>!props.songFilter||(c.trackName?.trim()||"Unfiled cues")===props.songFilter).map((c) => (
               <button
                 key={c.id}

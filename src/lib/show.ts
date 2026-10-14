@@ -1,4 +1,5 @@
 import { isSongRecord, type SongRecord } from './song-record';
+import { isSuperScene, type SuperScene } from './super-scenes';
 import { isEffectStack, isShowSection, isShowTimeline, type EffectStackLayer, type ShowSection, type ShowTimeline } from './show-design';
 import { applyUniverseUpdates, clampDmx, makeUniverse } from './dmx';
 import type { DmxUpdate } from './dmx';
@@ -113,6 +114,7 @@ export type ShowFile = {
   creatorSections?: ShowSection[];
   timeline?: ShowTimeline;
   timelineShows?: Array<{id:string;name:string;timeline:ShowTimeline}>;
+  superScenes?: SuperScene[];
   rundownSections?: ShowRundownSection[];
   version: 1 | 2 | 3 | 4;
   name: string;
@@ -200,6 +202,7 @@ export function isShowFile(value: unknown): value is ShowFile {
     return false;
   }
   if (candidate.timelineShows !== undefined && (!Array.isArray(candidate.timelineShows) || candidate.timelineShows.length > 100 || !candidate.timelineShows.every(item=>item && typeof item.id==='string' && typeof item.name==='string' && isShowTimeline(item.timeline)))) return false;
+  if (candidate.superScenes !== undefined && (!Array.isArray(candidate.superScenes) || candidate.superScenes.length > 100 || !candidate.superScenes.every(isSuperScene) || new Set(candidate.superScenes.map(s=>s.id)).size!==candidate.superScenes.length)) return false;
   if (candidate.rundownSections !== undefined && (!Array.isArray(candidate.rundownSections) || candidate.rundownSections.length > 64 || !candidate.rundownSections.every(section => section && typeof section.id === 'string' && typeof section.name === 'string'))) return false;
   if (candidate.songs !== undefined && (!Array.isArray(candidate.songs) || candidate.songs.length > 100 || !candidate.songs.every(isSongRecord) || new Set(candidate.songs.map(s => s.id)).size !== candidate.songs.length || new Set(candidate.songs.map(s => s.name.toLowerCase())).size !== candidate.songs.length)) return false;
   const cuesValid = candidate.cues.every((cue) => {
@@ -410,6 +413,7 @@ export function sanitizeShow(show: ShowFile): ShowFile {
     creatorSections: structuredClone(show.creatorSections ?? []),
     timeline: show.timeline ? structuredClone(show.timeline) : undefined,
     timelineShows: structuredClone(show.timelineShows ?? []),
+    superScenes: structuredClone((show.superScenes ?? []).filter(isSuperScene).slice(0, 100)),
     rundownSections: (show.rundownSections ?? []).slice(0, 64).map((section, index) => ({
       id: section.id.slice(0, 100) || `section-${index + 1}`,
       name: section.name.trim().slice(0, 64) || `Section ${index + 1}`
