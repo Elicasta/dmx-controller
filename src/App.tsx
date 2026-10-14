@@ -802,6 +802,7 @@ export default function App() {
   const [selectedDevice, setSelectedDevice] = useState('');
   const [dmxStatus, setDmxStatus] = useState<DmxStatus>({ connected: false, blackout: false, usb_writes: 0, channels_sent: 0 });
   const dmxConnectedRef = useRef(false);
+  const dmxHardwareBusyRef = useRef(false);
   const qlcBridgeRef = useRef<QlcWebSocketBridge | null>(null);
   const qlcOutputRef = useRef<QlcOutputDriver | null>(null);
   const qlcArmedRef = useRef(false);
@@ -1270,7 +1271,7 @@ export default function App() {
   }, []);
 
   function connectQlc() {
-    if (dmxConnectedRef.current) { setQlcMessage('Disconnect native uDMX before connecting QLC+.'); return; }
+    if (dmxConnectedRef.current || dmxHardwareBusyRef.current) { setQlcMessage('Finish disconnecting native uDMX before connecting QLC+.'); return; }
     try {
       setQlcMessage('');
       qlcBridgeRef.current!.connect(
@@ -1311,7 +1312,7 @@ export default function App() {
   }
 
   function armQlc() {
-    if (dmxConnectedRef.current) { setQlcMessage('Disconnect native uDMX before switching output.'); return; }
+    if (dmxConnectedRef.current || dmxHardwareBusyRef.current) { setQlcMessage('Disconnect native uDMX before switching output.'); return; }
     if (qlcStatus!=='connected' || qlcProjectLoaded!==true) {
       setQlcMessage('Connect QLC+ and load a project with a configured output interface first.'); return;
     }
@@ -2488,7 +2489,8 @@ export default function App() {
 
   async function connectDmx() {
     if (qlcArmedRef.current) { setMessage('Disarm QLC+ before connecting native uDMX.'); return; }
-    if (!selectedDevice) return;
+    if (!selectedDevice || dmxHardwareBusyRef.current) return;
+    dmxHardwareBusyRef.current = true;
     setBusy(true);
     try {
       await invoke('connect_dmx', { deviceKey: selectedDevice });
@@ -2496,17 +2498,19 @@ export default function App() {
       await refreshDmxStatus();
       setMessage('uDMX connected. The current control-station output is live.');
     } catch (error) { setMessage(`Connection failed: ${String(error)}`); }
-    finally { setBusy(false); }
+    finally { dmxHardwareBusyRef.current = false; setBusy(false); }
   }
 
   async function disconnectDmx() {
+    if(dmxHardwareBusyRef.current) return;
+    dmxHardwareBusyRef.current = true;
     stopFade(); stopEffect(false); setAudioArmed(false); setBusy(true);
     try {
       await invoke('disconnect_dmx');
       await refreshDmxStatus();
       setMessage('uDMX output zeroed and disconnected.');
     } catch (error) { setMessage(`Disconnect failed: ${String(error)}`); }
-    finally { setBusy(false); }
+    finally { dmxHardwareBusyRef.current = false; setBusy(false); }
   }
 
   async function zeroAll() {
