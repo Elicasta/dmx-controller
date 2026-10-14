@@ -1276,6 +1276,7 @@ export default function App() {
       qlcBridgeRef.current!.connect(
         status => {
           setQlcStatus(status);
+          if (status !== 'connected') { setQlcProjectLoaded(null); setQlcFunctions([]); }
           if (status !== 'connected' && qlcArmedRef.current) {
             qlcOutputRef.current?.disarm();
             qlcArmedRef.current = false;
@@ -1317,6 +1318,8 @@ export default function App() {
     try {
       // Mute external output while its complete initial frame is transferred.
       qlcBridgeRef.current!.send({type:'grand-master',value:0});
+      // Any QLC+ functions launched earlier must release their output layers first.
+      for(const item of qlcFunctions) qlcBridgeRef.current!.send({type:'function',id:item.id,running:false});
       qlcOutputRef.current!.arm();
       qlcOutputRef.current!.sendFrame(1, outputUniverseRef.current);
       // 4 flushes synchronize 512 channel states before opening Grand Master.
