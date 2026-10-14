@@ -12,6 +12,7 @@ Keep LumaRig's song-first workflow and application identity. Use Daslight 5 as i
 - Original drag/drop and playhead insertion routes remain.
 - Timeline heading uses the Super Scene terminology; it already supports independent lane clips linked by cue ID.
 - Add a documented QLC+ 5 WebSocket protocol adapter with checked commands and feedback parsing.
+- Add a QLC+ connection tester under **BUILD → Connections**: manual connect/disconnect, project presence, function discovery, and explicit start/stop controls. It blocks these controls while native uDMX is connected.
 - The adapter defaults to localhost, requires an explicit connection, and does not run by default.
 - Momentary button holds are released on planned disconnect or reconnection; persistent fader levels are not treated as momentary holds.
 
@@ -30,7 +31,7 @@ Samples:
 - `18|NEXT` advances cue list widget 18.
 - `GM_VALUE|0` sets QLC+'s Grand Master to zero.
 
-**Important**: The typed adapter is available for integration work but is **not yet connected** to LumaRig's running output pipeline, show patches, Supabase PWA, or Live controller. Those require a real QLC+ install, functions/widget mapping, lifecycle management, authentication policy and end-to-end tests. This PR does not claim physical fixture compatibility.
+**Important**: The Connections tester uses the typed adapter, but this is **not yet connected** to LumaRig's running output pipeline, show patches, Supabase PWA, or Live controller. Those require a real QLC+ install, functions/widget mapping, lifecycle management, authentication policy and end-to-end tests. This PR does not claim physical fixture compatibility.
 
 ### Safety rules before live DMX tests
 
@@ -43,7 +44,7 @@ Samples:
 
 ## Follow-up implementation order
 
-1. **QLC+ diagnostics panel**: connect/disconnect, project state, discover functions and widgets, validate bindings, track status.
+1. **QLC+ diagnostics improvements**: add widget discovery and binding validation, live function status and reconnect telemetry to the initial manual tester.
 2. **Engine abstraction**: map LumaRig commands to native or QLC+ backend with exclusive per-universe output ownership.
 3. **Two-way controls**: bind iPad/PWA scene buttons, faders, momentary bumps and blackout, ensure safe releases after disconnect.
 4. **Super Scene library**: preserve compositions as portable, versioned, cue-linked arrangements inside the show file, with duplicate, rename, rollback and cross-song reference validation.
