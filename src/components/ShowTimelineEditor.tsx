@@ -3,6 +3,8 @@ import { waveformForBlob, displayPeaks, type Waveform } from '../lib/media-wavef
 import { mediaWindow, mediaPosition, steppedBar } from '../lib/timeline-media';
 import ResizableWorkspace from './ResizableWorkspace';
 import TempoInput from './TempoInput';
+import { describeFx, filterFxCatalog, fxFamily, FX_FAMILIES, type FxFamily } from '../lib/fx-catalog';
+import './fx-browser.css';
 import {
   useEffect,
   useRef,
@@ -93,6 +95,8 @@ export default function ShowTimelineEditor(props: Props) {
   const audioStarting = useRef(false);
   const playAttempt = useRef(0);
   const [libraryMode,setLibraryMode]=useState<"cues"|"fx"|"myfx">("cues");
+  const [fxQuery, setFxQuery] = useState('');
+  const [selectedFxFamily, setSelectedFxFamily] = useState<FxFamily>('All');
   const [localSelectedId, setLocalSelectedId] = useState("");
   const selectedId = props.selectedClipId ?? localSelectedId;
   useEffect(()=>{if(props.selectedClipId==='')setSelectedIds(new Set());},[props.selectedClipId]);
@@ -627,10 +631,25 @@ export default function ShowTimelineEditor(props: Props) {
         <aside className="timeline-cue-library">
           <div className="timeline-library-tabs"><button aria-label="Cue library" aria-pressed={libraryMode==="cues"} onClick={()=>setLibraryMode("cues")}>Cues</button><button aria-pressed={libraryMode==="fx"} onClick={()=>setLibraryMode("fx")}>FX recipes</button><button aria-pressed={libraryMode==="myfx"} onClick={()=>setLibraryMode("myfx")}>My FX</button></div>
           <header>
-            SHOW CUES <small>{cues.length}</small>
+            {libraryMode === 'cues' ? 'SHOW CUES' : libraryMode === 'myfx' ? 'SAVED FX' : 'FX LIBRARY'}
+            <small>{libraryMode === 'cues' ? cues.length : filterFxCatalog(recipes,{query:fxQuery,family:selectedFxFamily,savedOnly:libraryMode==='myfx'}).length}</small>
           </header>
-          <p>Drag to a lane or click to append.</p>
-          {libraryMode!=="cues" ? <><p>Target: {props.fxTargetName??"current group"} · FX {selectedLane+1}. Click to insert at the playhead or drag to a lane.</p>{recipes.filter(r=>libraryMode!=="myfx" || r.id.startsWith("custom:")).map(recipe=><button className="timeline-fx-recipe" key={recipe.id} draggable onDragStart={e=>{e.dataTransfer.setData("application/lumarig-fx",recipe.id);e.dataTransfer.effectAllowed="copy";}} onClick={()=>{checkpoint();props.onAddFx?.(recipe.id,cursorRef.current,selectedLane);}}><span>{recipe.name}<small>{recipe.category}</small></span></button>)}</> : cues.length ? (
+          {libraryMode !== 'cues' ? <>
+            <label className="lumarig-fx-search-label" htmlFor="lumarig-fx-search">Search effects</label>
+            <input id="lumarig-fx-search" className="lumarig-fx-search" type="search" value={fxQuery} placeholder="Name, motion, rhythm…" onChange={event=>setFxQuery(event.target.value)} />
+            <div className="lumarig-fx-families" role="group" aria-label="FX family filters">
+              {FX_FAMILIES.map(family=><button key={family} aria-pressed={selectedFxFamily===family} onClick={()=>setSelectedFxFamily(family)}>{family}</button>)}
+            </div>
+            <p className="lumarig-fx-target">Target: {props.fxTargetName ?? 'current group'} · Lane {selectedLane+1}. Click to insert at playhead or drag to lane.</p>
+            <div className="lumarig-fx-results">
+              {filterFxCatalog(recipes,{query:fxQuery,family:selectedFxFamily,savedOnly:libraryMode==='myfx'}).map(recipe=><button className="timeline-fx-recipe lumarig-fx-card" data-fx-family={fxFamily(recipe).toLowerCase()} key={recipe.id} draggable={Boolean(props.onAddFx)} onDragStart={e=>{e.dataTransfer.setData("application/lumarig-fx",recipe.id);e.dataTransfer.effectAllowed="copy";}} onClick={()=>{if(!props.onAddFx)return;checkpoint();props.onAddFx(recipe.id,cursorRef.current,selectedLane);}} disabled={!props.onAddFx} title={recipe.description}>
+                <span className="lumarig-fx-title"><strong>{recipe.name}</strong><small>{fxFamily(recipe)}</small></span>
+                <span className="lumarig-fx-description">{recipe.description}</span>
+                <span className="lumarig-fx-metadata">{describeFx(recipe)}</span>
+              </button>)}
+              {!filterFxCatalog(recipes,{query:fxQuery,family:selectedFxFamily,savedOnly:libraryMode==='myfx'}).length && <p className="lumarig-fx-empty">No effects found. Change the category or search.</p>}
+            </div>
+          </> : cues.length ? (
             cues.filter(c=>!props.songFilter||(c.trackName?.trim()||"Unfiled cues")===props.songFilter).map((c) => (
               <button
                 key={c.id}
