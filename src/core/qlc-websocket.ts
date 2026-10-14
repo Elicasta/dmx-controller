@@ -18,7 +18,9 @@ export type QlcCommand =
 export type QlcEvent =
   | { type: 'grand-master'; value: number }
   | { type: 'function-status'; id: number; running: boolean }
-  | { type: 'widget-status'; id: number; value: string };
+  | { type: 'widget-status'; id: number; value: string }
+  | { type: 'functions-list'; functions: Array<{id:number;name:string}> }
+  | { type: 'project-loaded'; loaded: boolean };
 
 const integer = (n: number, label: string, min: number, max: number) => {
   if (!Number.isSafeInteger(n) || n < min || n > max) throw new Error(`Invalid ${label}.`);
@@ -45,6 +47,16 @@ export function encodeQlcCommand(command: QlcCommand): string {
 export function parseQlcEvent(raw: unknown): QlcEvent | null {
   if (typeof raw !== 'string' || raw.length > 8192) return null;
   const parts = raw.split('|');
+  if (parts[0] === 'QLC+API' && parts[1] === 'isProjectLoaded' && (parts[2] === 'true' || parts[2] === 'false'))
+    return {type:'project-loaded',loaded:parts[2]==='true'};
+  if (parts[0] === 'QLC+API' && parts[1] === 'getFunctionsList') {
+    const functions: Array<{id:number;name:string}> = [];
+    for (let i=2; i+1<parts.length; i+=2) {
+      const id = Number(parts[i]);
+      if (Number.isSafeInteger(id) && id>=0 && parts[i+1]) functions.push({id,name:parts[i+1]});
+    }
+    return {type:'functions-list',functions};
+  }
   if (parts[0] === 'GM_VALUE' && parts.length >= 2) {
     const v = Number(parts[1]);
     if (Number.isSafeInteger(v) && v >= 0 && v <= 255) return {type:'grand-master', value:v};
@@ -104,6 +116,7 @@ export class QlcWebSocketBridge {
       this.heldWidgets.clear();
       onStatus(this.state);
       socket.send(encodeQlcCommand({type:'query',target:'project'}));
+      socket.send(encodeQlcCommand({type:'query',target:'functions'}));
     });
     socket.addEventListener('message', (message: MessageEvent) => {
       if (this.socket !== socket) return;
