@@ -1,0 +1,91 @@
+/* LumaRig 3.0: named FX catalog, designed for quick recognition under show pressure. */
+.timeline-cue-library .lumarig-fx-search-label {
+  display:block;
+  margin:10px 0 5px;
+  color:#a5bac7;
+  font-size:10px;
+  font-weight:750;
+  letter-spacing:.06em;
+  text-transform:uppercase;
+}
+.timeline-cue-library .lumarig-fx-search {
+  display:block;
+  width:100%;
+  min-width:0;
+  height:36px;
+  padding:0 11px;
+  color:#f1f6fa;
+  background:#101a22;
+  border:1px solid #354653;
+  border-radius:6px;
+  outline-offset:2px;
+}
+.timeline-cue-library .lumarig-fx-search:focus-visible { outline:2px solid #8ed7ff; }
+.timeline-cue-library .lumarig-fx-families {
+  display:flex;
+  gap:5px;
+  flex-wrap:wrap;
+  margin:10px 0;
+}
+.timeline-cue-library .lumarig-fx-families button {
+  flex:0 0 auto;
+  width:auto;
+  min-width:0;
+  height:26px;
+  padding:0 9px;
+  border:1px solid #35424c;
+  border-radius:5px;
+  background:#131f27;
+  color:#aebcc7;
+  font-size:10px;
+  line-height:1;
+}
+.timeline-cue-library .lumarig-fx-families button[aria-pressed=true] {
+  border-color:#71d4c1;
+  background:#193c3a;
+  color:#e3fff9;
+}
+.timeline-cue-library .lumarig-fx-target {
+  margin:5px 0 9px;
+  color:#9eb2bf;
+  font-size:10px;
+  line-height:1.4;
+}
+.timeline-cue-library .lumarig-fx-results {
+  display:grid;
+  grid-template-columns:minmax(0,1fr);
+  gap:7px;
+  min-width:0;
+}
+.timeline-cue-library .lumarig-fx-card {
+  display:grid;
+  width:100%;
+  min-width:0;
+  height:auto;
+  min-height:78px;
+  padding:10px;
+  gap:5px;
+  text-align:left;
+  align-content:start;
+  border:1px solid #344650;
+  border-left:3px solid #91afc0;
+  border-radius:6px;
+  background:#111c23;
+  color:#ecf2f6;
+}
+.timeline-cue-library .lumarig-fx-card:hover:not(:disabled) { background:#1c2c35; border-color:#709cae; }
+.timeline-cue-library .lumarig-fx-card:focus-visible { outline:2px solid #8ed7ff; outline-offset:2px; }
+.timeline-cue-library .lumarig-fx-card[data-fx-family="color"] { border-left-color:#d96bb7; }
+.timeline-cue-library .lumarig-fx-card[data-fx-family="movement"] { border-left-color:#6baeff; }
+.timeline-cue-library .lumarig-fx-card[data-fx-family="dimmer"] { border-left-color:#e4c16d; }
+.timeline-cue-library .lumarig-fx-card[data-fx-family="chase"] { border-left-color:#76d3a3; }
+.timeline-cue-library .lumarig-fx-card[data-fx-family="custom"] { border-left-color:#b5a0ee; }
+.timeline-cue-library .lumarig-fx-title { display:flex; align-items:flex-start; justify-content:space-between; gap:6px; min-width:0; }
+.timeline-cue-library .lumarig-fx-title strong { flex:1; min-width:0; overflow-wrap:anywhere; font-size:11px; line-height:1.35; }
+.timeline-cue-library .lumarig-fx-title small { flex:none; color:#b8c8d0; font-size:9px; }
+.timeline-cue-library .lumarig-fx-description { font-size:10px; line-height:1.4; color:#a8bac5; }
+.timeline-cue-library .lumarig-fx-metadata { font-size:9px; letter-spacing:.03em; color:#73c9c4; text-transform:capitalize; }
+.timeline-cue-library .lumarig-fx-empty { font-size:11px; padding:12px 4px; color:#a6b6c3; }
+@media (max-width:780px) {
+  .timeline-cue-library .lumarig-fx-results { grid-template-columns:repeat(auto-fit,minmax(160px,1fr)); }
+}
