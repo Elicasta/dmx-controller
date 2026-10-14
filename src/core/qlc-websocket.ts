@@ -10,7 +10,7 @@ export const DEFAULT_QLC_URL = 'ws://127.0.0.1:9999/qlcplusWS';
 
 export type QlcCommand =
   | { type: 'function'; id: number; running: boolean }
-  | { type: 'widget'; id: number; value: number }
+  | { type: 'widget'; id: number; value: number; momentary?: boolean }
   | { type: 'cue-list'; id: number; action: 'PLAY' | 'STOP' | 'NEXT' | 'PREV' }
   | { type: 'grand-master'; value: number }
   | { type: 'query'; target: 'project' | 'functions' | 'widgets' };
@@ -91,7 +91,9 @@ export class QlcWebSocketBridge {
     this.disconnect();
     this.state = 'connecting';
     onStatus(this.state);
-    const socket = this.socketFactory(endpoint);
+    let socket: WebSocket;
+    try { socket = this.socketFactory(endpoint); }
+    catch (error) { this.state = 'disconnected'; onStatus(this.state); throw error; }
     this.socket = socket;
     socket.addEventListener('open', () => {
       if (this.socket !== socket) return;
@@ -122,7 +124,7 @@ export class QlcWebSocketBridge {
       throw new Error('QLC+ is disconnected. Lighting command was not sent.');
     const message = encodeQlcCommand(command);
     this.socket.send(message);
-    if (command.type === 'widget') {
+    if (command.type === 'widget' && command.momentary) {
       if (command.value === 0) this.heldWidgets.delete(command.id);
       else this.heldWidgets.add(command.id);
     }
@@ -136,6 +138,7 @@ export class QlcWebSocketBridge {
     this.socket?.close();
     this.socket = null;
     this.state = 'disconnected';
-    // Keep the IDs for release on reconnect after an unplanned network loss.
+    // Explicit disconnect releases holds. Unexpected socket loss keeps IDs for reconnect.
+    this.heldWidgets.clear();
   }
 }
