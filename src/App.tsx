@@ -10,6 +10,8 @@ import {type MediaOutputFrame} from './components/MediaOutput';
 import { fxLibrary } from './lib/fx-library';
 import RecorderTransport from './components/RecorderTransport';
 import QlcIntegrationPanel from './components/QlcIntegrationPanel';
+import { QlcWebSocketBridge, type QlcConnection, type QlcEvent } from './core/qlc-websocket';
+import { QlcOutputDriver } from './core/qlc-output';
 import { useEditHistory } from './lib/edit-history';
 import TempoPulse from './components/TempoPulse';
 import { useMediaOutputPublisher } from "./components/MediaOutput";
@@ -799,6 +801,17 @@ export default function App() {
   const [selectedDevice, setSelectedDevice] = useState('');
   const [dmxStatus, setDmxStatus] = useState<DmxStatus>({ connected: false, blackout: false, usb_writes: 0, channels_sent: 0 });
   const dmxConnectedRef = useRef(false);
+  const qlcBridgeRef = useRef<QlcWebSocketBridge | null>(null);
+  const qlcOutputRef = useRef<QlcOutputDriver | null>(null);
+  const qlcArmedRef = useRef(false);
+  const qlcFaultRef = useRef<(error: Error) => void>(() => {});
+  const [qlcStatus, setQlcStatus] = useState<QlcConnection>('disconnected');
+  const [qlcArmed, setQlcArmed] = useState(false);
+  const [qlcProjectLoaded, setQlcProjectLoaded] = useState<boolean | null>(null);
+  const [qlcFunctions, setQlcFunctions] = useState<Array<{id:number;name:string}>>([]);
+  const [qlcMessage, setQlcMessage] = useState('');
+  if (!qlcBridgeRef.current) qlcBridgeRef.current = new QlcWebSocketBridge();
+  if (!qlcOutputRef.current) qlcOutputRef.current = new QlcOutputDriver(command => qlcBridgeRef.current!.send(command), error => qlcFaultRef.current(error));
   const [busy, setBusy] = useState(false);
 
   const [fadeMs, setFadeMs] = useState(1000);
@@ -981,8 +994,9 @@ export default function App() {
   if (!outputRouterRef.current) {
     const router = new OutputRouter();
     router.register(virtualOutputRef.current);
+    router.register(qlcOutputRef.current);
     router.register(new CallbackOutputDriver('udmx', 'Anyma uDMX', async (outputUniverse, frame) => {
-      if (outputUniverse !== 1 || !dmxConnectedRef.current) return;
+      if (outputUniverse !== 1 || !dmxConnectedRef.current || qlcArmedRef.current) return;
       await invoke('set_universe', { values: frame });
     }));
     router.register(new ArtNetOutputDriver(() => ({
@@ -1229,6 +1243,90 @@ export default function App() {
       if (showTrackUrlRef.current) URL.revokeObjectURL(showTrackUrlRef.current);
     };
   }, [refreshDmxStatus, scanDevices, scanMidi]);
+
+  // QLC+ is an explicit alternative DMX transport. PWA and Ableton commands
+  // still enter the same LumaRig runtime, keeping a single lighting authority.
+  qlcFaultRef.current = error => {
+    qlcArmedRef.current = false;
+    setQlcArmed(false);
+    setQlcMessage('QLC+ output stopped: ' + error.message + '. Reconnect and arm manually.');
+    setMessage('QLC+ output is offline. Physical fixtures may retain their previous levels.');
+  };
+  useEffect(() => () => {
+    qlcOutputRef.current?.disarm();
+    qlcBridgeRef.current?.disconnect();
+  }, []);
+
+  function connectQlc() {
+    if (dmxConnectedRef.current) { setQlcMessage('Disconnect native uDMX before connecting QLC+.'); return; }
+    try {
+      setQlcMessage('');
+      qlcBridgeRef.current!.connect(
+        status => {
+          setQlcStatus(status);
+          if (status !== 'connected' && qlcArmedRef.current) {
+            qlcOutputRef.current?.disarm();
+            qlcArmedRef.current = false;
+            setQlcArmed(false);
+            setQlcMessage('QLC+ connection lost. Output disarmed. Manually reconnect and arm.');
+          }
+        },
+        (event: QlcEvent) => {
+          if(event.type==='functions-list') setQlcFunctions(event.functions);
+          if(event.type==='project-loaded') setQlcProjectLoaded(event.loaded);
+        },
+      );
+    } catch (error) { setQlcMessage(String(error)); setQlcStatus('disconnected'); }
+  }
+
+  function disarmQlc() {
+    if (qlcArmedRef.current && qlcStatus==='connected') {
+      try { qlcBridgeRef.current!.send({type:'grand-master',value:0}); }
+      catch (error) { setQlcMessage('QLC+ blackout command failed: ' + String(error)); }
+    }
+    qlcOutputRef.current?.disarm();
+    qlcArmedRef.current = false;
+    setQlcArmed(false);
+  }
+
+  function disconnectQlc() {
+    disarmQlc();
+    qlcBridgeRef.current?.disconnect();
+    setQlcStatus('disconnected');
+    setQlcProjectLoaded(null);
+    setQlcFunctions([]);
+  }
+
+  function armQlc() {
+    if (dmxConnectedRef.current) { setQlcMessage('Disconnect native uDMX before switching output.'); return; }
+    if (qlcStatus!=='connected' || qlcProjectLoaded!==true) {
+      setQlcMessage('Connect QLC+ and load a project with a configured output interface first.'); return;
+    }
+    try {
+      // Mute external output while its complete initial frame is transferred.
+      qlcBridgeRef.current!.send({type:'grand-master',value:0});
+      qlcOutputRef.current!.arm();
+      qlcOutputRef.current!.sendFrame(1, outputUniverseRef.current);
+      // 4 flushes synchronize 512 channel states before opening Grand Master.
+      for(let i=0;i<4;i++) qlcOutputRef.current!.flush();
+      qlcArmedRef.current = true;
+      setQlcArmed(true);
+      qlcBridgeRef.current!.send({type:'grand-master',value:dmxStatus.blackout?0:255});
+      setQlcMessage('QLC+ armed as exclusive DMX output for LumaRig. Existing PWA controls stay connected.');
+    } catch (error) {
+      qlcOutputRef.current?.disarm();
+      qlcArmedRef.current = false;
+      setQlcArmed(false);
+      try { qlcBridgeRef.current?.send({type:'grand-master',value:0}); } catch { /* disconnected */ }
+      setQlcMessage('QLC+ arm failed: '+String(error));
+    }
+  }
+
+  function sendQlcFunction(id: number, running: boolean) {
+    if (qlcArmedRef.current) { setQlcMessage('Function control is locked while LumaRig owns QLC+ DMX output.'); return; }
+    try { qlcBridgeRef.current!.send({type:'function',id,running}); setQlcMessage(`Sent ${running?'start':'stop'} to QLC+ function ${id}.`); }
+    catch (error) { setQlcMessage(String(error)); }
+  }
 
   function stopFade() {
     cueLaunchGenerationRef.current += 1;
@@ -2374,6 +2472,7 @@ export default function App() {
   }
 
   async function connectDmx() {
+    if (qlcArmedRef.current) { setMessage('Disarm QLC+ before connecting native uDMX.'); return; }
     if (!selectedDevice) return;
     setBusy(true);
     try {
@@ -2404,10 +2503,12 @@ export default function App() {
   async function setBlackoutState(active: boolean, source: ControlSource = 'ui') {
     try {
       const native='__TAURI_INTERNALS__' in window;
-      if(native)await invoke('set_blackout', { enabled: active });
+      if(qlcArmedRef.current && active) qlcBridgeRef.current!.send({type:'grand-master',value:0});
+      if(native && !qlcArmedRef.current) await invoke('set_blackout', { enabled: active });
       await dispatchControl({ type: 'blackout.set', active }, source);
+      if(qlcArmedRef.current && !active) qlcBridgeRef.current!.send({type:'grand-master',value:255});
       setDmxStatus(current=>({...current,blackout:active}));
-      if(native)await refreshDmxStatus();
+      if(native && !qlcArmedRef.current)await refreshDmxStatus();
       setMessage(active ? 'BLACKOUT active. Programmed values are preserved.' : 'Blackout released.');
     } catch (error) { setMessage(`Blackout failed: ${String(error)}`); }
   }
@@ -4301,8 +4402,9 @@ export default function App() {
       bpm,
       fxDepth: effectDepth / 100,
       tempoSource: tempoSource === 'midi' ? 'MIDI Clock' : 'Internal',
-      outputHealthy: !dmxStatus.last_error,
-      dmxConnected: dmxStatus.connected,
+      outputHealthy: qlcArmed ? qlcStatus==='connected' : !dmxStatus.last_error,
+      dmxConnected: dmxStatus.connected || qlcArmed,
+      outputEngine: qlcArmed ? 'QLC+' : dmxStatus.connected ? 'uDMX' : 'Virtual',
       midiConnected: midiStatus.connected,
       sync: { transport: externalTransportRunning ? 'playing' : 'stopped', clockHealthy: midiClockSeen, positionMs: externalSongPositionMs },
       recorder: { active: showRecordingActive, elapsedMs: showRecordingElapsedMs },
@@ -4350,7 +4452,7 @@ export default function App() {
       remotePublishTimerRef.current = null;
       remoteSnapshotHandlerRef.current?.();
     }, 120);
-  }, [remoteRelayStatus, showFile, activeCueId, globalMaster, dmxStatus, effectBpm, effectDepth, tempoSource, midiBpm, midiStatus, midiClockSeen, externalTransportRunning, externalSongPositionMs, showRecordingActive, showRecordingElapsedMs, activeEffect, patch, outputUniverse, fixtureGroups, groupMasters, savedLooks, stageView, stageMode, stageElements, selectedStageElementId, stageSettings, appVersion]);
+  }, [remoteRelayStatus, qlcArmed, qlcStatus, showFile, activeCueId, globalMaster, dmxStatus, effectBpm, effectDepth, tempoSource, midiBpm, midiStatus, midiClockSeen, externalTransportRunning, externalSongPositionMs, showRecordingActive, showRecordingElapsedMs, activeEffect, patch, outputUniverse, fixtureGroups, groupMasters, savedLooks, stageView, stageMode, stageElements, selectedStageElementId, stageSettings, appVersion]);
 
   const liveLumaVizPreview = directStatus.clients > 0 && lumaVizPreview && Date.now() - lumaVizPreview.timestamp < 1600
     ? lumaVizPreview
@@ -4458,10 +4560,10 @@ export default function App() {
           {setupView === 'groups' && <div className="group-assignment-view"><header><div><span>GROUP ASSIGNMENT</span><h2>Assign Fixtures to Groups</h2><p>Check fixtures on the left, then assign them to a real persisted show group.</p></div><button onClick={createFixtureGroup}>＋ Create Group</button></header><div className="group-card-grid">{fixtureGroups.map((group) => { const members = fixturesInGroup(patch, group); return <article className={`assignment-group-card ${selectedGroupId === group.id ? 'selected' : ''}`} key={group.id} style={{ '--group-color': group.labelColor } as import('react').CSSProperties}><button className="assignment-group-title" onClick={() => setSelectedGroupId(group.id)}><i style={{ background: group.labelColor }} /><span><strong>{group.name}</strong><small>{members.length} fixture{members.length === 1 ? '' : 's'}</small></span><b>•••</b></button><div>{members.map((fixture) => <span className="assigned-fixture" key={fixture.id}><i style={{ background: fixture.labelColor ?? group.labelColor }} /><span><strong>{fixture.name}</strong><small>{addressLabel(fixture.address)}</small></span><button aria-label={`Unassign ${fixture.name}`} onClick={() => unassignFixture(fixture.id)}>×</button></span>)}</div><button className="add-to-group" onClick={() => { setSelectedGroupId(group.id); assignCheckedFixtures(group); }}>＋ Add checked fixtures</button></article>; })}<button className="create-group-card" onClick={createFixtureGroup}><span>＋</span><strong>Create New Group</strong><small>Add an empty group to this show.</small></button></div></div>}
 
           {setupView === 'settings' && <div className="setup-scroll-area settings-console">
-            <section className="console-panel connection-console"><header><div><span>DMX OUTPUT</span><h2>Anyma uDMX</h2></div><b className={dmxStatus.connected ? 'healthy' : ''}>{dmxStatus.connected ? 'Connected' : 'Virtual only'}</b></header><label><span>USB Interface</span><select value={selectedDevice} onChange={(event) => setSelectedDevice(event.target.value)} disabled={dmxStatus.connected}><option value="">Select uDMX</option>{devices.map((device) => <option key={device.device_key} value={device.device_key}>{deviceLabel(device)}</option>)}</select></label><div className="settings-actions"><button onClick={scanDevices}>Scan USB</button>{dmxStatus.connected ? <button onClick={disconnectDmx}>Disconnect + zero</button> : <button className="console-primary" disabled={!selectedInfo?.likely_udmx || busy} onClick={connectDmx}>Connect uDMX</button>}<button onClick={zeroAll}>Zero all</button></div></section>
+            <section className="console-panel connection-console"><header><div><span>DMX OUTPUT</span><h2>Anyma uDMX</h2></div><b className={dmxStatus.connected ? 'healthy' : ''}>{dmxStatus.connected ? 'Connected' : 'Virtual only'}</b></header><label><span>USB Interface</span><select value={selectedDevice} onChange={(event) => setSelectedDevice(event.target.value)} disabled={dmxStatus.connected}><option value="">Select uDMX</option>{devices.map((device) => <option key={device.device_key} value={device.device_key}>{deviceLabel(device)}</option>)}</select></label><div className="settings-actions"><button onClick={scanDevices}>Scan USB</button>{dmxStatus.connected ? <button onClick={disconnectDmx}>Disconnect + zero</button> : <button className="console-primary" disabled={!selectedInfo?.likely_udmx || busy || qlcArmed} onClick={connectDmx}>Connect uDMX</button>}<button onClick={zeroAll}>Zero all</button></div></section>
             <section className="console-panel connection-console"><header><div><span>GENERAL MIDI</span><h2>Controller / Network Session</h2></div><b className={midiStatus.connected ? 'healthy' : ''}>{midiStatus.connected ? 'Listening' : 'Offline'}</b></header><label><span>MIDI Input</span><select value={selectedMidiInput} disabled={midiStatus.connected} onChange={(event) => setSelectedMidiInput(event.target.value)}><option value="">Select input</option>{midiInputs.map((input) => <option key={input.id} value={input.id}>{input.name}</option>)}</select></label><div className="settings-actions"><button onClick={scanMidi}>Scan MIDI</button>{midiStatus.connected ? <button onClick={disconnectMidi}>Disconnect</button> : <button className="console-primary" disabled={!selectedMidiInput} onClick={connectMidi}>Connect MIDI</button>}</div><div className="midi-event-monitor"><i className={midiStatus.last_event ? 'active' : ''} /><span><strong>{midiStatus.last_event || 'Waiting for MIDI'}</strong><small>{midiStatus.messages_received} messages · {midiClockSeen ? 'Clock detected' : 'No clock'}</small></span></div></section>
             <section className="console-panel midi-mapping-console"><header><div><span>MIDI ASSIGNER</span><h2>Map controls</h2></div><b>{midiMappings.length} mappings</b></header><div className="midi-add-row"><select value={newMidiTarget} onChange={(event) => setNewMidiTarget(event.target.value)}>{midiControlGroups.map(([group, controls]) => <optgroup key={group} label={group}>{controls.map((control) => <option key={control.id} value={control.id}>{control.label}</option>)}</optgroup>)}</select><button className="console-primary" onClick={() => beginMidiAssignment()}>Add + Learn</button></div><div className="midi-map-list">{midiMappings.map((mapping) => { const control = midiControls.find((item) => item.id === mapping.target); const learning = midiLearnMappingId === mapping.id; return <div className={`midi-map-row ${learning ? 'is-learning' : ''}`} key={mapping.id}><strong>{control?.label ?? 'Unavailable'}</strong><span>{learning ? 'Move or press a control…' : midiBindingLabel(mapping)}</span><button onClick={() => setMidiLearnMappingId(learning ? null : mapping.id)}>{learning ? 'Cancel' : 'Learn'}</button><button onClick={() => removeMidiAssignment(mapping.id)}>Remove</button></div>; })}</div></section>
-            <QlcIntegrationPanel nativeOutputConnected={dmxStatus.connected} />
+            <QlcIntegrationPanel nativeOutputConnected={dmxStatus.connected} connection={qlcStatus} armed={qlcArmed} projectLoaded={qlcProjectLoaded} functions={qlcFunctions} message={qlcMessage} onConnect={connectQlc} onDisconnect={disconnectQlc} onArm={armQlc} onDisarm={disarmQlc} onFunction={sendQlcFunction} />
             <section className="console-panel connection-console remote-relay-console"><header><div><span>REMOTE CONTROL · SEPARATE NETWORKS</span><h2>Secure Cloud Relay</h2></div><b className={remoteRelayStatus === 'connected' ? 'healthy' : ''}>{remoteRelayStatus}</b></header><p>Both this Mac and the Vercel controller connect outbound to one private Supabase Realtime channel. No router port forwarding is required.</p><label><span>Supabase Project URL</span><input value={remoteRelayConfig.url} placeholder="https://project.supabase.co" onChange={(event) => setRemoteRelayConfig((current) => ({ ...current, url: event.target.value }))} /></label><label><span>Publishable Key</span><input type="password" value={remoteRelayConfig.publishableKey} onChange={(event) => setRemoteRelayConfig((current) => ({ ...current, publishableKey: event.target.value }))} /></label><div className="inspector-pair"><label><span>Account Email</span><input type="email" value={remoteRelayConfig.email} onChange={(event) => setRemoteRelayConfig((current) => ({ ...current, email: event.target.value }))} /></label><label><span>Password · never stored</span><input type="password" value={remoteRelayConfig.password ?? ''} onChange={(event) => setRemoteRelayConfig((current) => ({ ...current, password: event.target.value }))} /></label></div><label><span>Room Code · use the same code on the remote</span><div className="relay-room-row"><input value={remoteRelayConfig.roomCode} onChange={(event) => setRemoteRelayConfig((current) => ({ ...current, roomCode: event.target.value }))} /><button onClick={() => setRemoteRelayConfig((current) => ({ ...current, roomCode: `${crypto.randomUUID().replace(/-/g, '')}${crypto.randomUUID().replace(/-/g, '')}` }))}>Generate</button></div></label>{remoteRelayError && <p className="relay-error">{remoteRelayError}</p>}<div className="settings-actions">{remoteRelayStatus === 'connected' ? <button onClick={disconnectRemoteRelay}>Disconnect relay</button> : <button className="console-primary" onClick={connectRemoteRelay}>Connect remote relay</button>}</div></section>
             <section className="console-panel connection-console studio-bridge-console"><header><div><span>STUDIO LINK · SHOW CONTROL</span><h2>LumaStudio</h2></div><b className={studioBridgeStatus.listening && !studioBridgeStatus.lastError ? 'healthy' : ''}>{studioBridgeStatus.lastError ? 'Error' : studioBridgeStatus.connectedClients > 0 ? 'Connected' : studioBridgeStatus.listening ? 'Ready' : 'Starting'}</b></header><p>Semantic show-control bridge for Studio transport, cue recall, recorded lighting, FX and blackout. Studio never sends raw DMX.</p><div className="artnet-health-grid"><div><span>ENDPOINT</span><strong>ws://127.0.0.1:{studioBridgeStatus.port}/studio</strong></div><div><span>CLIENTS</span><strong>{studioBridgeStatus.connectedClients}</strong></div><div><span>PROTOCOL</span><strong>studio-bridge-v1</strong></div><div><span>AUTHORITY</span><strong>LumaRig</strong></div></div>{studioBridgeStatus.lastError && <p className="artnet-error">Studio Bridge: {studioBridgeStatus.lastError}</p>}<small>The bridge starts automatically. If Studio closes, lighting continues locally in LumaRig.</small></section>
             <details className="console-panel legacy-visualizer-console"><summary>Legacy External Visualizer Bridges</summary><section className="connection-console visualizer-direct-console"><header><div><span>LEGACY LINK · SEMANTIC WEBSOCKET</span><h2>LumaRig Direct</h2></div><b className={directStatus.listening && !directStatus.lastError ? 'healthy' : ''}>{directStatus.clients > 0 ? 'Connected' : directStatus.listening ? 'Ready' : 'Error'}</b></header><p>Native semantic link for LumaViz. Sends resolved fixture identity, intensity, color, movement, beam and strobe without making LumaViz decode DMX.</p><div className="artnet-health-grid"><div><span>ENDPOINT</span><strong>ws://127.0.0.1:{directStatus.port}/lumaviz</strong></div><div><span>CLIENTS</span><strong>{directStatus.clients}</strong></div><div><span>FRAMES SENT</span><strong>{directStatus.framesSent.toLocaleString()}</strong></div><div><span>PROTOCOL</span><strong>fixture-frame-v1</strong></div></div>{directStatus.lastError && <p className="artnet-error">Direct: {directStatus.lastError}</p>}<small>LumaRig Direct starts automatically. Art-Net remains available below as the standard DMX-over-network fallback.</small></section>
