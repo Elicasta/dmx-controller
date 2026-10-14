@@ -13,6 +13,7 @@ export type QlcCommand =
   | { type: 'widget'; id: number; value: number; momentary?: boolean }
   | { type: 'cue-list'; id: number; action: 'PLAY' | 'STOP' | 'NEXT' | 'PREV' }
   | { type: 'grand-master'; value: number }
+  | { type: 'channel'; address: number; value: number }
   | { type: 'query'; target: 'project' | 'functions' | 'widgets' };
 
 export type QlcEvent =
@@ -37,6 +38,8 @@ export function encodeQlcCommand(command: QlcCommand): string {
       return `${integer(command.id,'cue list ID',0,2147483647)}|${command.action}`;
     case 'grand-master':
       return `GM_VALUE|${integer(command.value,'grand master',0,255)}`;
+    case 'channel':
+      return `CH|${integer(command.address,'absolute DMX address',1,512*512)}|${integer(command.value,'DMX value',0,255)}`;
     case 'query': {
       const request = {project:'isProjectLoaded',functions:'getFunctionsList',widgets:'getWidgetsList'}[command.target];
       return `QLC+API|${request}`;
