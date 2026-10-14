@@ -513,10 +513,10 @@ export default function ShowTimelineEditor(props: Props) {
       }}>
       <header className="creator-command">
         <div>
-          <span>BAR TIMELINE</span>
-          <h2>Arrange your show.</h2>
+          <span>SUPER SCENE / TIMELINE</span>
+          <h2>Compose your lighting.</h2>
           <p>
-            Drag cues into lanes. Stack lanes for color, motion and rhythm.
+            Drag linked cues and named effects into lanes. Stack color, movement and rhythm.
             Resize the right edge.
           </p>
         </div>
@@ -629,7 +629,7 @@ export default function ShowTimelineEditor(props: Props) {
       </div>
       <ResizableWorkspace className="timeline-edit-layout" storageKey="lumarig.timeline-columns.v1" compactMode="stack" leftLabel="Cue / FX Library" rightEnabled={false} leftDefault={220} centerMinimum={480}>
         <aside className="timeline-cue-library">
-          <div className="timeline-library-tabs"><button aria-label="Cue library" aria-pressed={libraryMode==="cues"} onClick={()=>setLibraryMode("cues")}>Cues</button><button aria-pressed={libraryMode==="fx"} onClick={()=>setLibraryMode("fx")}>FX recipes</button><button aria-pressed={libraryMode==="myfx"} onClick={()=>setLibraryMode("myfx")}>My FX</button></div>
+          <div className="timeline-library-tabs"><button aria-label="Cue library" aria-pressed={libraryMode==="cues"} onClick={()=>setLibraryMode("cues")}>Cues</button><button aria-pressed={libraryMode==="fx"} onClick={()=>{setLibraryMode("fx");setSelectedFxFamily("All");}}>FX recipes</button><button aria-pressed={libraryMode==="myfx"} onClick={()=>{setLibraryMode("myfx");setSelectedFxFamily("All");}}>My FX</button></div>
           <header>
             {libraryMode === 'cues' ? 'SHOW CUES' : libraryMode === 'myfx' ? 'SAVED FX' : 'FX LIBRARY'}
             <small>{libraryMode === 'cues' ? cues.length : filterFxCatalog(recipes,{query:fxQuery,family:selectedFxFamily,savedOnly:libraryMode==='myfx'}).length}</small>
