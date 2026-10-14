@@ -27,6 +27,10 @@ describe('QLC+ bridge protocol', () => {
     expect(parseQlcEvent('QLC+API|getFunctionStatus|3|Running')).toEqual({type:'function-status',id:3,running:true});
     expect(parseQlcEvent('QLC+API|getFunctionStatus|3|Stopped')).toEqual({type:'function-status',id:3,running:false});
     expect(parseQlcEvent('QLC+API|getWidgetStatus|9|255')).toEqual({type:'widget-status',id:9,value:'255'});
+    expect(parseQlcEvent('QLC+API|isProjectLoaded|true')).toEqual({type:'project-loaded',loaded:true});
+    expect(parseQlcEvent('QLC+API|getFunctionsList|7|Worship|18|Altar|')).toEqual({
+      type:'functions-list', functions:[{id:7,name:'Worship'},{id:18,name:'Altar'}],
+    });
     expect(parseQlcEvent('GM_VALUE|NaN')).toBeNull();
     expect(parseQlcEvent('random')).toBeNull();
   });
