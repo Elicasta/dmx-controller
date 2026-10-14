@@ -1002,7 +1002,7 @@ export default function App() {
       await invoke('set_universe', { values: frame });
     }));
     router.register(new ArtNetOutputDriver(() => ({
-      enabled: settingsRef.current.visualizerArtNetEnabled,
+      enabled: settingsRef.current.visualizerArtNetEnabled && !qlcArmedRef.current,
       target: settingsRef.current.visualizerArtNetTarget.trim() || '127.0.0.1'
     })));
     outputRouterRef.current = router;
@@ -2516,6 +2516,7 @@ export default function App() {
   async function zeroAll() {
     stopFade(); stopEffect(false); setAudioArmed(false);
     await commitUniverse(makeUniverse(), 'ui');
+    if (qlcArmedRef.current) for(let i=0;i<4;i++) qlcOutputRef.current?.flush();
     setMessage('All 512 programmed channels set to zero.');
   }
 
@@ -2525,7 +2526,11 @@ export default function App() {
       if(qlcArmedRef.current && active) qlcBridgeRef.current!.send({type:'grand-master',value:0});
       if(native && !qlcArmedRef.current) await invoke('set_blackout', { enabled: active });
       await dispatchControl({ type: 'blackout.set', active }, source);
-      if(qlcArmedRef.current && !active) qlcBridgeRef.current!.send({type:'grand-master',value:255});
+      if(qlcArmedRef.current && !active) {
+        // Send the restored frame in full before bringing QLC+ master back up.
+        for(let i=0;i<4;i++) qlcOutputRef.current?.flush();
+        qlcBridgeRef.current!.send({type:'grand-master',value:255});
+      }
       setDmxStatus(current=>({...current,blackout:active}));
       if(native && !qlcArmedRef.current)await refreshDmxStatus();
       setMessage(active ? 'BLACKOUT active. Programmed values are preserved.' : 'Blackout released.');
