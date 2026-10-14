@@ -1250,12 +1250,23 @@ export default function App() {
   qlcFaultRef.current = error => {
     qlcArmedRef.current = false;
     setQlcArmed(false);
+    try { if(qlcBridgeRef.current?.status==='connected') qlcBridgeRef.current.send({type:'grand-master',value:0}); }
+    catch { /* external output may retain its last physical values */ }
     setQlcMessage('QLC+ output stopped: ' + error.message + '. Reconnect and arm manually.');
     setMessage('QLC+ output is offline. Physical fixtures may retain their previous levels.');
   };
-  useEffect(() => () => {
-    qlcOutputRef.current?.disarm();
-    qlcBridgeRef.current?.disconnect();
+  useEffect(() => {
+    const shutdown = () => {
+      if (qlcArmedRef.current && qlcBridgeRef.current?.status==='connected') {
+        try { qlcBridgeRef.current.send({type:'grand-master',value:0}); }
+        catch { /* hard transport failure is reported separately */ }
+      }
+      qlcOutputRef.current?.disarm();
+      qlcArmedRef.current=false;
+      qlcBridgeRef.current?.disconnect();
+    };
+    window.addEventListener('beforeunload',shutdown);
+    return () => {window.removeEventListener('beforeunload',shutdown); shutdown();};
   }, []);
 
   function connectQlc() {
