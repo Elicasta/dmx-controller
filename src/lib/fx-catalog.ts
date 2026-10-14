@@ -17,7 +17,7 @@ export function describeFx(recipe: FxRecipe): string {
   const effect = recipe.effect;
   const shape = effect.motionShape?.replace(/-/g, ' ') || effect.waveform?.replace(/-/g, ' ') || 'custom';
   const beats = effect.cycleBeats;
-  return [shape, Number.isFinite(beats) && beats > 0 ? `${beats} beats` : null]
+  return [shape, typeof beats === 'number' && Number.isFinite(beats) && beats > 0 ? `${beats} beats` : null]
     .filter(Boolean).join(' · ');
 }
 
