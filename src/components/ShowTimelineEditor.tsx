@@ -96,6 +96,7 @@ export default function ShowTimelineEditor(props: Props) {
   const [selectedLane,setSelectedLane]=useState(0);
   const [superSceneName,setSuperSceneName]=useState('');
   const [selectedSuperSceneId,setSelectedSuperSceneId]=useState('');
+  const activeSuperSceneId = props.superScenes?.some(scene=>scene.id===selectedSuperSceneId) ? selectedSuperSceneId : '';
   const recipes=props.fxRecipes ?? FX_RECIPES;
   const clipClipboard=useRef<Array<{kind:'cue'|'video'|'take';clip:TimelineClip|TimelineMediaClip|TimelineTakeClip}>>([]);
   const [selectedIds,setSelectedIds]=useState<Set<string>>(new Set());
@@ -550,14 +551,14 @@ export default function ShowTimelineEditor(props: Props) {
         <div className="lumarig-super-scene-description"><strong>SUPER SCENES</strong><span>Save layered FX and cue arrangements. Insert them elsewhere with linked source cues.</span></div>
         <input aria-label="Super Scene name" placeholder="Name this composition" value={superSceneName} onChange={e=>setSuperSceneName(e.target.value)} />
         <button disabled={playing || !timeline.clips.length || !props.onSaveSuperScene} onClick={()=>props.onSaveSuperScene?.(superSceneName)}>Save composition</button>
-        <select aria-label="Saved Super Scene" value={props.superScenes?.some(s=>s.id===selectedSuperSceneId)?selectedSuperSceneId:''} onChange={e=>setSelectedSuperSceneId(e.target.value)}>
+        <select aria-label="Saved Super Scene" value={props.superScenes?.some(s=>s.id===activeSuperSceneId)?activeSuperSceneId:''} onChange={e=>setSelectedSuperSceneId(e.target.value)}>
           <option value="">Saved scenes ({props.superScenes?.length??0})</option>
           {props.superScenes?.map(scene=><option key={scene.id} value={scene.id}>{scene.name} · {scene.clips.length} clips</option>)}
         </select>
-        <button disabled={playing || !selectedSuperSceneId || !props.onInsertSuperScene} onClick={()=>props.onInsertSuperScene?.(selectedSuperSceneId,cursorRef.current,'append')}>Insert at playhead</button>
-        <button disabled={playing || !selectedSuperSceneId || !props.onInsertSuperScene} onClick={()=>{if(window.confirm('Replace the lighting clips in this timeline? Audio and video will be preserved.'))props.onInsertSuperScene?.(selectedSuperSceneId,0,'replace');}}>Replace lighting</button>
-        <button disabled={playing || !selectedSuperSceneId || !superSceneName.trim() || !props.onRenameSuperScene} onClick={()=>props.onRenameSuperScene?.(selectedSuperSceneId,superSceneName)}>Rename</button>
-        <button disabled={playing || !selectedSuperSceneId || !props.onDeleteSuperScene} onClick={()=>{if(window.confirm('Delete saved Super Scene? Timeline clips already inserted are unaffected.'))props.onDeleteSuperScene?.(selectedSuperSceneId);}}>Delete</button>
+        <button disabled={playing || !activeSuperSceneId || !props.onInsertSuperScene} onClick={()=>props.onInsertSuperScene?.(activeSuperSceneId,cursorRef.current,'append')}>Insert at playhead</button>
+        <button disabled={playing || !activeSuperSceneId || !props.onInsertSuperScene} onClick={()=>{if(window.confirm('Replace the lighting clips in this timeline? Audio and video will be preserved.'))props.onInsertSuperScene?.(activeSuperSceneId,0,'replace');}}>Replace lighting</button>
+        <button disabled={playing || !activeSuperSceneId || !superSceneName.trim() || !props.onRenameSuperScene} onClick={()=>props.onRenameSuperScene?.(activeSuperSceneId,superSceneName)}>Rename</button>
+        <button disabled={playing || !activeSuperSceneId || !props.onDeleteSuperScene} onClick={()=>{if(window.confirm('Delete saved Super Scene? Timeline clips already inserted are unaffected.'))props.onDeleteSuperScene?.(activeSuperSceneId);}}>Delete</button>
       </section>
       <div className="timeline-toolbar">
         <button className="record-button" disabled={Boolean(props.keepMediaOnRelease?.())} onClick={()=>{pause();props.onRecord?.(cursorRef.current,false);}}>● Record</button>
