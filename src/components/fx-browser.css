@@ -89,3 +89,35 @@
 @media (max-width:780px) {
   .timeline-cue-library .lumarig-fx-results { grid-template-columns:repeat(auto-fit,minmax(160px,1fr)); }
 }
+
+/* Reusable Super Scene controls keep the arranger usable at narrow widths. */
+.lumarig-super-scene-bar {
+  display:flex;
+  flex-wrap:wrap;
+  align-items:center;
+  gap:8px;
+  padding:12px;
+  margin:8px 0;
+  border:1px solid #30404c;
+  border-radius:9px;
+  background:#101a22;
+}
+.lumarig-super-scene-description {display:flex; flex:1 1 220px; flex-direction:column; min-width:180px; gap:4px;}
+.lumarig-super-scene-description strong {font-size:10px; font-weight:850; letter-spacing:.09em; color:#b0e8df;}
+.lumarig-super-scene-description span {font-size:10px; line-height:1.45; color:#a9bbc6;}
+.lumarig-super-scene-bar input,
+.lumarig-super-scene-bar select {
+  flex:1 1 130px; min-width:120px; max-width:260px;
+  height:36px; padding:0 10px; color:#eaf4fa; background:#0a1218;
+  border:1px solid #374653; border-radius:6px; font-size:11px;
+}
+.lumarig-super-scene-bar button {
+  flex:0 0 auto; min-height:36px; height:36px;
+  padding:0 10px; border:1px solid #40535e; border-radius:6px;
+  background:#1b2a32; color:#ebf4f7; font-size:11px;
+}
+.lumarig-super-scene-bar button:hover:not(:disabled) {background:#294350; border-color:#7fb0b7;}
+.lumarig-super-scene-bar button:focus-visible,
+.lumarig-super-scene-bar input:focus-visible,
+.lumarig-super-scene-bar select:focus-visible {outline:2px solid #9de5da; outline-offset:2px;}
+@media(max-width:850px) {.lumarig-super-scene-bar {align-items:stretch;} .lumarig-super-scene-description {flex-basis:100%;}}
