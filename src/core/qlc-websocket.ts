@@ -88,7 +88,8 @@ export class QlcWebSocketBridge {
     url = DEFAULT_QLC_URL,
   ): void {
     const endpoint = validateQlcUrl(url);
-    this.disconnect();
+    // Preserve pending hold releases when reconnecting after an unexpected socket loss.
+    if (this.socket) this.disconnect();
     this.state = 'connecting';
     onStatus(this.state);
     let socket: WebSocket;
