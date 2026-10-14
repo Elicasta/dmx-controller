@@ -8,6 +8,8 @@ describe('QLC+ bridge protocol', () => {
     expect(encodeQlcCommand({type:'widget',id:12,value:255})).toBe('12|255');
     expect(encodeQlcCommand({type:'cue-list',id:18,action:'NEXT'})).toBe('18|NEXT');
     expect(encodeQlcCommand({type:'grand-master',value:0})).toBe('GM_VALUE|0');
+    expect(encodeQlcCommand({type:'channel',address:1,value:255})).toBe('CH|1|255');
+    expect(encodeQlcCommand({type:'channel',address:513,value:64})).toBe('CH|513|64');
     expect(encodeQlcCommand({type:'query',target:'widgets'})).toBe('QLC+API|getWidgetsList');
   });
   it('rejects invalid IDs and out-of-range values instead of transmitting them', () => {
@@ -15,6 +17,8 @@ describe('QLC+ bridge protocol', () => {
     expect(()=>encodeQlcCommand({type:'widget',id:1,value:256})).toThrow();
     expect(()=>encodeQlcCommand({type:'widget',id:1,value:NaN})).toThrow();
     expect(()=>encodeQlcCommand({type:'function',id:1.2,running:true})).toThrow();
+    expect(()=>encodeQlcCommand({type:'channel',address:0,value:255})).toThrow();
+    expect(()=>encodeQlcCommand({type:'channel',address:1,value:256})).toThrow();
   });
   it('accepts local endpoints and rejects untrusted network targets', () => {
     expect(validateQlcUrl(DEFAULT_QLC_URL)).toBe(DEFAULT_QLC_URL);
