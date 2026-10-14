@@ -62,3 +62,80 @@ cargo test --manifest-path src-tauri/Cargo.toml
 ```
 
 Hardware smoke test must also check no double-output, rapid slider changes, dead network, reconnect, scene edits while playing, stop, blackout and release of held bumps.
+
+
+## Delivered in the next implementation pass
+
+### Reusable Super Scenes
+
+In **SHOW → Timeline**, the Super Scenes bar saves the lighting clips in the
+currently active timeline under a name. Saved scenes contain *linked cue IDs*
+and relative positions, not copied DMX fixture instructions. Edits to a source
+cue are reflected in every inserted instance. Super Scenes are stored as
+`show.superScenes`, validated on import and retained during save sanitation.
+They are show-local and can be reused across song timelines sharing that show.
+
+- **Save composition**: save existing lighting clips under a unique name.
+- **Insert at playhead**: append cloned timeline clip identities, keeping the
+  source cues linked.
+- **Replace lighting**: replace the lighting clips only; preserve audio,
+  video and recorded takes.
+- **Rename / Delete**: manage the saved preset without affecting existing
+  inserted clips.
+- Invalid cue dependencies and excessive clip counts reject the operation
+  instead of silently emitting missing or wrong lights.
+
+### QLC+ as a selectable physical output transport
+
+LumaRig's current engine computes lighting exactly as before. The optional
+`QlcOutputDriver` sends only changed 1-based Simple Desk channels over the
+documented QLC+ v5 WebSocket API. It uses a 25 ms coalescing flush, bounded
+at 128 channel messages per tick. It does not claim to compile, embed, fork,
+or redistribute the QLC+ engine; it uses an installed QLC+ process.
+
+To enable:
+
+1. Install QLC+ 5 on the **same desktop computer** and configure the
+   correct output fixture universe/interface in QLC+.
+2. Load a QLC+ workspace file (`.qxw`) and enable its web interface (`-w`).
+   Secure the web interface and do not expose the socket to the internet.
+3. Ensure the original LumaRig uDMX is **disconnected**. Keep any separate
+   Art-Net physical routes disabled unless deliberately isolated.
+4. In **BUILD → Connections → QLC+ 5 Output**, click **Connect local QLC+**.
+   The panel verifies an active QLC+ project.
+5. Click **Arm QLC+ Output**. Grand Master stays muted until all 512 channels
+   have been written; the driver then enables playback through QLC+.
+6. Use existing Live desk, Song timeline, Ableton commands, and paired
+   Supabase PWA. They continue to use LumaRig's single control dispatcher.
+7. Select **Disarm + QLC Blackout** to zero QLC+'s Grand Master; disconnect
+   when switching back to uDMX.
+
+QLC+ is a separate process. If it crashes or the WebSocket drops, LumaRig
+disarms and will not replay lighting until the operator explicitly reconnects
+and arms. The fixtures may preserve the last output; a hard failure cannot
+promise a physical blackout. Always have physical e-stop/blackout procedures.
+
+**Do not use QLC+ scenes and LumaRig Simple Desk streaming on the same
+universes simultaneously.** The arming procedure stops known QLC+ functions,
+but the operator must not restart those functions during external output
+control. The QLC+ *full editing/FX engine* has not been embedded in LumaRig.
+This release adds QLC+ output-device choice and the LumaRig Super Scene UI,
+not a finished upstream C++ Qt fork.
+
+### PWA compatibility
+
+`Elicasta/mycontroller` uses the same authenticated Supabase Realtime relay.
+No client-side access to QLC+'s local WebSocket and no router port forwarding
+are required. The companion PR optionally displays `outputEngine: 'QLC+'`
+in its status bar. Its control commands remain unchanged.
+
+### Acceptance gates before merging or making a signed release
+
+- CI green: Vitest, TypeScript/Vite build, Rust, Playwright.
+- Confirm 1-based channels, fixture address patch, and correct output
+  through a *real* licensed/compatible USB or network DMX interface.
+- Confirm both master and blackout, flash release, stop, DMX channel changes,
+  cross-song Super Scene reuse, and cloud PWA latency/connection recovery.
+- Verify QLC+ Simple Desk and native LumaRig do not compete for the same
+  physical universe. Test operating-system shutdown, Wi-Fi loss and reconnect.
+- Verify the relevant QLC+ version/protocol on macOS and Windows.
