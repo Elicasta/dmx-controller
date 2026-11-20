@@ -1,12 +1,14 @@
 name: LumaRig Compatibility Tests
 
 on:
-  push:
-    branches:
-      - feature/fixture-import-sacn-compat
   pull_request:
     branches:
       - main
+  workflow_dispatch:
+
+concurrency:
+  group: compatibility-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
 
 permissions:
   contents: read
