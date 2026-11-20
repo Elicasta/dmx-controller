@@ -305,7 +305,7 @@ export const FIXTURE_LIBRARY: FixtureProfile[] = [
 // identifiers. Saved show patches continue to resolve the same DMX mode after restart.
 const IMPORTED_PROFILES_KEY = 'lumarig.imported-fixture-profiles.v1';
 const importedProfiles: FixtureProfile[] = [];
-const MAX_IMPORTED_PROFILES = 500;
+const MAX_IMPORTED_PROFILES = 1500;
 
 function validImportedProfile(value: unknown): value is FixtureProfile {
   if (!value || typeof value !== 'object') return false;
@@ -346,7 +346,7 @@ export function registerImportedProfiles(profiles: readonly FixtureProfile[]): n
   }
   if (!novel.length) return 0;
   if (importedProfiles.length + novel.length > MAX_IMPORTED_PROFILES) {
-    throw new Error('Imported fixture library exceeds 500 profiles.');
+    throw new Error('Imported fixture library exceeds 1,500 profiles.');
   }
   const next = [...importedProfiles, ...novel];
   if (typeof window === 'undefined') throw new Error('Fixture import needs desktop storage.');
