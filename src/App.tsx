@@ -2570,21 +2570,26 @@ export default function App() {
   ]);
 
   async function importFixtureDefinition(event: ChangeEvent<HTMLInputElement>) {
-    const file = event.target.files?.[0];
-    if (!file) return;
+    const files = Array.from(event.target.files ?? []);
+    if (!files.length) return;
     try {
-      if (file.size > 2_000_000) throw new Error('Select a fixture definition smaller than 2 MB.');
-      const profiles = parseFixtureImport(file.name, await file.text());
+      if (files.length > 1500) throw new Error('Select no more than 1,500 fixture files at a time.');
+      if (files.some((file) => file.size > 2_000_000)) {
+        throw new Error('Each fixture definition must be smaller than 2 MB.');
+      }
+      const parsed = await Promise.all(files.map(async (file) =>
+        parseFixtureImport(file.name, await file.text())));
+      const profiles = parsed.flat();
       const imported = registerImportedProfiles(profiles);
       if (!imported) {
-        setMessage('This fixture profile was already imported. Existing patches and profiles were preserved.');
+        setMessage('All selected fixture profiles are already imported. Existing patches were preserved.');
         return;
       }
       setFixtureCatalogRevision((revision) => revision + 1);
       setNewProfileId(profiles[0].id);
       setNewModeId(profiles[0].modes[0].id);
       setProfileAcknowledged(false);
-      setMessage('Imported ' + profiles[0].manufacturer + ' ' + profiles[0].model + '. Verify its DMX personality before patching.');
+      setMessage('Imported ' + imported + ' fixture profile(s). Verify each DMX personality before patching.');
     } catch (error) {
       setMessage('Fixture import failed: ' + String(error));
     } finally {
@@ -4491,7 +4496,7 @@ export default function App() {
             <section className="console-panel fixture-import-panel">
               <header><div><span>FIXTURE LIBRARY</span><h2>Import a fixture definition</h2></div><b>Local · Offline</b></header>
               <p>Import an Open Fixture Library JSON or QLC+ QXF fixture. Imported modes never replace existing profiles. Check the physical fixture manual before output.</p>
-              <label><span>Choose fixture definition (.json / .qxf)</span><input type="file" accept=".json,.qxf,application/json,application/xml,text/xml" onChange={(event) => { void importFixtureDefinition(event); }} /></label>
+              <label><span>Choose fixture definitions (.json / .qxf), multiple allowed</span><input type="file" multiple accept=".json,.qxf,application/json,application/xml,text/xml" onChange={(event) => { void importFixtureDefinition(event); }} /></label>
               <small>Imported profiles are saved on this Mac in this LumaRig installation. Matrix/template modes and GDTF archives require a separate converter.</small>
             </section>
             <section className="console-panel batch-fixture-panel"><header><div><span>ADD FIXTURES</span><h2>Patch a batch</h2></div><b>{FIXTURE_LIBRARY.length} profiles</b></header><div className="batch-fixture-grid"><label><span>Fixture Profile</span><select value={newProfileId} onChange={(event) => { const profile = findProfile(event.target.value) ?? FIXTURE_LIBRARY[0]; setNewProfileId(profile.id); setNewModeId(profile.modes[0].id); setProfileAcknowledged(false); }}>{FIXTURE_LIBRARY.map((profile) => <option key={profile.id} value={profile.id}>{profile.verified ? '✓' : '△'} {profile.manufacturer} {profile.model}</option>)}</select></label><label><span>Mode</span><select value={newModeId} onChange={(event) => setNewModeId(event.target.value)}>{newProfile.modes.map((mode) => <option key={mode.id} value={mode.id}>{mode.name} · {mode.channelCount}ch</option>)}</select></label><label><span>Base Name</span><input value={newFixtureName} placeholder={newProfile.model} onChange={(event) => setNewFixtureName(event.target.value)} /></label><label><span>Quantity</span><input type="number" min="1" max="64" value={newFixtureQuantity} onChange={(event) => setNewFixtureQuantity(Number(event.target.value))} /></label><label><span>Starting Address</span><input type="number" min="1" max="512" value={newFixtureAddress} onChange={(event) => setNewFixtureAddress(Number(event.target.value))} /></label><label><span>Group</span><select value={newFixtureGroup} onChange={(event) => setNewFixtureGroup(event.target.value)}><option value="">Unassigned</option>{fixtureGroups.map((group) => <option key={group.id} value={group.name}>{group.name}</option>)}</select></label><button className="console-primary add-batch" onClick={addFixture}>Add {Math.max(1, newFixtureQuantity)} Fixture{newFixtureQuantity === 1 ? '' : 's'}</button></div>{!newProfile.verified && <label className="profile-confirm"><input type="checkbox" checked={profileAcknowledged} onChange={(event) => setProfileAcknowledged(event.target.checked)} /> I checked the fixture manual and exact mode.</label>}</section>
