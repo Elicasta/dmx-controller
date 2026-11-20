@@ -151,6 +151,7 @@ pub fn run() {
             dmx_status,
             output::artnet::send_artnet_frame,
             output::sacn::send_sacn_frame,
+            output::sacn::stop_sacn_output,
             output::lumaviz_direct::start_lumaviz_direct,
             output::lumaviz_direct::lumaviz_direct_status,
             output::lumaviz_direct::send_lumaviz_fixture_frame,
