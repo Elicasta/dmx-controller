@@ -1,4 +1,5 @@
 pub mod artnet;
+pub mod sacn;
 pub mod udmx;
 
 pub const DMX_CHANNELS: usize = 512;

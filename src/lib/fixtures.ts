@@ -101,7 +101,7 @@ const ch = (
   defaultValue = 0
 ): FixtureChannel => ({ offset, label, parameter, defaultValue });
 
-export const FIXTURE_LIBRARY: readonly FixtureProfile[] = [
+export const FIXTURE_LIBRARY: FixtureProfile[] = [
   {
     id: 'adj-mega-par-profile-plus',
     manufacturer: 'ADJ',
@@ -299,7 +299,83 @@ export const FIXTURE_LIBRARY: readonly FixtureProfile[] = [
       ]
     }]
   }
-] as const;
+];
+
+// Custom profiles are isolated from the bundled definitions and never overwrite existing
+// identifiers. Saved show patches continue to resolve the same DMX mode after restart.
+const IMPORTED_PROFILES_KEY = 'lumarig.imported-fixture-profiles.v1';
+const importedProfiles: FixtureProfile[] = [];
+const MAX_IMPORTED_PROFILES = 1500;
+
+function validImportedProfile(value: unknown): value is FixtureProfile {
+  if (!value || typeof value !== 'object') return false;
+  const p = value as Partial<FixtureProfile>;
+  return typeof p.id === 'string' && /^[a-z0-9-]{3,150}$/.test(p.id)
+    && typeof p.manufacturer === 'string' && p.manufacturer.length <= 180
+    && typeof p.model === 'string' && p.model.length <= 180
+    && ['Par', 'Moving Head', 'Bar', 'Other'].includes(p.category ?? '')
+    && p.verified === false && typeof p.note === 'string'
+    && p.note.length <= 500
+    && Array.isArray(p.modes) && p.modes.length >= 1 && p.modes.length <= 128
+    && new Set(p.modes.map((m) => m.id)).size === p.modes.length
+    && p.modes.every((mode) => typeof mode.id === 'string'
+      && typeof mode.name === 'string'
+      && Number.isInteger(mode.channelCount) && mode.channelCount >= 1 && mode.channelCount <= 512
+      && Array.isArray(mode.channels) && mode.channels.length === mode.channelCount
+      && mode.channels.every((channel, index) => channel.offset === index
+        && typeof channel.label === 'string' && channel.label.length <= 180
+        && (channel.parameter === undefined || [
+          'dimmer','red','green','blue','white','amber','uv','strobe','pan','panFine',
+          'tilt','tiltFine','movementSpeed','colorWheel','gobo','focus','prism',
+          'zoom','iris','goboRotate','prismRotate','macro'
+        ].includes(channel.parameter))
+      ));
+}
+
+/** Persist first, then register atomically; duplicate profile IDs are skipped, never replaced. */
+export function registerImportedProfiles(profiles: readonly FixtureProfile[]): number {
+  if (profiles.some((profile) => !validImportedProfile(profile))) {
+    throw new Error('Imported fixture profile is invalid.');
+  }
+  const existing = new Set(FIXTURE_LIBRARY.map((profile) => profile.id));
+  const novel: FixtureProfile[] = [];
+  for (const profile of profiles) {
+    if (existing.has(profile.id)) continue;
+    existing.add(profile.id);
+    novel.push(profile);
+  }
+  if (!novel.length) return 0;
+  if (importedProfiles.length + novel.length > MAX_IMPORTED_PROFILES) {
+    throw new Error('Imported fixture library exceeds 1,500 profiles.');
+  }
+  const next = [...importedProfiles, ...novel];
+  if (typeof window === 'undefined') throw new Error('Fixture import needs desktop storage.');
+  try {
+    window.localStorage.setItem(IMPORTED_PROFILES_KEY, JSON.stringify(next));
+  } catch {
+    throw new Error('Fixture library storage is full or unavailable. Nothing was imported.');
+  }
+  importedProfiles.push(...novel);
+  FIXTURE_LIBRARY.push(...novel);
+  return novel.length;
+}
+
+function restoreImportedProfiles(): void {
+  if (typeof window === 'undefined') return;
+  try {
+    const saved: unknown = JSON.parse(window.localStorage.getItem(IMPORTED_PROFILES_KEY) || '[]');
+    if (!Array.isArray(saved)) return;
+    for (const profile of saved.slice(0, MAX_IMPORTED_PROFILES)) {
+      if (!validImportedProfile(profile)) continue;
+      if (FIXTURE_LIBRARY.some((builtIn) => builtIn.id === profile.id)) continue;
+      importedProfiles.push(profile);
+      FIXTURE_LIBRARY.push(profile);
+    }
+  } catch {
+    // A corrupted custom-library cache cannot prevent built-in fixtures from loading.
+  }
+}
+restoreImportedProfiles();
 
 export const DEFAULT_PATCH: PatchedFixture[] = [{
   id: 'fixture-mega-par-1',

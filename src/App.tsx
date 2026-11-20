@@ -1,4 +1,5 @@
 import {pasteFixtures} from './lib/fixture-clipboard';
+import { parseFixtureImport } from './lib/fixture-import';
 import {ManualOverdub,timelineCaptureClip,appendTimelineCapture} from './lib/timeline-capture';
 import { cueContext, cueTargetIds } from './lib/show-selection';
 import { mediaWindow, mediaPosition } from './lib/timeline-media';
@@ -41,6 +42,7 @@ import { EFFECT_PRESETS, EFFECT_SHAPES, effectWaveValue, renderEffect, renderCus
 import {
   DEFAULT_PATCH,
   FIXTURE_LIBRARY,
+  registerImportedProfiles,
   findMode,
   findProfile,
   fixtureColorUpdates,
@@ -150,6 +152,7 @@ import {
 } from './core/geometry';
 import { CallbackOutputDriver, OutputRouter, VirtualOutputDriver } from './core/output-router';
 import { ArtNetOutputDriver } from './core/artnet-output';
+import { SacnOutputDriver } from './core/sacn-output';
 import { ShowRuntime, type RuntimeDispatchResult } from './core/show-runtime';
 import { projectStagePoint, unprojectStagePoint, type StagePoint2D, type StageView } from './core/stage-projection';
 import { arrangeTargetPoints, buildStageTargets, type TargetArrangement, type TargetPoint } from './core/targets';
@@ -251,6 +254,8 @@ type AppSettings = {
   audioSensitivity: number;
   visualizerArtNetEnabled: boolean;
   visualizerArtNetTarget: string;
+  sacnEnabled: boolean;
+  sacnTarget: string;
 };
 
 type UpdateMetadata = {
@@ -291,7 +296,9 @@ const DEFAULT_SETTINGS: AppSettings = {
   confirmBlackoutRelease: false,
   audioSensitivity: 58,
   visualizerArtNetEnabled: false,
-  visualizerArtNetTarget: '127.0.0.1'
+  visualizerArtNetTarget: '127.0.0.1',
+  sacnEnabled: false,
+  sacnTarget: 'multicast'
 };
 
 const COLOR_PRESETS = [
@@ -646,6 +653,7 @@ export default function App() {
   const [liveView, setLiveView] = useState<LiveView>(() => initialConsoleValue('live', ['performance', 'overrides', 'groups', 'masters', 'shortcuts', 'settings'], 'performance'));
   useEffect(() => { try { for (const [key,value] of Object.entries({workspace,setup:setupView,program:programMode,show:showMode,live:liveView})) writeCompatibilityStorage('lumarig-navigation:' + key, value); } catch { /* optional preferences */ } }, [workspace,setupView,programMode,showMode,liveView]);
   const [fixtureSearch, setFixtureSearch] = useState('');
+  const [, setFixtureCatalogRevision] = useState(0);
   const [selectedGroupId, setSelectedGroupId] = useState<string | null>(null);
   const [assignmentIds, setAssignmentIds] = useState<string[]>([]);
   const [universe, setUniverse] = useState<number[]>(makeUniverse);
@@ -677,6 +685,7 @@ export default function App() {
   const [settings, setSettings] = useState<AppSettings>(loadSettings);
   const settingsRef = useRef(settings);
   const [artNetTelemetry, setArtNetTelemetry] = useState({ framesSent: 0, lastError: "" });
+  const [sacnTelemetry, setSacnTelemetry] = useState({ framesSent: 0, lastError: '' });
   const [directStatus, setDirectStatus] = useState<LumaVizDirectStatus>({ listening: false, port: 9460, clients: 0, framesSent: 0 });
   const [lumaVizPreview, setLumaVizPreview] = useState<{ dataUrl: string; timestamp: number; view?: string } | null>(null);
   const [studioBridgeStatus, setStudioBridgeStatus] = useState<StudioBridgeStatus>({ listening: false, port: 47777, connectedClients: 0 });
@@ -988,6 +997,10 @@ export default function App() {
       enabled: settingsRef.current.visualizerArtNetEnabled,
       target: settingsRef.current.visualizerArtNetTarget.trim() || '127.0.0.1'
     })));
+    router.register(new SacnOutputDriver(() => ({
+      enabled: settingsRef.current.sacnEnabled,
+      target: settingsRef.current.sacnTarget
+    })));
     outputRouterRef.current = router;
   }
 
@@ -1076,6 +1089,8 @@ export default function App() {
     const refresh = () => {
       const status = outputRouterRef.current?.status().find((driver) => driver.id === 'artnet');
       if (status) setArtNetTelemetry({ framesSent: status.framesSent, lastError: status.lastError ?? '' });
+      const sacn = outputRouterRef.current?.status().find((driver) => driver.id === 'sacn');
+      if (sacn) setSacnTelemetry({ framesSent: sacn.framesSent, lastError: sacn.lastError ?? '' });
     };
     refresh();
     const timer = window.setInterval(refresh, STATUS_POLL_MS);
@@ -2553,6 +2568,34 @@ export default function App() {
     savedLooks,
     nextCue
   ]);
+
+  async function importFixtureDefinition(event: ChangeEvent<HTMLInputElement>) {
+    const files = Array.from(event.target.files ?? []);
+    if (!files.length) return;
+    try {
+      if (files.length > 1500) throw new Error('Select no more than 1,500 fixture files at a time.');
+      if (files.some((file) => file.size > 2_000_000)) {
+        throw new Error('Each fixture definition must be smaller than 2 MB.');
+      }
+      const parsed = await Promise.all(files.map(async (file) =>
+        parseFixtureImport(file.name, await file.text())));
+      const profiles = parsed.flat();
+      const imported = registerImportedProfiles(profiles);
+      if (!imported) {
+        setMessage('All selected fixture profiles are already imported. Existing patches were preserved.');
+        return;
+      }
+      setFixtureCatalogRevision((revision) => revision + 1);
+      setNewProfileId(profiles[0].id);
+      setNewModeId(profiles[0].modes[0].id);
+      setProfileAcknowledged(false);
+      setMessage('Imported ' + imported + ' fixture profile(s). Verify each DMX personality before patching.');
+    } catch (error) {
+      setMessage('Fixture import failed: ' + String(error));
+    } finally {
+      event.target.value = '';
+    }
+  }
 
   function addFixture() {
     const mode = newProfile.modes.find((item) => item.id === newModeId) ?? newProfile.modes[0];
@@ -4450,6 +4493,12 @@ export default function App() {
 
           {setupView === 'fixtures' && <div className="setup-scroll-area">
             <section className="fixture-selection-toolbar"><div><strong>FIXTURE SELECTION</strong><span>{patch.filter((fixture) => fixture.selected).length} of {patch.length} selected</span></div><div><button onClick={selectAllFixtures}>Select All</button><button onClick={clearFixtureSelection}>Clear</button><button className="danger-button" disabled={!patch.some((fixture) => fixture.selected) || patch.filter((fixture) => fixture.selected).length >= patch.length} onClick={deleteSelectedFixtures}>Delete Selected</button></div></section>
+            <section className="console-panel fixture-import-panel">
+              <header><div><span>FIXTURE LIBRARY</span><h2>Import a fixture definition</h2></div><b>Local · Offline</b></header>
+              <p>Import an Open Fixture Library JSON or QLC+ QXF fixture. Imported modes never replace existing profiles. Check the physical fixture manual before output.</p>
+              <label><span>Choose fixture definitions (.json / .qxf), multiple allowed</span><input type="file" multiple accept=".json,.qxf,application/json,application/xml,text/xml" onChange={(event) => { void importFixtureDefinition(event); }} /></label>
+              <small>Imported profiles are saved on this Mac in this LumaRig installation. Matrix/template modes and GDTF archives require a separate converter.</small>
+            </section>
             <section className="console-panel batch-fixture-panel"><header><div><span>ADD FIXTURES</span><h2>Patch a batch</h2></div><b>{FIXTURE_LIBRARY.length} profiles</b></header><div className="batch-fixture-grid"><label><span>Fixture Profile</span><select value={newProfileId} onChange={(event) => { const profile = findProfile(event.target.value) ?? FIXTURE_LIBRARY[0]; setNewProfileId(profile.id); setNewModeId(profile.modes[0].id); setProfileAcknowledged(false); }}>{FIXTURE_LIBRARY.map((profile) => <option key={profile.id} value={profile.id}>{profile.verified ? '✓' : '△'} {profile.manufacturer} {profile.model}</option>)}</select></label><label><span>Mode</span><select value={newModeId} onChange={(event) => setNewModeId(event.target.value)}>{newProfile.modes.map((mode) => <option key={mode.id} value={mode.id}>{mode.name} · {mode.channelCount}ch</option>)}</select></label><label><span>Base Name</span><input value={newFixtureName} placeholder={newProfile.model} onChange={(event) => setNewFixtureName(event.target.value)} /></label><label><span>Quantity</span><input type="number" min="1" max="64" value={newFixtureQuantity} onChange={(event) => setNewFixtureQuantity(Number(event.target.value))} /></label><label><span>Starting Address</span><input type="number" min="1" max="512" value={newFixtureAddress} onChange={(event) => setNewFixtureAddress(Number(event.target.value))} /></label><label><span>Group</span><select value={newFixtureGroup} onChange={(event) => setNewFixtureGroup(event.target.value)}><option value="">Unassigned</option>{fixtureGroups.map((group) => <option key={group.id} value={group.name}>{group.name}</option>)}</select></label><button className="console-primary add-batch" onClick={addFixture}>Add {Math.max(1, newFixtureQuantity)} Fixture{newFixtureQuantity === 1 ? '' : 's'}</button></div>{!newProfile.verified && <label className="profile-confirm"><input type="checkbox" checked={profileAcknowledged} onChange={(event) => setProfileAcknowledged(event.target.checked)} /> I checked the fixture manual and exact mode.</label>}</section>
             <section className="compact-patch-list">{patch.map((fixture) => <FixturePatchEditor key={fixture.id} fixture={fixture} onSave={savePatchedFixture} onRemove={() => removeFixture(fixture)} onToggleSelected={() => selectFixtureFromConsole(fixture.id, true)} onToggleCollapsed={() => setPatch((current) => current.map((item) => item.id === fixture.id ? { ...item, collapsed: !item.collapsed } : item))} />)}</section>
           </div>}
@@ -4458,6 +4507,26 @@ export default function App() {
 
           {setupView === 'settings' && <div className="setup-scroll-area settings-console">
             <section className="console-panel connection-console"><header><div><span>DMX OUTPUT</span><h2>Anyma uDMX</h2></div><b className={dmxStatus.connected ? 'healthy' : ''}>{dmxStatus.connected ? 'Connected' : 'Virtual only'}</b></header><label><span>USB Interface</span><select value={selectedDevice} onChange={(event) => setSelectedDevice(event.target.value)} disabled={dmxStatus.connected}><option value="">Select uDMX</option>{devices.map((device) => <option key={device.device_key} value={device.device_key}>{deviceLabel(device)}</option>)}</select></label><div className="settings-actions"><button onClick={scanDevices}>Scan USB</button>{dmxStatus.connected ? <button onClick={disconnectDmx}>Disconnect + zero</button> : <button className="console-primary" disabled={!selectedInfo?.likely_udmx || busy} onClick={connectDmx}>Connect uDMX</button>}<button onClick={zeroAll}>Zero all</button></div></section>
+            <section className="console-panel connection-console">
+              <header><div><span>NETWORK DMX · ANSI E1.31</span><h2>sACN Lighting Output</h2></div><b className={settings.sacnEnabled && !sacnTelemetry.lastError ? 'healthy' : ''}>{sacnTelemetry.lastError ? 'Send error' : settings.sacnEnabled ? 'Armed' : 'Off'}</b></header>
+              <p>Independent DMX-over-IP output using the final resolved show frame. UDP send success does not confirm a lighting node received it.</p>
+              <div className="artnet-health-grid">
+                <div><span>TRANSPORT</span><strong>sACN / UDP 5568</strong></div>
+                <div><span>FRAMES SUBMITTED</span><strong>{sacnTelemetry.framesSent.toLocaleString()}</strong></div>
+              </div>
+              {sacnTelemetry.lastError && <p className="artnet-error">{sacnTelemetry.lastError}</p>}
+              <label className="inspector-toggle"><span>Enable network lighting output</span><input type="checkbox" checked={settings.sacnEnabled} onChange={(event) => {
+                  const enabled = event.target.checked;
+                  if (!enabled) {
+                    settingsRef.current = { ...settingsRef.current, sacnEnabled: false };
+                    void invoke('stop_sacn_output').catch((error) =>
+                      setMessage('sACN termination failed: ' + String(error)));
+                  }
+                  setSettings((current) => ({ ...current, sacnEnabled: enabled }));
+                }} /></label>
+              <label><span>Destination: multicast or receiver IPv4</span><input value={settings.sacnTarget} placeholder="multicast" onChange={(event) => setSettings((current) => ({ ...current, sacnTarget: event.target.value }))} /></label>
+              <small>Multicast chooses 239.255.x.y per universe. Use a unicast IPv4 for a specific Ethernet/DMX node. Defaults to OFF on every new installation. Use only on a private lighting network.</small>
+            </section>
             <section className="console-panel connection-console"><header><div><span>GENERAL MIDI</span><h2>Controller / Network Session</h2></div><b className={midiStatus.connected ? 'healthy' : ''}>{midiStatus.connected ? 'Listening' : 'Offline'}</b></header><label><span>MIDI Input</span><select value={selectedMidiInput} disabled={midiStatus.connected} onChange={(event) => setSelectedMidiInput(event.target.value)}><option value="">Select input</option>{midiInputs.map((input) => <option key={input.id} value={input.id}>{input.name}</option>)}</select></label><div className="settings-actions"><button onClick={scanMidi}>Scan MIDI</button>{midiStatus.connected ? <button onClick={disconnectMidi}>Disconnect</button> : <button className="console-primary" disabled={!selectedMidiInput} onClick={connectMidi}>Connect MIDI</button>}</div><div className="midi-event-monitor"><i className={midiStatus.last_event ? 'active' : ''} /><span><strong>{midiStatus.last_event || 'Waiting for MIDI'}</strong><small>{midiStatus.messages_received} messages · {midiClockSeen ? 'Clock detected' : 'No clock'}</small></span></div></section>
             <section className="console-panel midi-mapping-console"><header><div><span>MIDI ASSIGNER</span><h2>Map controls</h2></div><b>{midiMappings.length} mappings</b></header><div className="midi-add-row"><select value={newMidiTarget} onChange={(event) => setNewMidiTarget(event.target.value)}>{midiControlGroups.map(([group, controls]) => <optgroup key={group} label={group}>{controls.map((control) => <option key={control.id} value={control.id}>{control.label}</option>)}</optgroup>)}</select><button className="console-primary" onClick={() => beginMidiAssignment()}>Add + Learn</button></div><div className="midi-map-list">{midiMappings.map((mapping) => { const control = midiControls.find((item) => item.id === mapping.target); const learning = midiLearnMappingId === mapping.id; return <div className={`midi-map-row ${learning ? 'is-learning' : ''}`} key={mapping.id}><strong>{control?.label ?? 'Unavailable'}</strong><span>{learning ? 'Move or press a control…' : midiBindingLabel(mapping)}</span><button onClick={() => setMidiLearnMappingId(learning ? null : mapping.id)}>{learning ? 'Cancel' : 'Learn'}</button><button onClick={() => removeMidiAssignment(mapping.id)}>Remove</button></div>; })}</div></section>
             <section className="console-panel connection-console remote-relay-console"><header><div><span>REMOTE CONTROL · SEPARATE NETWORKS</span><h2>Secure Cloud Relay</h2></div><b className={remoteRelayStatus === 'connected' ? 'healthy' : ''}>{remoteRelayStatus}</b></header><p>Both this Mac and the Vercel controller connect outbound to one private Supabase Realtime channel. No router port forwarding is required.</p><label><span>Supabase Project URL</span><input value={remoteRelayConfig.url} placeholder="https://project.supabase.co" onChange={(event) => setRemoteRelayConfig((current) => ({ ...current, url: event.target.value }))} /></label><label><span>Publishable Key</span><input type="password" value={remoteRelayConfig.publishableKey} onChange={(event) => setRemoteRelayConfig((current) => ({ ...current, publishableKey: event.target.value }))} /></label><div className="inspector-pair"><label><span>Account Email</span><input type="email" value={remoteRelayConfig.email} onChange={(event) => setRemoteRelayConfig((current) => ({ ...current, email: event.target.value }))} /></label><label><span>Password · never stored</span><input type="password" value={remoteRelayConfig.password ?? ''} onChange={(event) => setRemoteRelayConfig((current) => ({ ...current, password: event.target.value }))} /></label></div><label><span>Room Code · use the same code on the remote</span><div className="relay-room-row"><input value={remoteRelayConfig.roomCode} onChange={(event) => setRemoteRelayConfig((current) => ({ ...current, roomCode: event.target.value }))} /><button onClick={() => setRemoteRelayConfig((current) => ({ ...current, roomCode: `${crypto.randomUUID().replace(/-/g, '')}${crypto.randomUUID().replace(/-/g, '')}` }))}>Generate</button></div></label>{remoteRelayError && <p className="relay-error">{remoteRelayError}</p>}<div className="settings-actions">{remoteRelayStatus === 'connected' ? <button onClick={disconnectRemoteRelay}>Disconnect relay</button> : <button className="console-primary" onClick={connectRemoteRelay}>Connect remote relay</button>}</div></section>

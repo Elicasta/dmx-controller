@@ -7,7 +7,7 @@ mod video_export;
 
 use dmx::{DmxEngine, DmxStatus};
 use midi::{MidiEngine, MidiEvent, MidiInputInfo, MidiStatus};
-use output::{artnet::ArtNetEngine, lumaviz_direct::LumaVizDirectEngine, udmx::UdmxDeviceInfo};
+use output::{artnet::ArtNetEngine, sacn::SacnEngine, lumaviz_direct::LumaVizDirectEngine, udmx::UdmxDeviceInfo};
 use studio_bridge::{StudioBridge, StudioBridgeEnvelope, StudioBridgeResponse, StudioBridgeStatus};
 use tauri::{State, Manager};
 
@@ -129,6 +129,7 @@ pub fn run() {
         .plugin(tauri_plugin_updater::Builder::new().build())
         .manage(DmxEngine::new())
         .manage(ArtNetEngine::default())
+        .manage(SacnEngine::default())
         .manage(LumaVizDirectEngine::default())
         .manage(StudioBridge::new())
         .manage(MidiEngine::new())
@@ -149,6 +150,8 @@ pub fn run() {
             set_blackout,
             dmx_status,
             output::artnet::send_artnet_frame,
+            output::sacn::send_sacn_frame,
+            output::sacn::stop_sacn_output,
             output::lumaviz_direct::start_lumaviz_direct,
             output::lumaviz_direct::lumaviz_direct_status,
             output::lumaviz_direct::send_lumaviz_fixture_frame,
