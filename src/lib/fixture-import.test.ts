@@ -69,6 +69,7 @@ describe('fixture definition compatibility', () => {
 
   it('does not mutate the profile library when persistence fails', () => {
     const [profile] = parseFixtureImport('head.json', sample);
+    profile.id += '-quota-test';
     const before = FIXTURE_LIBRARY.length;
     vi.stubGlobal('window', { localStorage: { setItem: () => { throw Error('quota'); } } });
     expect(() => registerImportedProfiles([profile])).toThrow(/storage/i);
