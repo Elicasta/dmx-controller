@@ -20,6 +20,7 @@ const SOURCE_NAME: &[u8] = b"LumaRig";
 struct SocketState {
     socket: Option<UdpSocket>,
     sequences: HashMap<u16, u8>,
+    destinations: HashMap<u16, SocketAddrV4>,
 }
 
 pub struct SacnEngine {
@@ -39,7 +40,7 @@ impl Default for SacnEngine {
         cid[6] = (cid[6] & 0x0f) | 0x40;
         cid[8] = (cid[8] & 0x3f) | 0x80;
         Self {
-            state: Mutex::new(SocketState { socket: None, sequences: HashMap::new() }),
+            state: Mutex::new(SocketState { socket: None, sequences: HashMap::new(), destinations: HashMap::new() }),
             cid,
         }
     }
@@ -96,7 +97,54 @@ pub fn build_sacn_packet(
     Ok(p)
 }
 
+fn terminated_packet(universe: u16, sequence: u8, cid: &[u8; 16]) -> Result<[u8; PACKET_LENGTH], String> {
+    let mut packet = build_sacn_packet(universe, sequence, cid, &[])?;
+    packet[112] = 0x40; // E1.31 Stream_Terminated bit
+    Ok(packet)
+}
+
+fn send_termination(
+    socket: &UdpSocket,
+    cid: &[u8; 16],
+    universe: u16,
+    destination: SocketAddrV4,
+    mut sequence: u8,
+) -> Result<u8, String> {
+    // ANSI E1.31: send three consecutive terminated packets for the universe.
+    for _ in 0..3 {
+        sequence = sequence.wrapping_add(1);
+        let packet = terminated_packet(universe, sequence, cid)?;
+        socket.send_to(&packet, destination)
+            .map_err(|error| format!("sACN stream termination to {destination} failed: {error}"))?;
+    }
+    Ok(sequence)
+}
+
 impl SacnEngine {
+    /// Cleanly terminate every active universe at its previous destination.
+    pub fn stop(&self) -> Result<(), String> {
+        let mut state = self.state.lock().map_err(|_| "sACN output lock unavailable".to_owned())?;
+        let targets: Vec<_> = state.destinations.iter().map(|(&u, &target)| (u, target)).collect();
+        let mut first_error: Option<String> = None;
+        for (universe, target) in targets {
+            let sequence = state.sequences.get(&universe).copied().unwrap_or(0);
+            let result = match state.socket.as_ref() {
+                Some(socket) => send_termination(socket, &self.cid, universe, target, sequence),
+                None => Err("sACN socket unavailable during termination".to_owned()),
+            };
+            match result {
+                Ok(next_sequence) => {
+                    state.sequences.insert(universe, next_sequence);
+                    state.destinations.remove(&universe);
+                }
+                Err(error) => {
+                    if first_error.is_none() { first_error = Some(error); }
+                }
+            }
+        }
+        match first_error { Some(error) => Err(error), None => Ok(()) }
+    }
+
     pub fn send_frame(&self, target: &str, universe: u16, values: &[u8]) -> Result<(), String> {
         let addr = destination(target, universe)?;
         // Do not increment sequence on a rejected frame.
@@ -111,14 +159,37 @@ impl SacnEngine {
                 .map_err(|error| format!("sACN multicast TTL failed: {error}"))?;
             state.socket = Some(socket);
         }
+        if let Some(previous) = state.destinations.get(&universe).copied() {
+            if previous != addr {
+                let previous_sequence = state.sequences.get(&universe).copied().unwrap_or(0);
+                let next_sequence = send_termination(
+                    state.socket.as_ref().expect("socket initialized"),
+                    &self.cid, universe, previous, previous_sequence
+                )?;
+                state.sequences.insert(universe, next_sequence);
+                state.destinations.remove(&universe);
+            }
+        }
         let sequence = state.sequences.get(&universe).copied().unwrap_or(0).wrapping_add(1);
         let packet = build_sacn_packet(universe, sequence, &self.cid, values)?;
         state.socket.as_ref().expect("socket initialized")
             .send_to(&packet, addr)
             .map_err(|error| format!("sACN UDP send to {addr} failed: {error}"))?;
         state.sequences.insert(universe, sequence);
+        state.destinations.insert(universe, addr);
         Ok(())
     }
+}
+
+impl Drop for SacnEngine {
+    fn drop(&mut self) {
+        let _ = self.stop(); // Best effort on normal shutdown; a crash needs hardware fail-safe.
+    }
+}
+
+#[tauri::command]
+pub fn stop_sacn_output(engine: State<'_, SacnEngine>) -> Result<(), String> {
+    engine.stop()
 }
 
 #[tauri::command]
@@ -166,6 +237,16 @@ mod tests {
         assert!(destination("invalid", 1).is_err());
         assert!(destination("multicast", 0).is_err());
         assert!(destination("multicast", 64000).is_err());
+    }
+
+    #[test]
+    fn stream_termination_has_the_standard_option_bit() {
+        let cid = [0x77; 16];
+        let packet = terminated_packet(1, 14, &cid).unwrap();
+        assert_eq!(packet[112], 0x40);
+        assert_eq!(packet[111], 14);
+        assert_eq!(&packet[113..115], &[0, 1]);
+        assert_eq!(&packet[22..38], &cid);
     }
 
     #[test]
