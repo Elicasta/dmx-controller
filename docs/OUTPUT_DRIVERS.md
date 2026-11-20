@@ -17,7 +17,7 @@ Use the exact receiver IPv4 for unicast or \`multicast\` for standardized E1.31 
 
 The sACN status shows UDP packet submissions and socket errors. **It does not prove receiver connectivity**, node discovery, or fixture output. sACN is not automatically enabled after installation. Put the lighting output on a private, isolated network.
 
-Important: stopping output without sending stream-termination packets may leave a receiver holding its last frame until its configured source-loss timeout. This initial driver does not claim verified stream termination. Do not use it for hazardous fixtures, and retain a physical emergency power/DMX stop.
+Turning sACN off, changing a receiver destination, and normal process shutdown attempt to send three ANSI E1.31 Stream_Terminated packets per active universe. A crash or unplug cannot guarantee delivery. Receivers may still hold their last output when packets are lost. Retain a physical emergency power/DMX stop and test each receiver's loss behavior.
 
 ## Timing and verification
 
