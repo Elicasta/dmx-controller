@@ -4510,7 +4510,15 @@ export default function App() {
                 <div><span>FRAMES SUBMITTED</span><strong>{sacnTelemetry.framesSent.toLocaleString()}</strong></div>
               </div>
               {sacnTelemetry.lastError && <p className="artnet-error">{sacnTelemetry.lastError}</p>}
-              <label className="inspector-toggle"><span>Enable network lighting output</span><input type="checkbox" checked={settings.sacnEnabled} onChange={(event) => setSettings((current) => ({ ...current, sacnEnabled: event.target.checked }))} /></label>
+              <label className="inspector-toggle"><span>Enable network lighting output</span><input type="checkbox" checked={settings.sacnEnabled} onChange={(event) => {
+                  const enabled = event.target.checked;
+                  if (!enabled) {
+                    settingsRef.current = { ...settingsRef.current, sacnEnabled: false };
+                    void invoke('stop_sacn_output').catch((error) =>
+                      setMessage('sACN termination failed: ' + String(error)));
+                  }
+                  setSettings((current) => ({ ...current, sacnEnabled: enabled }));
+                }} /></label>
               <label><span>Destination: multicast or receiver IPv4</span><input value={settings.sacnTarget} placeholder="multicast" onChange={(event) => setSettings((current) => ({ ...current, sacnTarget: event.target.value }))} /></label>
               <small>Multicast chooses 239.255.x.y per universe. Use a unicast IPv4 for a specific Ethernet/DMX node. Defaults to OFF on every new installation. Use only on a private lighting network.</small>
             </section>
