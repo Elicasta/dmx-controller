@@ -6,7 +6,7 @@ Importing a definition does **not** patch a light or change DMX output.
 ## Import
 
 1. Open **Build → Fixtures → Import a fixture definition**.
-2. Select one Open Fixture Library JSON (.json) or QLC+ fixture-definition XML (.qxf).
+2. Select one or multiple Open Fixture Library JSON (.json) or QLC+ fixture-definition XML (.qxf) files.
 3. Confirm the brand, model, mode and footprint in the **Add Fixtures** selector.
 4. Check the actual fixture manual and exact mode on the device.
 5. Tick **I checked the fixture manual and exact mode**, then patch a fixture to an available DMX address.
@@ -24,9 +24,9 @@ The imported profile is always marked **unverified**. Pan/Tilt geometry and phys
 
 ## Reliability and data
 
-- Single fixture-definition files up to 2 MB.
+- Fixture-definition files up to 2 MB each. Batch imports register as one transaction.
 - Invalid channels, duplicate mode offsets, universe overflows and overlapping address ranges are rejected.
-- Up to 500 imported profiles in local browser storage.
+- Up to 1,500 imported profiles in local browser storage, subject to the system's available storage quota.
 - The cache must be saved before in-memory registration. Storage quota failure leaves the active catalog and patch intact.
 - Imported profiles are not yet embedded into exported show documents. Export/backup the full application data before migrating computers. Avoid removing local application data while profiles are in use.
 - Fixture definitions can be wrong or outdated. Verify all channels on a test rig, especially shutter, strobe, pan/tilt, resets, and laser effects.
